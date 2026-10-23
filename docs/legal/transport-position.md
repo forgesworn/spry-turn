@@ -17,8 +17,9 @@ investigatory powers; those additions may precede the linked public copy.
 ## Position today and intended operation
 
 The owner has chosen software publication without a maintainer-operated
-default relay or central KithMoot calling entitlement. The repository starts
-private, under MIT, with package publication disabled (`Cargo.toml:6`, `:14`).
+default relay or central KithMoot calling entitlement. The owner authorised
+public MIT source and the existing GitHub prereleases on 23 October 2026.
+Package-registry publication remains disabled in `Cargo.toml`.
 The owner reports local implementation and tests only: no service is
 deployed. Code publication, a build and a running communications service
 are separate events. No public operational service is established by the

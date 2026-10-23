@@ -51,12 +51,12 @@ GrapheneOS acceptance against this implementation remain unverified.
 
 ## Embed the native Rust server
 
-Authorised source consumers can depend on this private Git repository.
+Rust applications can depend on the public Git repository.
 Use a reviewed full commit SHA in place of `REVIEWED_COMMIT_SHA`:
 
 ```toml
 [dependencies]
-spry-turn = { git = "ssh://git@github.com/forgesworn/spry-turn.git", rev = "REVIEWED_COMMIT_SHA" }
+spry-turn = { git = "https://github.com/forgesworn/spry-turn.git", rev = "REVIEWED_COMMIT_SHA" }
 ```
 
 The following host starts a local server and advances its event loop:

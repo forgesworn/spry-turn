@@ -2,14 +2,13 @@
 
 spry-turn is maintained by TheCryptoDonkey as part of
 [ForgeSworn](https://github.com/forgesworn). It is MIT-licensed software,
-with an initially private repository and release. The publisher provides
+with public source and GitHub prereleases. The publisher provides
 no hosted TURN server, credential service or calling entitlement.
 
 ## Get help
 
 Start with [the documentation index](docs/README.md) and
-[coturn compatibility](docs/coturn-compatibility.md). Authorised repository
-users can open [an issue](https://github.com/forgesworn/spry-turn/issues).
+[coturn compatibility](docs/coturn-compatibility.md). Users can open [an issue](https://github.com/forgesworn/spry-turn/issues).
 Include the version or commit, platform, feature flags, transport and a
 minimal synthetic reproduction. Remove credentials, real peer addresses,
 private paths, media and room identifiers. For security-sensitive reports,
@@ -30,7 +29,7 @@ These are the existing ForgeSworn/TheCryptoDonkey donation destinations:
 - **Lightning:** `profusemeat89@walletofsatoshi.com`
 - **Nostr zaps:** `npub1mgvlrnf5hm9yf0n5mf9nqmvarhvxkc6remu5ec3vf8r0txqkuk7su0e7q2`
 
-Donation links do not grant repository access, relay capacity, credentials,
+Donation links do not grant relay capacity, credentials,
 application membership or priority support. The MIT licence does not require
 payment. No payment SDK, invoice request or donation telemetry is embedded
 in the server, library or codec.

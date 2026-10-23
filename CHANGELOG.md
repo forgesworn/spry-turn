@@ -2,7 +2,7 @@
 
 ## 0.2.1 — 23 October 2026
 
-Private prerelease. Stream readiness registrations now change only when
+Public MIT prerelease. Stream readiness registrations now change only when
 backpressure changes write interest. Public Rust configuration is unchanged.
 
 - Native UDP/TCP/TLS benchmark tooling, loaded latency samples, explicit
@@ -15,6 +15,14 @@ backpressure changes write interest. Public Rust configuration is unchanged.
 - Actual KithMoot web acceptance with relay credentials entered through
   device Settings, bidirectional generated media and no credential service.
   Public-network, physical GrapheneOS and Archy acceptance remain open.
+
+## Public source, 23 October 2026
+
+The owner authorised public MIT source and the existing GitHub prereleases.
+History and release archives were checked before visibility changed. Existing
+tags and archive bytes are retained; historical private-release wording below
+describes their original creation. Package registries and hosted services remain
+separate scope. This documentation change does not requalify runtime performance.
 
 ## 0.2.0 — 23 October 2026
 

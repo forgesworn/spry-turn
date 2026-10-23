@@ -13,7 +13,7 @@
 - [x] Native connected-UDP and direct-readiness-slot tuning, tested against
   a native baseline and coturn with resource costs recorded.
 - [x] WASM protocol arena, actual execution and bounded buffer reuse test.
-- [x] Private repository, source/secret review and CI readback.
+- [x] Public MIT source, source/secret review and CI readback.
 - [x] Controlled bounded-port M4 UDP/TCP/TLS comparison against v0.2.0 and
   coturn, with a measured stream-readiness optimisation.
 - [x] Actual KithMoot web application: device-selected credentials, relay-only

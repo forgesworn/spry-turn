@@ -19,7 +19,7 @@ if (process.argv.slice(2).some(arg => arg !== '--write')) {
 const documents = [
   ['Get started', 'README.md', 'Overview', 'Scope, features, quick commands and measured performance.'],
   ['Get started', 'docs/README.md', 'Documentation index', 'Choose installation, integration, API or operator guidance.'],
-  ['Get started', 'docs/getting-started.md', 'Getting started', 'Authorised source checkout, local server, credentials and TLS.'],
+  ['Get started', 'docs/getting-started.md', 'Getting started', 'Public source checkout, local server, credentials and TLS.'],
   ['Get started', 'docs/integration.md', 'Client and host integration', 'Browser ICE, native clients, Rust embedding and WASM example.'],
   ['Get started', 'docs/api.md', 'Rust and WASM API', 'Cargo features, configuration, native methods and PacketArena.'],
   ['Get started', 'docs/coturn-compatibility.md', 'Coturn compatibility', 'Feature map, configuration concepts and migration gaps.'],
@@ -32,9 +32,9 @@ const documents = [
   ['Evidence and status', 'docs/performance-experiments.md', 'Performance experiments', 'Separate Linux batching, process scaling and profile-guided experiments; no implied runtime integration.'],
   ['Evidence and status', 'docs/verification.md', 'Verification', 'Actual local/CI evidence and explicitly unqualified gates.'],
   ['Evidence and status', 'GOALS.md', 'Acceptance and roadmap', 'Completed standalone work, missing coturn features and later integrations.'],
-  ['Evidence and status', 'CHANGELOG.md', 'Changelog', 'Current and historical private prerelease contents.'],
+  ['Evidence and status', 'CHANGELOG.md', 'Changelog', 'Current and historical prerelease contents.'],
   ['Optional', 'CONTRIBUTING.md', 'Contributing', 'Validation, synthetic fixtures, performance evidence and cleanup.'],
-  ['Optional', 'AGENTS.md', 'Coding-agent instructions', 'Repository privacy, safe Rust and required checks.'],
+  ['Optional', 'AGENTS.md', 'Coding-agent instructions', 'Publication boundaries, safe Rust and required checks.'],
   ['Optional', 'docs/maintaining-docs.md', 'Maintaining documentation', 'Generation, link checks, metadata, privacy and shipment.'],
   ['Optional', 'docs/legal/transport-position.md', 'Transport position', 'Publisher/operator role and unresolved legal interpretations.'],
 ];
@@ -43,7 +43,7 @@ const summary = [
   '',
   '> Lightweight Rust STUN/TURN server, embeddable native relay and WASM packet codec. MIT; maintained by TheCryptoDonkey under ForgeSworn.',
   '',
-  `Version ${version}. Repository and initial GitHub prerelease are private; authorised access is required for source and release artefacts. There is no crates.io, docs.rs or npm publication, hosted relay, credential service or public documentation site.`,
+  `Version ${version}. Source and GitHub prereleases are public, under MIT, copyright 2026 TheCryptoDonkey. There is no crates.io, docs.rs or npm publication, hosted relay, credential service or public documentation site.`,
   '',
   'Native UDP/TCP clients and optional TLS use UDP peer allocations. Browser applications use their existing WebRTC ICE implementation. Ordinary browser WASM cannot host a raw-socket TURN server. Shared TURN secrets belong only to trusted operator tools; give clients short-lived credentials.',
   '',
@@ -51,7 +51,7 @@ const summary = [
   '',
   'The full v0.2.1 native ARM64 M4 Max loopback matrix measured 16–22% higher UDP delivery rate and 27–35% higher TLS delivery rate than the tested coturn configuration; TCP ranged from 1.2% behind to 8.5% ahead. Linux VM results differ, including UDP regressions. These are workload results, not maximum WAN capacity. Stream and kernel socket memory have separate costs. Consult current qualification and raw evidence before reusing figures.',
   '',
-  'These files provide navigation and source context for authorised readers and tools. They do not change repository visibility or guarantee indexing by search engines or language models.',
+  'These files provide navigation and source context for readers and tools. They do not change repository visibility or guarantee indexing by search engines or language models.',
   '',
 ].join('\n');
 

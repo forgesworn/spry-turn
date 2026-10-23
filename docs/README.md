@@ -2,8 +2,7 @@
 
 spry-turn is a standalone Rust STUN/TURN server, an embeddable native relay
 and a WASM packet codec. It is an initial implementation with measured
-performance and explicit compatibility gaps. The repository and initial
-GitHub release are private; there is no publisher-operated TURN service.
+performance and explicit compatibility gaps. The source and GitHub prereleases are public and MIT-licensed; there is no publisher-operated TURN service.
 
 ## Start here
 
@@ -35,8 +34,8 @@ GitHub release are private; there is no publisher-operated TURN service.
 [llms.txt](../llms.txt) is the concise navigation index.
 [llms-full.txt](../llms-full.txt) is generated from the current maintained
 guides, with canonical absolute links. Neither includes credentials,
-private machine information or the raw benchmark archives. Access follows
-repository visibility; no public crawling is enabled by adding these files.
+private machine information or the raw benchmark archives. Public navigation files do not guarantee indexing by search engines or
+language models.
 
 Read [AGENTS.md](../AGENTS.md) before making changes. Documentation generation,
 link validation and the release checklist are in

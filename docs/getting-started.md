@@ -6,23 +6,27 @@ configuring an independently operated instance.
 
 ## Obtain the source
 
-The repository is private. Use an authorised GitHub account and SSH key:
+The source is public and MIT-licensed. Clone it without a GitHub account:
 
 ```sh
-git clone git@github.com:forgesworn/spry-turn.git
+git clone https://github.com/forgesworn/spry-turn.git
 cd spry-turn
 ```
 
 Source is the portable installation path. Cargo and npm publication are
-disabled. The private v0.2.1 GitHub prerelease also carries macOS ARM64 and
-GNU/Linux ARM64 TLS-enabled executable archives, and a WASM codec archive. It does not make
-the source or artefacts publicly downloadable. Authorised users can fetch
-and verify the archives in an empty directory:
+disabled. The public v0.2.1 GitHub prerelease carries macOS ARM64 and
+GNU/Linux ARM64 TLS-enabled executable archives, and a WASM codec archive.
+Fetch and verify the archives in an empty directory, or use the release
+page's downloads:
 
 ```sh
 gh release download v0.2.1 --repo forgesworn/spry-turn
 shasum -a 256 -c SHA256SUMS
 ```
+
+[Download v0.2.1](https://github.com/forgesworn/spry-turn/releases/tag/v0.2.1).
+Existing archives and tags retain their original bytes; older bundled guides
+may describe the private access that applied when those releases were created.
 
 Choose the matching operating-system archive. The Linux executable was
 tested with Debian glibc 2.36 and needs glibc and libgcc; it is not an Alpine

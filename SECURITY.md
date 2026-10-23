@@ -7,12 +7,11 @@ or production qualification. See [verification](docs/verification.md) and
 
 ## Report a vulnerability
 
-The repository is private and no public security inbox is promised. Ask a
-maintainer for an agreed private reporting channel using a minimal
-access-controlled issue. Do not include an exploit, credential, production
-endpoint, private media or personal information in that initial request.
-Share the detailed report only through the channel the maintainer confirms.
-No response-time guarantee is offered.
+Use [GitHub private vulnerability reporting](https://github.com/forgesworn/spry-turn/security/advisories/new).
+Do not post security-sensitive reports in public issues. Include a minimal
+synthetic reproduction and affected version, with credentials, production
+endpoints, private media and personal information removed. No response-time
+guarantee is offered.
 
 For an ordinary synthetic bug report, see [support](SUPPORT.md).
 
