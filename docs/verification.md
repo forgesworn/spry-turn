@@ -6,7 +6,11 @@ The stream-readiness optimisation passed ten all-feature Rust unit tests,
 including actual TCP backpressure, queue draining, removal of writable
 interest and subsequent progress. Twenty-seven independent socket tests
 passed on macOS and native ARM64 Linux, including the five added malformed
-input, integrity and expiry regressions. The unchanged public API remains
+input, integrity and expiry regressions. A later
+[fixture startup correction](evidence/fixture-startup-0.2.1.json) adds five
+independent subprocess regressions, giving **32 passing tests** on both
+platforms. It reserves TCP/UDP together, keeps TLS separate and bounds
+collision retries, startup reads and cleanup. The unchanged public API remains
 at the v0.2.0 configuration shape.
 
 On Apple M1, the [180-second churn run](evidence/stress-0.2.1.json) completed
@@ -25,6 +29,11 @@ It records the target/core hashes, seed, toolchain and corpus digests.
 This is coverage-guided codec/auth testing, not network-runtime fuzzing or
 independent security acceptance.
 
+The [hardened wrapper smoke run](evidence/fuzz-wrapper-0.2.1.json) adds a
+separate 30 seconds and 344,105 inputs after lockfile preflight and process
+cleanup changes. It also passed with zero crash artefacts. The earlier
+300-second receipt retains the exact wrapper and parser hashes it tested.
+
 The [actual KithMoot web application](evidence/kithmoot-web-0.2.1.json),
 source `24038110`, passed generated bidirectional decoded video and audio
 through spry-turn over UDP, TCP and TLS. Both browsers configured owner
@@ -34,8 +43,9 @@ from invitations and made zero `/turn` requests. See the
 test certificate; the native benchmark client separately validates a
 generated certificate through its test trust store.
 
-The [controlled M4 comparison](qualification-0.2.1.md) records v0.2.0,
-v0.2.1 and coturn over all three client transports. It supersedes no
+The [current comparison](qualification-0.2.1.md) contains complete M4 and
+Linux matrices: 216 runs and 96,423,584 checked packets, plus a controlled
+v0.2.0/v0.2.1/coturn tuning trial over all three client transports. It supersedes no
 historical receipt: each identifies its own method and source. Public
 firewall/NAT, trusted public certificate renewal, physical GrapheneOS and
 Archy acceptance remain open. The existing independently operated private

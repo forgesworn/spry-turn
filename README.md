@@ -11,12 +11,13 @@ and no media stack. MIT licensed; the repository and initial release are private
 [API](docs/api.md) · [Support development](SUPPORT.md#donations) ·
 [LLM index](llms.txt)
 
-The controlled v0.2.1 native M4 Max loopback comparison measured **19.5%
-more UDP packets/s** and **34.0% more TLS packets/s** than the tested coturn
-configuration at 128 allocations and 1,200-byte payloads. Coturn was **3.0%
-ahead over TCP**. These are delivered rates for that workload, with bounded
-relay ports and TLS enabled in the Rust build. Process RSS excludes kernel
-socket memory. See [current measurements and limitations](docs/qualification-0.2.1.md)
+The full v0.2.1 native M4 Max loopback matrix measured **16–22% more UDP
+packets/s** and **27–35% more TLS packets/s** than the tested coturn
+configuration. TCP ranged from 1.2% behind to 8.5% ahead. These are delivered
+rates for six workload cells per transport, with bounded relay ports and
+TLS enabled in the Rust build. Linux VM results differ, including UDP
+regressions. Process RSS excludes kernel socket memory.
+See [current measurements and limitations](docs/qualification-0.2.1.md)
 and the [historical UDP comparison](docs/benchmarks.md).
 
 The first target is a server running independently on a normal computer.
@@ -85,7 +86,8 @@ credential locally using the same environment:
 For larger workloads, size the process file-descriptor limit for listeners,
 two sockets per optimised UDP allocation and any TCP/TLS connections.
 `--max-allocations` limits logical allocations; it cannot raise an OS limit.
-The comparison runner sets 4,096 for its own processes only.
+The comparison runner raises its own descriptor floor towards 4,096 where
+the hard limit permits, and records the actual inherited limit.
 
 Use an opaque transport label. Do not put room IDs, personal identities or
 application membership in usernames. The credential output is a secret;

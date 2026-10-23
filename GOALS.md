@@ -37,8 +37,12 @@
 - [ ] Decide whether supported coturn deployments need EVEN-PORT, reservation
   tokens, dual allocations, RFC 8489 SHA-256 auth or other extensions.
   Unsupported comprehension-required attributes currently receive 420.
-- [ ] Measure Linux batching and multiple independent workers before adding
-  platform-specific fast paths. macOS results cannot prove Linux performance.
+- [x] Measure Linux receive batching and multiple independent processes before
+  adding runtime paths; the development experiments retain their VM limits.
+- [x] Measure a same-source M4 PGO trial; retain the ordinary release build
+  because the small observed changes do not establish a useful gain.
+- [ ] Repeat Linux performance and resource qualification on independent
+  bare-metal hardware before generalising the virtual-machine observations.
 
 TCP relay allocations (RFC 6062), DTLS client transport, database integrations,
 OAuth, telnet/HTTP administration and clustering are outside the first release.

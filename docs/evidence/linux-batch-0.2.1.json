@@ -1,0 +1,192 @@
+{
+  "schema": 1,
+  "recorded_at": "2026-10-23T21:59:02.284206+00:00",
+  "scope": "Development-only prefilled Linux UDP receive-queue experiment; no spry-turn forwarding claim",
+  "passed": true,
+  "environment": {
+    "architecture": "aarch64",
+    "kernel": "7.0.14-linuxkit",
+    "rustc": "rustc 1.94.1 (e408947bf 2026-03-25)",
+    "source_checksums": [
+      {
+        "path": "experiments/linux-batch/Cargo.toml",
+        "sha256": "5bbbf2a701045dce7a22d3eb8c7064285e9c6a22e388fa3136e5db57ae3eabf7"
+      },
+      {
+        "path": "experiments/linux-batch/Cargo.lock",
+        "sha256": "c2cc17398ab7421834890c380b417e9148132079658be1ce97c88a4ac6e0a1ce"
+      },
+      {
+        "path": "experiments/linux-batch/src/main.rs",
+        "sha256": "ec8766aa3cda7f1f536f5bf592244492f8e3f396764b2819906985111893657e"
+      }
+    ],
+    "binary_sha256": "298787b7779d7e501528e7e36ab766ab87269e588eb8586b96a3a1d31d405ad7",
+    "binary_bytes": 397912,
+    "cpu_max": "200000 100000",
+    "container_memory_max": "2147483648",
+    "vm_mem_total_bytes": 4107407360
+  },
+  "method": {
+    "type": "method",
+    "schema": 1,
+    "experiment": "prefilled-linux-udp-receive-queue",
+    "architecture": "aarch64",
+    "kernel": "7.0.14-linuxkit",
+    "warmup_windows_per_sample": 32,
+    "packets_per_sample": 65536,
+    "runs": 3,
+    "receiver_timing_includes_validation": true,
+    "receiver_timing_excludes_sender": true,
+    "forwarding_performance_claim": false,
+    "kernel_memory_measured": false
+  },
+  "sample_count": 48,
+  "packets_verified": 3145728,
+  "observed_loss_reorder_corruption": 0,
+  "median_comparisons_to_recv_from": [
+    {
+      "receiver_sockets": 1,
+      "payload_bytes": 160,
+      "batch_capacity": 1,
+      "receiver_validation_cost_reduction_percent": 4.305,
+      "whole_workload_cost_reduction_percent": 0.676,
+      "packets_per_receive_call": 1,
+      "payload_arena_bytes": 1200,
+      "header_storage_bytes": 136
+    },
+    {
+      "receiver_sockets": 1,
+      "payload_bytes": 160,
+      "batch_capacity": 8,
+      "receiver_validation_cost_reduction_percent": 36.808,
+      "whole_workload_cost_reduction_percent": 7.483,
+      "packets_per_receive_call": 8,
+      "payload_arena_bytes": 9600,
+      "header_storage_bytes": 696
+    },
+    {
+      "receiver_sockets": 1,
+      "payload_bytes": 160,
+      "batch_capacity": 32,
+      "receiver_validation_cost_reduction_percent": 20.059,
+      "whole_workload_cost_reduction_percent": -16.041,
+      "packets_per_receive_call": 32,
+      "payload_arena_bytes": 38400,
+      "header_storage_bytes": 2616
+    },
+    {
+      "receiver_sockets": 1,
+      "payload_bytes": 1200,
+      "batch_capacity": 1,
+      "receiver_validation_cost_reduction_percent": 1.871,
+      "whole_workload_cost_reduction_percent": 5.062,
+      "packets_per_receive_call": 1,
+      "payload_arena_bytes": 1200,
+      "header_storage_bytes": 136
+    },
+    {
+      "receiver_sockets": 1,
+      "payload_bytes": 1200,
+      "batch_capacity": 8,
+      "receiver_validation_cost_reduction_percent": 27.109,
+      "whole_workload_cost_reduction_percent": 17.651,
+      "packets_per_receive_call": 8,
+      "payload_arena_bytes": 9600,
+      "header_storage_bytes": 696
+    },
+    {
+      "receiver_sockets": 1,
+      "payload_bytes": 1200,
+      "batch_capacity": 32,
+      "receiver_validation_cost_reduction_percent": 30.487,
+      "whole_workload_cost_reduction_percent": 23.643,
+      "packets_per_receive_call": 32,
+      "payload_arena_bytes": 38400,
+      "header_storage_bytes": 2616
+    },
+    {
+      "receiver_sockets": 32,
+      "payload_bytes": 160,
+      "batch_capacity": 1,
+      "receiver_validation_cost_reduction_percent": -6.817,
+      "whole_workload_cost_reduction_percent": 1.156,
+      "packets_per_receive_call": 1,
+      "payload_arena_bytes": 1200,
+      "header_storage_bytes": 136
+    },
+    {
+      "receiver_sockets": 32,
+      "payload_bytes": 160,
+      "batch_capacity": 8,
+      "receiver_validation_cost_reduction_percent": -43.207,
+      "whole_workload_cost_reduction_percent": -26.732,
+      "packets_per_receive_call": 1,
+      "payload_arena_bytes": 9600,
+      "header_storage_bytes": 696
+    },
+    {
+      "receiver_sockets": 32,
+      "payload_bytes": 160,
+      "batch_capacity": 32,
+      "receiver_validation_cost_reduction_percent": -42.492,
+      "whole_workload_cost_reduction_percent": -29.683,
+      "packets_per_receive_call": 1,
+      "payload_arena_bytes": 38400,
+      "header_storage_bytes": 2616
+    },
+    {
+      "receiver_sockets": 32,
+      "payload_bytes": 1200,
+      "batch_capacity": 1,
+      "receiver_validation_cost_reduction_percent": -2.234,
+      "whole_workload_cost_reduction_percent": -1.805,
+      "packets_per_receive_call": 1,
+      "payload_arena_bytes": 1200,
+      "header_storage_bytes": 136
+    },
+    {
+      "receiver_sockets": 32,
+      "payload_bytes": 1200,
+      "batch_capacity": 8,
+      "receiver_validation_cost_reduction_percent": 12.837,
+      "whole_workload_cost_reduction_percent": 14.005,
+      "packets_per_receive_call": 1,
+      "payload_arena_bytes": 9600,
+      "header_storage_bytes": 696
+    },
+    {
+      "receiver_sockets": 32,
+      "payload_bytes": 1200,
+      "batch_capacity": 32,
+      "receiver_validation_cost_reduction_percent": -36.59,
+      "whole_workload_cost_reduction_percent": -30.631,
+      "packets_per_receive_call": 1,
+      "payload_arena_bytes": 38400,
+      "header_storage_bytes": 2616
+    }
+  ],
+  "raw_results": {
+    "path": "linux-batch-results.jsonl",
+    "sha256": "7c8d4a141bd380e88d3a3450327107d5c2bf67a587f3bdded880133aa4f3cc18"
+  },
+  "checks": {
+    "linux_target_cargo_check": "passed",
+    "linux_target_clippy_all_targets_warnings_denied": "passed on macOS cross target",
+    "linux_socket_and_payload_unit_tests": "2 passed",
+    "linux_release_build": "passed",
+    "native_linux_clippy": "not available; toolchain component absent"
+  },
+  "limits": [
+    "Linux container in a macOS-hosted VM, not bare-metal Linux or M4 benchmark",
+    "Two-vCPU container quota; 2 GiB container memory limit inside configured 4 GiB VM",
+    "Same-thread prefilled queues with identical offered32-packet windows; receiver timing excludes sender",
+    "Receiver timing includes validation; whole-workload timing includes sender; neither is network forwarding latency",
+    "Unconnected IPv4 sockets only; no TURN protocol, connected-UDP path or simultaneous forwarding",
+    "Instrumented receive API call counts; no independent syscall tracer",
+    "Rcvbuf limits are configured limits, not measured kernel memory; storage excludes allocator overhead",
+    "Three repetitions on a shared VM; timing variation remains in the raw samples",
+    "No runtime dependency or default batching feature added"
+  ],
+  "fixture_processes_threads_or_services_left": false
+}

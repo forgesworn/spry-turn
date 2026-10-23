@@ -6,6 +6,7 @@ SO_REUSEPORT distribution, maximum capacity or transparent client failover.
 """
 import argparse
 import concurrent.futures
+import hashlib
 import importlib.util
 import json
 import math
@@ -144,6 +145,8 @@ def main():
     if required != host_arch or any(row["architectures"] != [required] for row in identities.values()):
         parser.error("all benchmark executables must match the native host architecture")
     output = {"schema": 1, "source_id": args.source_id, "binaries": identities,
+        "runner_sources": {relative: hashlib.sha256((Path(__file__).resolve().parents[1] / relative).read_bytes()).hexdigest()
+            for relative in ("scripts/worker-scaling.py", "scripts/compare.py", "tests/interop.py")},
         "machine": {"cpu": compare.cpu_brand(), "system": os.uname().sysname,
             "release": os.uname().release, "logical_cpus": os.cpu_count(),
             "process_descriptor_limit": resource.getrlimit(resource.RLIMIT_NOFILE)[0],

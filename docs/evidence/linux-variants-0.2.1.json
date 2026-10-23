@@ -1,0 +1,36 @@
+{
+  "source_id": "b694b5412cbf084fda037bf4d8008b5cfc9d14753008f1b37bbd0367014a0bc7",
+  "runtime_and_loader_source_unchanged": true,
+  "variants": {
+    "spry-default": {
+      "cargo_features": [
+        "runtime",
+        "turn",
+        "connected-udp",
+        "direct-index",
+        "tls"
+      ],
+      "cargo_default_features": true,
+      "sha256": "71c43084a568b85fbebf5ad814734277a24d46910f5c321eecf21ca286e3b6f7",
+      "bytes": 1381008
+    },
+    "spry-portable": {
+      "cargo_features": [
+        "runtime",
+        "turn",
+        "tls"
+      ],
+      "cargo_default_features": false,
+      "sha256": "b3fd46669b2e6d7cf47a38abfb29e800a61f6dc91c9bd8a2f7f4e1bc58937d0e",
+      "bytes": 1381008
+    }
+  },
+  "shared_build_flags": {
+    "profile": "release",
+    "target": "aarch64-unknown-linux-gnu",
+    "locked": true,
+    "rustflags": null,
+    "target_directory": "checkout target"
+  },
+  "note": "Portable comparison changes Cargo feature selection only; it retains the same source and stream-interest caching. Portable is not the historical v0.2.0 source baseline."
+}

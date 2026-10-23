@@ -8,7 +8,7 @@ Native UDP/TCP clients and optional TLS use UDP peer allocations. Browser applic
 
 This is an initial implementation, without full coturn parity or production qualification. UDP peer-relay port ranges are optional and fail closed on exhaustion. Static user databases, TCP relay allocations, DTLS, dual allocations and deployed Archy/Sapflow integration are not implemented. Physical phone and public-network acceptance remain open.
 
-The controlled v0.2.1 native ARM64 M4 Max loopback comparison at 128 allocations and 1,200-byte payloads measured 19.5% higher UDP delivery rate and 34.0% higher TLS delivery rate than the tested coturn configuration; coturn was 3.0% ahead over TCP. These are workload results, not maximum WAN capacity. Stream and kernel socket memory have separate costs. Consult current qualification and raw evidence before reusing figures.
+The full v0.2.1 native ARM64 M4 Max loopback matrix measured 16–22% higher UDP delivery rate and 27–35% higher TLS delivery rate than the tested coturn configuration; TCP ranged from 1.2% behind to 8.5% ahead. Linux VM results differ, including UDP regressions. These are workload results, not maximum WAN capacity. Stream and kernel socket memory have separate costs. Consult current qualification and raw evidence before reusing figures.
 
 These files provide navigation and source context for authorised readers and tools. They do not change repository visibility or guarantee indexing by search engines or language models.
 

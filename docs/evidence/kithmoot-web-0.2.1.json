@@ -42,7 +42,7 @@
     }
   ],
   "server_version": "spry-turn 0.2.1",
-  "server_binary_sha256": "37ab1b48f016840a9555509b98b47d901a202107e06db31d32faf0086d335baf",
+  "server_binary_sha256": "0bbcfa0c3efd6cce6a749c706e144de1740e37eb44c146f37a8887319c7085fb",
   "results": [
     {
       "transport": "udp",
@@ -50,6 +50,7 @@
       "applicationRelayOnly": true,
       "injectedIceServers": false,
       "configuredThroughSettings": true,
+      "iceConfigurationMatchesOperator": true,
       "invitationOmitsCredentials": true,
       "generatedMediaOnly": true,
       "certificateBypass": true,
@@ -60,9 +61,9 @@
               "localType": "relay",
               "remoteType": "relay",
               "relayProtocol": "udp",
-              "framesDecoded": 3,
-              "audioBytes": 11832,
-              "audioEnergy": 2.9299999999999815
+              "framesDecoded": 10,
+              "audioBytes": 331,
+              "audioEnergy": 0.04
             }
           ],
           "participants": 2,
@@ -75,9 +76,9 @@
               "localType": "relay",
               "remoteType": "relay",
               "relayProtocol": "udp",
-              "framesDecoded": 13,
-              "audioBytes": 1541,
-              "audioEnergy": 0.34000000000000014
+              "framesDecoded": 57,
+              "audioBytes": 10890,
+              "audioEnergy": 2.6999999999999864
             }
           ],
           "participants": 2,
@@ -93,6 +94,7 @@
       "applicationRelayOnly": true,
       "injectedIceServers": false,
       "configuredThroughSettings": true,
+      "iceConfigurationMatchesOperator": true,
       "invitationOmitsCredentials": true,
       "generatedMediaOnly": true,
       "certificateBypass": true,
@@ -103,9 +105,9 @@
               "localType": "relay",
               "remoteType": "relay",
               "relayProtocol": "tcp",
-              "framesDecoded": 5,
-              "audioBytes": 605,
-              "audioEnergy": 0.07
+              "framesDecoded": 23,
+              "audioBytes": 3997,
+              "audioEnergy": 0.9500000000000006
             }
           ],
           "participants": 2,
@@ -118,9 +120,9 @@
               "localType": "relay",
               "remoteType": "relay",
               "relayProtocol": "tcp",
-              "framesDecoded": 6,
-              "audioBytes": 1073,
-              "audioEnergy": 0.25000000000000006
+              "framesDecoded": 39,
+              "audioBytes": 6033,
+              "audioEnergy": 1.460000000000001
             }
           ],
           "participants": 2,
@@ -136,6 +138,7 @@
       "applicationRelayOnly": true,
       "injectedIceServers": false,
       "configuredThroughSettings": true,
+      "iceConfigurationMatchesOperator": true,
       "invitationOmitsCredentials": true,
       "generatedMediaOnly": true,
       "certificateBypass": true,
@@ -146,9 +149,9 @@
               "localType": "relay",
               "remoteType": "relay",
               "relayProtocol": "tls",
-              "framesDecoded": 6,
-              "audioBytes": 578,
-              "audioEnergy": 0.09
+              "framesDecoded": 23,
+              "audioBytes": 2022,
+              "audioEnergy": 0.4854917497297925
             }
           ],
           "participants": 2,
@@ -161,9 +164,9 @@
               "localType": "relay",
               "remoteType": "relay",
               "relayProtocol": "tls",
-              "framesDecoded": 9,
-              "audioBytes": 1434,
-              "audioEnergy": 0.3200000000000001
+              "framesDecoded": 37,
+              "audioBytes": 7574,
+              "audioEnergy": 1.8600000000000014
             }
           ],
           "participants": 2,
@@ -182,8 +185,8 @@
   ],
   "app_build": {
     "file_count": 355,
-    "sha256": "2e09f8615514bfd7ecfbd35d60d7db4a4befceb7024fd55c7fe309b99b767b89"
+    "sha256": "80f887a6be4043c55ec0d0a9c616641f19688f3d7a13405fedd9b92e9f54aafe"
   },
-  "app_built_by_runner": true,
+  "app_built_by_runner": false,
   "processes_stopped": true
 }

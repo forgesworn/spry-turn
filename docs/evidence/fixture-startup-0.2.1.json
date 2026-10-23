@@ -1,0 +1,60 @@
+{
+  "schema": 1,
+  "scope": "test-fixture-listener-startup-hardening",
+  "observed_ci_failure": {
+    "run_id": 40030339527,
+    "job": "verify (ubuntu-latest)",
+    "phase": "slow_readers fixture startup",
+    "os_error": "EADDRINUSE",
+    "preceding_phases_passed": [
+      "churn",
+      "loss_and_jitter",
+      "credential_expiry",
+      "slow_streams"
+    ]
+  },
+  "diagnosis": "The previous fixture selected its main listener with UDP port zero, without proving the same number was available to TCP. TLS was selected and released independently. Linux reproduction confirms that a TCP TIME_WAIT port can remain available to UDP while native TCP binding correctly refuses it. The exact conflicting socket in the hosted failure was not captured.",
+  "fixture_changes": [
+    "Reserve one TCP and UDP listener number together, and a distinct optional TLS TCP number, while all reservations remain held.",
+    "Choose generated unprivileged listener numbers outside the usual client ephemeral ranges used by the test hosts.",
+    "Release reservations immediately before launch; retry only an observed EADDRINUSE hand-off collision, at most eight attempts within a ten-second readiness deadline.",
+    "Bound certificate generation and startup output, read partial stderr without blocking, and close/reap failed children."
+  ],
+  "runtime_changed": false,
+  "source_checksums": [
+    {
+      "path": "tests/interop.py",
+      "sha256": "f3e603f8c09363f276476f20eec047c12118f630b3cb09a6ae5620caf55e1e7b"
+    }
+  ],
+  "regressions": [
+    "TCP/UDP reservations remain held and TLS differs.",
+    "Occupied TCP or UDP candidates are skipped.",
+    "A forced hand-off collision recovers and the failed child is reaped.",
+    "A non-bind configuration failure is rejected without retry.",
+    "A partial startup line obeys the deadline and the child is reaped."
+  ],
+  "validation": {
+    "protocol_tests": 27,
+    "fixture_tests": 5,
+    "macos_total_tests_passed": 32,
+    "macos_binary_sha256": "0bbcfa0c3efd6cce6a749c706e144de1740e37eb44c146f37a8887319c7085fb",
+    "linux_total_tests_passed": 32,
+    "linux_binary_sha256": "71c43084a568b85fbebf5ad814734277a24d46910f5c321eecf21ca286e3b6f7",
+    "linux_stress_passed": true,
+    "linux_churn_allocations": 2905,
+    "linux_stress_seconds": 57.663,
+    "linux_reproduction": {
+      "schema": 1,
+      "scope": "linux-dual-protocol-port-selection-reproduction",
+      "tcp_time_wait_present": true,
+      "udp_bind_allowed": true,
+      "tcp_bind_errno": 98,
+      "expected_errno": 98,
+      "native_startup_rejected_conflicting_port": true,
+      "binary_sha256": "71c43084a568b85fbebf5ad814734277a24d46910f5c321eecf21ca286e3b6f7",
+      "limits": "Demonstrates the former fixture selection failure mechanism; the exact conflicting socket in the earlier hosted run was not captured."
+    }
+  },
+  "processes_stopped": true
+}

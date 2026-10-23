@@ -14,8 +14,8 @@ cd spry-turn
 ```
 
 Source is the portable installation path. Cargo and npm publication are
-disabled. The private v0.2.1 GitHub prerelease also carries a macOS ARM64
-TLS-enabled executable archive and a WASM codec archive. It does not make
+disabled. The private v0.2.1 GitHub prerelease also carries macOS ARM64 and
+GNU/Linux ARM64 TLS-enabled executable archives, and a WASM codec archive. It does not make
 the source or artefacts publicly downloadable. Authorised users can fetch
 and verify the archives in an empty directory:
 
@@ -24,9 +24,11 @@ gh release download v0.2.1 --repo forgesworn/spry-turn
 shasum -a 256 -c SHA256SUMS
 ```
 
-The macOS executable is not a Linux, Windows or phone build. A release
-does not establish production or physical-device acceptance. The source
-build below remains available for other supported native environments.
+Choose the matching operating-system archive. The Linux executable was
+tested with Debian glibc 2.36 and needs glibc and libgcc; it is not an Alpine
+musl, Windows or phone build. A release does not establish production or
+physical-device acceptance. Source builds remain available for other
+supported native environments.
 
 Rust 1.85 or newer is declared; Rust 1.94.1 and 1.96 were used for the
 initial verification and native M4 measurements. Current CI checks stable

@@ -1,0 +1,72 @@
+{
+  "schema": 1,
+  "engine": "libFuzzer",
+  "coverage_guided": true,
+  "target": "fuzz/fuzz_targets/wire.rs",
+  "sanitizer": "address",
+  "toolchain": "nightly-2025-12-05",
+  "seed": 7411,
+  "requested_seconds": 30,
+  "elapsed_seconds_including_build": 51.033,
+  "returncode": 0,
+  "completed": true,
+  "executions": 344105,
+  "coverage_edges": 698,
+  "coverage_features": 1561,
+  "final_executions_per_second": 11100,
+  "corpus_files": 355,
+  "initial_corpus": {
+    "files": 349,
+    "sha256": "1b628b7c79852ba980db6e2ca424e917228a24900474809796c01287284e240e"
+  },
+  "final_corpus": {
+    "files": 355,
+    "sha256": "c3b4fa7a47fc07ebbbb8ea6e88f1f3729a43b615866293c5013e2d8a31a268e8"
+  },
+  "new_crash_artifact_count": 0,
+  "fuzzer_peak_rss_mb": 332,
+  "source_sha256": [
+    {
+      "path": "src/lib.rs",
+      "sha256": "4111fc23408b917771e5455d102f304b4cc5e8d037e4392c8f26193b0e5d4d97"
+    },
+    {
+      "path": "src/limits.rs",
+      "sha256": "0c87ef328ca701e9ec7cac26419d88e09e0ca295bba4048fa7b492e26de03b8e"
+    },
+    {
+      "path": "src/wire.rs",
+      "sha256": "ddcaa1a89a11a1ea438e20a58b7524d55563775eb9f37cb583b01859fa0c1467"
+    },
+    {
+      "path": "src/auth.rs",
+      "sha256": "267d7e76987e912f03c87985403ededa710c4cd76499f30e20768765a5ad4bcb"
+    },
+    {
+      "path": "Cargo.toml",
+      "sha256": "7da1b4cfe614a7228cca44a966d5f0d3fe709f701b884632b5c244ebd926c43c"
+    },
+    {
+      "path": "fuzz/fuzz_targets/wire.rs",
+      "sha256": "c0bf98f92752bce3f15169415e8eb6e5ec8903021aac7c110ca332d36969447c"
+    },
+    {
+      "path": "fuzz/Cargo.lock",
+      "sha256": "f5ff2055d2f9f2e211e5576d5b75220f0273e71b4d443de8a69a3c9c02cb7f96"
+    },
+    {
+      "path": "fuzz/Cargo.toml",
+      "sha256": "dd6d339b90be7f60a9855c27ab64bb8bbcc2374d0f10d9a003685d2a31891835"
+    },
+    {
+      "path": "tests/fuzz.py",
+      "sha256": "9b29696adfebd624e627a192ab60b39a264b8680915b26f042f85ce29e6fa5c5"
+    },
+    {
+      "path": "tests/interop.py",
+      "sha256": "563a81ffa1d97dc3eb797de5aabd655f91ffd1b8ff7176464f9384d4f105d4ff"
+    }
+  ],
+  "source_unchanged_during_run": true,
+  "limits": "Parser/auth/codec in process; no network/runtime fuzzing or independent security review."
+}
