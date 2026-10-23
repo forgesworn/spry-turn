@@ -1,0 +1,71 @@
+{
+  "date": "2026-10-23",
+  "licence": "MIT",
+  "copyright": "2026 TheCryptoDonkey",
+  "reviewed_runtime_head": "decf5a08729fb91419e23b35f46dcd9b8ab3ccf5",
+  "source_scan": {
+    "tool": "Gitleaks 8.30.1",
+    "history": "all local refs including origin refs, no findings",
+    "working_source": "no findings"
+  },
+  "release_checks": [
+    "downloaded archives match published SHA256SUMS",
+    "native and WASM archives retain licence and dependency notices",
+    "no builder home paths, private-key blocks or GitHub personal tokens found in archive contents"
+  ],
+  "source_or_runtime_changes": false,
+  "existing_tags_and_archive_bytes": "retained",
+  "releases": [
+    {
+      "tag": "v0.1.0",
+      "files": [
+        {
+          "name": "SHA256SUMS",
+          "bytes": 312,
+          "sha256": "b34be89dca924f7a09b748f09580680d7c598d07b28c9dad6ea6f7206e4a6236"
+        },
+        {
+          "name": "release-manifest.json",
+          "bytes": 4286,
+          "sha256": "f99b4cfd9242c4da38eb091989f0c1b363079e9f4c2db183672fb95e22af9777"
+        },
+        {
+          "name": "spry-turn-v0.1.0-aarch64-apple-darwin.tar.gz",
+          "bytes": 690730,
+          "sha256": "81edba6282000f878f84c0de888912ac5efa2eaf2702db8da2011323b1475b1a"
+        },
+        {
+          "name": "spry-turn-v0.1.0-wasm32-unknown-unknown.tar.gz",
+          "bytes": 54873,
+          "sha256": "176eeabdedb552c6cfd1c3d1ed465433a747ab89e7016fadb930c9dac8ff30eb"
+        }
+      ]
+    },
+    {
+      "tag": "v0.2.0",
+      "files": [
+        {
+          "name": "SHA256SUMS",
+          "bytes": 312,
+          "sha256": "3101ccb74ab701a7ae133de807969d5735a70f3dc0b6d3afedd0fb7b9c64880a"
+        },
+        {
+          "name": "release-manifest.json",
+          "bytes": 4334,
+          "sha256": "8bda6b5aaa0809e19b0ad75e9ee7edffe70c74cd781ffbce13e7e2f66b5de423"
+        },
+        {
+          "name": "spry-turn-v0.2.0-aarch64-apple-darwin.tar.gz",
+          "bytes": 691782,
+          "sha256": "0a006c69b09360f94eb938a50800f0fdc36add5a4939855c432da5edcbe01bd0"
+        },
+        {
+          "name": "spry-turn-v0.2.0-wasm32-unknown-unknown.tar.gz",
+          "bytes": 54919,
+          "sha256": "4a6a4b60f0ca465e33b763c9cc5d164b0f2158d58b45637692f28cd676872870"
+        }
+      ]
+    }
+  ],
+  "scope": "public source and existing GitHub prereleases; no package registry, image, Pages site, credential issuer or hosted relay"
+}

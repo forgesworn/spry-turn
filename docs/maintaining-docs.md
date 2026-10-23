@@ -30,15 +30,16 @@ Sponsor button. Recheck external donation pages when changing recipients.
 
 Keep the GitHub description, repository topics, Cargo description, keywords
 and documentation URL accurate. `publish = false` and npm's `private: true`
-continue to block package publication. The private repository's root
-`llms.txt` helps authorised tools; unauthenticated crawlers cannot read it.
+continue to block package publication. The public repository's root
+`llms.txt` provides navigation for readers and tools.
 There is no claim of search-engine ranking, model training inclusion or
 guaranteed ingestion.
 
-If public publication is authorised later, independently review source,
-history, fixtures, release artefacts and legal position before changing
-visibility. Do not add a public Pages site or copy private documentation to
-a public domain just to improve discovery. Donation links are informational
+The owner authorised public MIT source and the existing GitHub prereleases
+on 23 October 2026. Source history, fixtures and release artefacts were checked
+for secrets and private paths before changing visibility; tags and archive
+bytes were retained. A public Pages site, package registries and hosted relay
+operation remain separate scope. Donation links are informational
 and never grant transport or application access.
 
 ## Ship checklist
@@ -46,7 +47,7 @@ and never grant transport or application access.
 Run [the required checks](../CONTRIBUTING.md), inspect the staged diff and
 scan for secrets. Push a branch, merge its reviewed PR only after Linux/macOS
 CI succeeds, then verify the merged head. Tag the reviewed commit and make
-the GitHub release a private prerelease. Verify the tag target, release
+the GitHub release a prerelease while qualification remains incomplete. Verify the tag target, release
 visibility and any downloaded asset checksums. Public packages, images,
 Pages and a running TURN service require their own explicit scope.
 

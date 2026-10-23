@@ -2,7 +2,7 @@
 
 > Lightweight Rust STUN/TURN server, embeddable native relay and WASM packet codec. MIT; maintained by TheCryptoDonkey under ForgeSworn.
 
-Version 0.2.0. Repository and initial GitHub prerelease are private; authorised access is required for source and release artefacts. There is no crates.io, docs.rs or npm publication, hosted relay, credential service or public documentation site.
+Version 0.2.0. Source and GitHub prereleases are public, under MIT, copyright 2026 TheCryptoDonkey. There is no crates.io, docs.rs or npm publication, hosted relay, credential service or public documentation site.
 
 Native UDP/TCP clients and optional TLS use UDP peer allocations. Browser applications use their existing WebRTC ICE implementation. Ordinary browser WASM cannot host a raw-socket TURN server. Shared TURN secrets belong only to trusted operator tools; give clients short-lived credentials.
 
@@ -10,13 +10,13 @@ This is an initial implementation, without full coturn parity or production qual
 
 Historical native ARM64 M4 Max UDP loopback measurements show 17–22% more throughput than the tested coturn configuration. They predate the bounded relay-port feature and do not requalify later runtime changes. The connected-UDP optimisation adds one socket per allocation, and process RSS excludes kernel buffers. Consult the benchmark method before reusing any figures.
 
-These files provide navigation and source context for authorised readers and tools. They do not change repository visibility or guarantee indexing by search engines or language models.
+These files provide navigation and source context for readers and tools. They do not change repository visibility or guarantee indexing by search engines or language models.
 
 ## Get started
 
 - [Overview](https://github.com/forgesworn/spry-turn/blob/main/README.md): Scope, features, quick commands and measured performance.
 - [Documentation index](https://github.com/forgesworn/spry-turn/blob/main/docs/README.md): Choose installation, integration, API or operator guidance.
-- [Getting started](https://github.com/forgesworn/spry-turn/blob/main/docs/getting-started.md): Authorised source checkout, local server, credentials and TLS.
+- [Getting started](https://github.com/forgesworn/spry-turn/blob/main/docs/getting-started.md): Public source checkout, local server, credentials and TLS.
 - [Client and host integration](https://github.com/forgesworn/spry-turn/blob/main/docs/integration.md): Browser ICE, native clients, Rust embedding and WASM example.
 - [Rust and WASM API](https://github.com/forgesworn/spry-turn/blob/main/docs/api.md): Cargo features, configuration, native methods and PacketArena.
 - [Coturn compatibility](https://github.com/forgesworn/spry-turn/blob/main/docs/coturn-compatibility.md): Feature map, configuration concepts and migration gaps.
@@ -32,12 +32,12 @@ These files provide navigation and source context for authorised readers and too
 - [Native M4 benchmarks](https://github.com/forgesworn/spry-turn/blob/main/docs/benchmarks.md): Matched ARM64 coturn comparison, raw evidence and resource trade-offs.
 - [Verification](https://github.com/forgesworn/spry-turn/blob/main/docs/verification.md): Actual local/CI evidence and explicitly unqualified gates.
 - [Acceptance and roadmap](https://github.com/forgesworn/spry-turn/blob/main/GOALS.md): Completed standalone work, missing coturn features and later integrations.
-- [Changelog](https://github.com/forgesworn/spry-turn/blob/main/CHANGELOG.md): Current and historical private prerelease contents.
+- [Changelog](https://github.com/forgesworn/spry-turn/blob/main/CHANGELOG.md): Current and historical prerelease contents.
 
 ## Optional
 
 - [Contributing](https://github.com/forgesworn/spry-turn/blob/main/CONTRIBUTING.md): Validation, synthetic fixtures, performance evidence and cleanup.
-- [Coding-agent instructions](https://github.com/forgesworn/spry-turn/blob/main/AGENTS.md): Repository privacy, safe Rust and required checks.
+- [Coding-agent instructions](https://github.com/forgesworn/spry-turn/blob/main/AGENTS.md): Publication boundaries, safe Rust and required checks.
 - [Maintaining documentation](https://github.com/forgesworn/spry-turn/blob/main/docs/maintaining-docs.md): Generation, link checks, metadata, privacy and shipment.
 - [Transport position](https://github.com/forgesworn/spry-turn/blob/main/docs/legal/transport-position.md): Publisher/operator role and unresolved legal interpretations.
 - [MIT licence](https://github.com/forgesworn/spry-turn/blob/main/LICENSE): Licence for original source.
