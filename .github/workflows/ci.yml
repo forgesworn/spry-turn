@@ -12,6 +12,10 @@ jobs:
       CARGO_INCREMENTAL: "0"
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - run: npm run check:docs
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -27,9 +31,6 @@ jobs:
           cargo build --locked --release --target wasm32-unknown-unknown --no-default-features --features wasm --lib
       - run: cargo build --locked --release --features tls
       - run: python3 tests/interop.py --tls
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 24
       - run: npm ci --ignore-scripts
       - run: npx playwright install --with-deps chromium
       - run: python3 tests/browser.py --tls
