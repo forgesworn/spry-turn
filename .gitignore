@@ -1,0 +1,14 @@
+/target/
+/.local/
+/node_modules/
+.env
+.env.*
+*.local.*
+*.pem
+*.key
+*.p12
+*.pcap
+*.pcapng
+.DS_Store
+.codex/
+__pycache__/

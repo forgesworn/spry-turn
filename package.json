@@ -1,0 +1,7 @@
+{
+  "name": "spry-turn-interop",
+  "private": true,
+  "type": "module",
+  "scripts": { "test:browser": "python3 tests/browser.py --tls" },
+  "devDependencies": { "playwright": "1.62.1" }
+}

@@ -1,0 +1,35 @@
+name: ci
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  verify:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --locked --all-features --all-targets -- -D warnings
+      - run: cargo test --locked --all-features
+      - run: cargo test --locked --no-default-features --lib
+      - run: cargo test --locked --no-default-features --features turn --lib
+      - if: matrix.os == 'ubuntu-latest'
+        run: |
+          rustup target add wasm32-unknown-unknown
+          cargo clippy --locked --target wasm32-unknown-unknown --no-default-features --features wasm --lib -- -D warnings
+          cargo build --locked --release --target wasm32-unknown-unknown --no-default-features --features wasm --lib
+      - run: cargo build --locked --release --features tls
+      - run: python3 tests/interop.py --tls
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - run: npm ci --ignore-scripts
+      - run: npx playwright install --with-deps chromium
+      - run: python3 tests/browser.py --tls

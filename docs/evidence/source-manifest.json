@@ -1,0 +1,46 @@
+{
+  "date": "2026-10-23",
+  "files": [
+    {
+      "path": "Cargo.lock",
+      "sha256": "42ec0f375bb45f2a2a609a5715cb093bb02287d76bc26f61ddf5923a7f06f47c"
+    },
+    {
+      "path": "Cargo.toml",
+      "sha256": "62b62c3c2e74f91f987afe0b920a0aa23017c79d8d4927e6a0fef5834ed29e99"
+    },
+    {
+      "path": "examples/load.rs",
+      "sha256": "27a9760406d35fa398ee2ec81a3ffdfd3741b81e62ef479a156658990966b6a3"
+    },
+    {
+      "path": "src/auth.rs",
+      "sha256": "267d7e76987e912f03c87985403ededa710c4cd76499f30e20768765a5ad4bcb"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "4111fc23408b917771e5455d102f304b4cc5e8d037e4392c8f26193b0e5d4d97"
+    },
+    {
+      "path": "src/limits.rs",
+      "sha256": "0c87ef328ca701e9ec7cac26419d88e09e0ca295bba4048fa7b492e26de03b8e"
+    },
+    {
+      "path": "src/main.rs",
+      "sha256": "82d79f81f6a804f7cda282e653639d105e21de87160df67fa870900c34d4209c"
+    },
+    {
+      "path": "src/turn.rs",
+      "sha256": "787612976bffdb26613c166762fdcc7fad6e891b447204a6793443c057d6d10d"
+    },
+    {
+      "path": "src/wasm.rs",
+      "sha256": "33bb0166123af49d89df5b08df76dfb0f9864170fde0546fa29cb8d6ebcf6be5"
+    },
+    {
+      "path": "src/wire.rs",
+      "sha256": "ddcaa1a89a11a1ea438e20a58b7524d55563775eb9f37cb583b01859fa0c1467"
+    }
+  ],
+  "note": "SHA-256 of reviewed source files. Native M4 build source hashes and compiler details are recorded separately in m4-build.json."
+}

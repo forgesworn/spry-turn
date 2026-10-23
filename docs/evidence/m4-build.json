@@ -1,0 +1,68 @@
+{
+  "runtime_target": "aarch64-apple-darwin",
+  "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)\nbinary: rustc\ncommit-hash: ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96\ncommit-date: 2026-05-25\nhost: x86_64-apple-darwin\nrelease: 1.96.0\nLLVM version: 22.1.2",
+  "server": {
+    "bytes": 402912,
+    "sha256": "3487eb9725743a4169bf8cf33ddf66242da0ba915a1f489bfc782e250a0b4465"
+  },
+  "load_generator": {
+    "sha256": "6401631d8ed67717f36596a3a280087f0359640fffc2e8825bf4eaaa20b53121"
+  },
+  "coturn": {
+    "version": "4.18.0",
+    "source_sha256": "28d55294ac596fbd129b293a85e7bb1c5dc4bd15b7fb55c500f355149e5f4e28",
+    "reference_strip_x_bytes": 487032,
+    "fully_stripped_bytes": 462616,
+    "cflags": "-O3 -DNDEBUG; database backends and Prometheus disabled",
+    "libraries": [
+      "libevent 2.1.13",
+      "OpenSSL 3.6.4"
+    ],
+    "relay_threads": 0
+  },
+  "source_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "a617253a8e9b5bd2f97bce346f6638a0953b0354c8a8315b7474c7f4da4933e0"
+    },
+    {
+      "path": "Cargo.lock",
+      "sha256": "42ec0f375bb45f2a2a609a5715cb093bb02287d76bc26f61ddf5923a7f06f47c"
+    },
+    {
+      "path": "examples/load.rs",
+      "sha256": "dbcefd60b066d9965345ccc62b9322bb2a2c2e947bcf5721c1ae541c4cdbc6f1"
+    },
+    {
+      "path": "src/auth.rs",
+      "sha256": "2e7fd6809f9aeb4e96d6ad2d60ddcaf2758c91cf3f48cdd0645861cf870eba57"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "6cabf5fd9ba23cba287dc3b94c728e59a450842207a55dba1d3d8eb323c1338b"
+    },
+    {
+      "path": "src/limits.rs",
+      "sha256": "0c87ef328ca701e9ec7cac26419d88e09e0ca295bba4048fa7b492e26de03b8e"
+    },
+    {
+      "path": "src/main.rs",
+      "sha256": "82d79f81f6a804f7cda282e653639d105e21de87160df67fa870900c34d4209c"
+    },
+    {
+      "path": "src/turn.rs",
+      "sha256": "787612976bffdb26613c166762fdcc7fad6e891b447204a6793443c057d6d10d"
+    },
+    {
+      "path": "src/wasm.rs",
+      "sha256": "9e6c171ebe6a4c91a1e62b2dd108ed9b2ef71ce4d67eab3524a642576302c5b2"
+    },
+    {
+      "path": "src/wire.rs",
+      "sha256": "ddcaa1a89a11a1ea438e20a58b7524d55563775eb9f37cb583b01859fa0c1467"
+    }
+  ],
+  "source_normalisation": "Rustfmt 1.94.1 normalisation of the exact retained M4 source archive matches every reviewed Rust source file.",
+  "source_archive_sha256": "89e15f73cd13641bf7d71038a1f61565e327cdf7a09b0d0f603c973bd7fbeb37",
+  "repository_metadata_change": "Repository URL updated to forgesworn/spry-turn after benchmarking; runtime Rust source is unchanged."
+}
