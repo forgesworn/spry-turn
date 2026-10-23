@@ -14,17 +14,24 @@
   a native baseline and coturn with resource costs recorded.
 - [x] WASM protocol arena, actual execution and bounded buffer reuse test.
 - [x] Private repository, source/secret review and CI readback.
+- [x] Controlled bounded-port M4 UDP/TCP/TLS comparison against v0.2.0 and
+  coturn, with a measured stream-readiness optimisation.
+- [x] Actual KithMoot web application: device-selected credentials, relay-only
+  generated media over UDP/TCP/TLS and no credential-service request.
+- [x] Bounded local allocation churn, injected loss/jitter, credential expiry,
+  slow-client recovery and 300 seconds of coverage-guided ASan fuzzing.
 
 ## Before replacing an existing deployment
 
 - [x] Operator-selected bounded UDP relay port range and firewall/certificate plan.
 - [ ] Applied firewall/NAT, trusted public certificate lifecycle and independent
   cross-network deployment acceptance; a local plan is not this evidence.
-- [ ] Real KithMoot web and native interoperability against a separately chosen
-  server, without adding a project-operated credential service.
+- [ ] Cross-network KithMoot web and physical native interoperability against
+  a separately chosen operator, without a project-operated credential service.
 - [ ] Packet-loss, jitter, blocked UDP, IPv6, long-lived refresh, reconnect,
   certificate validation/renewal and resource-exhaustion qualification.
-- [ ] Broader RFC conformance suite and sustained coverage-guided fuzzing.
+- [ ] Broader RFC conformance and longer network/runtime fuzzing campaigns;
+  the recorded bounded codec/auth campaign is not a security review.
 - [ ] Independent security review, including nonce/auth state and relay targets.
 - [ ] Static long-term user credentials if the target deployments require them.
 - [ ] Decide whether supported coturn deployments need EVEN-PORT, reservation

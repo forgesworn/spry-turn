@@ -52,6 +52,67 @@ mod policy_tests {
     use super::*;
 
     #[test]
+    #[cfg(all(feature = "connected-udp", unix))]
+    fn stream_backpressure_rearms_and_returns_to_read_interest() {
+        let mut config = Config::local(vec![1; 32]);
+        config.listen.set_port(0);
+        let mut server = Server::bind(config).unwrap();
+        let mut client = std::net::TcpStream::connect(server.local_addr().unwrap()).unwrap();
+        client.set_nonblocking(true).unwrap();
+        server.accept(TCP);
+        let token = *server.connections.keys().next().unwrap();
+        socket2::SockRef::from(&server.connections[&token].socket)
+            .set_send_buffer_size(1024)
+            .unwrap();
+        let payload = vec![0x5a; 32_768];
+        let mut expected = 0;
+        // Fill the actual socket until the nonblocking writer queues data.
+        // Stop as soon as it does, keeping the application queue bounded.
+        for _ in 0..1024 {
+            server.send_client(Client::Stream(token), &payload);
+            expected += payload.len();
+            let conn = server
+                .connections
+                .get(&token)
+                .expect("queue remains bounded");
+            if conn.writable_interest {
+                assert!(conn.written < conn.output.len());
+                break;
+            }
+        }
+        assert!(server.connections[&token].writable_interest);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut received = 0;
+        let mut buffer = [0; 65_536];
+        while received < expected && Instant::now() < deadline {
+            match client.read(&mut buffer) {
+                Ok(n) => {
+                    assert!(n != 0, "connection stays open while draining");
+                    assert!(buffer[..n].iter().all(|byte| *byte == 0x5a));
+                    received += n;
+                }
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => (),
+                Err(error) => panic!("drain failed: {error}"),
+            }
+            server.poll_once(Duration::from_millis(1)).unwrap();
+        }
+        assert_eq!(received, expected);
+        let conn = &server.connections[&token];
+        assert!(conn.output.is_empty());
+        assert!(!conn.writable_interest);
+
+        // A later response still progresses after write interest is removed.
+        server.send_client(Client::Stream(token), b"resumed");
+        client.set_nonblocking(false).unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let mut resumed = [0; 7];
+        client.read_exact(&mut resumed).unwrap();
+        assert_eq!(&resumed, b"resumed");
+    }
+
+    #[test]
     fn invalid_relay_ranges_are_refused_before_binding() {
         for range in [(0, 0), (0, 65535), (40001, 40000)] {
             let mut config = Config::local(vec![1; 32]);
@@ -230,6 +291,7 @@ struct Connection {
     input: Vec<u8>,
     output: Vec<u8>,
     written: usize,
+    writable_interest: bool,
     last_active: Instant,
     created: Instant,
     #[cfg(feature = "tls")]
@@ -237,6 +299,26 @@ struct Connection {
 }
 
 impl Connection {
+    fn update_interest(
+        &mut self,
+        registry: &mio::Registry,
+        token: Token,
+        pending: bool,
+    ) -> io::Result<()> {
+        // Read interest stays enabled. Re-register only when backpressure
+        // changes write interest, rather than making a kernel call per packet.
+        if self.writable_interest != pending {
+            let interest = if pending {
+                Interest::READABLE | Interest::WRITABLE
+            } else {
+                Interest::READABLE
+            };
+            registry.reregister(&mut self.socket, token, interest)?;
+            self.writable_interest = pending;
+        }
+        Ok(())
+    }
+
     fn queue(&mut self, bytes: &[u8]) -> io::Result<()> {
         if self.output.len() - self.written + bytes.len() > MAX_QUEUE {
             return Err(io::Error::other("stream output limit"));
@@ -628,15 +710,8 @@ impl Server {
                 let result = conn.queue(bytes).and_then(|()| conn.flush());
                 match result {
                     Ok(pending) => {
-                        let interest = if pending {
-                            Interest::READABLE | Interest::WRITABLE
-                        } else {
-                            Interest::READABLE
-                        };
-                        if self
-                            .poll
-                            .registry()
-                            .reregister(&mut conn.socket, token, interest)
+                        if conn
+                            .update_interest(self.poll.registry(), token, pending)
                             .is_err()
                         {
                             self.close(token);
@@ -707,6 +782,7 @@ impl Server {
                     input: Vec::with_capacity(4096),
                     output: Vec::with_capacity(4096),
                     written: 0,
+                    writable_interest: false,
                     last_active: now,
                     created: now,
                     #[cfg(feature = "tls")]
@@ -757,15 +833,8 @@ impl Server {
             conn.input = bytes;
             match conn.flush() {
                 Ok(pending) => {
-                    let interest = if pending {
-                        Interest::READABLE | Interest::WRITABLE
-                    } else {
-                        Interest::READABLE
-                    };
-                    if self
-                        .poll
-                        .registry()
-                        .reregister(&mut conn.socket, token, interest)
+                    if conn
+                        .update_interest(self.poll.registry(), token, pending)
                         .is_err()
                     {
                         self.close(token);

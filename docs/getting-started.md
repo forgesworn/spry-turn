@@ -14,13 +14,13 @@ cd spry-turn
 ```
 
 Source is the portable installation path. Cargo and npm publication are
-disabled. The private v0.2.0 GitHub prerelease also carries a macOS ARM64
+disabled. The private v0.2.1 GitHub prerelease also carries a macOS ARM64
 TLS-enabled executable archive and a WASM codec archive. It does not make
 the source or artefacts publicly downloadable. Authorised users can fetch
 and verify the archives in an empty directory:
 
 ```sh
-gh release download v0.2.0 --repo forgesworn/spry-turn
+gh release download v0.2.1 --repo forgesworn/spry-turn
 shasum -a 256 -c SHA256SUMS
 ```
 

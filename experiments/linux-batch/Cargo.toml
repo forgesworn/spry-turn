@@ -1,0 +1,24 @@
+[package]
+name = "spry-linux-batch-experiment"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT"
+authors = ["TheCryptoDonkey"]
+description = "Development-only Linux UDP receive batching measurement"
+publish = false
+
+[target.'cfg(target_os = "linux")'.dependencies]
+nix = { version = "=0.31.3", default-features = false, features = ["net", "uio"] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = "warn"

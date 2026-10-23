@@ -1,0 +1,189 @@
+{
+  "schema": 1,
+  "scope": "actual-kithmoot-web-local-operator",
+  "passed": true,
+  "kithmoot_commit": "24038110cd4a60037b5e3f6a6c0131af65478102",
+  "source_checksums": [
+    {
+      "path": "package.json",
+      "sha256": "fe559114dfb35494c1648c5ca7843574baa9ec0fa80621fe3cfe85710b72b95f"
+    },
+    {
+      "path": "package-lock.json",
+      "sha256": "3688c3653ad59be4f6908b6f9b08df231172feb4b10adae3fb8e01ed45abd63d"
+    },
+    {
+      "path": "app/index.html",
+      "sha256": "2475afab5f069f491bbd54253c0e41ba808fcbc1cc1fcef77202779a775a06af"
+    },
+    {
+      "path": "app/vite.config.ts",
+      "sha256": "31d1a6fa0df60c9da7ea3fca6a9ce71f208eebfd697bd09df19cc15781de07f8"
+    },
+    {
+      "path": "app/src/main.ts",
+      "sha256": "d503587327e89fc04a76935ab74140cf83d9f96f06066f4b6e5fdadf50f074f5"
+    },
+    {
+      "path": "app/src/call-relay.ts",
+      "sha256": "c622280fb105be36d460102dfb592083b6557433deda1d5ad59c3e1b7bcc60ab"
+    },
+    {
+      "path": "app/src/ice-resolve.ts",
+      "sha256": "b1201afe53cdc8cc819a95885a65027d03cc8516995b4431fe56898878d0ed96"
+    },
+    {
+      "path": "app/src/relay-only.ts",
+      "sha256": "1ed3229d9a1c63864140e4c31e90696286a29701898c1774c3c078232a949876"
+    },
+    {
+      "path": "src/ice-defaults.ts",
+      "sha256": "3f7636f276758ef62ed91248afb97be6819986b985ca8109021426fa8ffab8d4"
+    }
+  ],
+  "server_version": "spry-turn 0.2.1",
+  "server_binary_sha256": "37ab1b48f016840a9555509b98b47d901a202107e06db31d32faf0086d335baf",
+  "results": [
+    {
+      "transport": "udp",
+      "passed": true,
+      "applicationRelayOnly": true,
+      "injectedIceServers": false,
+      "configuredThroughSettings": true,
+      "invitationOmitsCredentials": true,
+      "generatedMediaOnly": true,
+      "certificateBypass": true,
+      "endpoints": [
+        {
+          "pairs": [
+            {
+              "localType": "relay",
+              "remoteType": "relay",
+              "relayProtocol": "udp",
+              "framesDecoded": 3,
+              "audioBytes": 11832,
+              "audioEnergy": 2.9299999999999815
+            }
+          ],
+          "participants": 2,
+          "displayedVideos": 1,
+          "remoteAudioSinks": 1
+        },
+        {
+          "pairs": [
+            {
+              "localType": "relay",
+              "remoteType": "relay",
+              "relayProtocol": "udp",
+              "framesDecoded": 13,
+              "audioBytes": 1541,
+              "audioEnergy": 0.34000000000000014
+            }
+          ],
+          "participants": 2,
+          "displayedVideos": 1,
+          "remoteAudioSinks": 1
+        }
+      ],
+      "credential_requests": 0
+    },
+    {
+      "transport": "tcp",
+      "passed": true,
+      "applicationRelayOnly": true,
+      "injectedIceServers": false,
+      "configuredThroughSettings": true,
+      "invitationOmitsCredentials": true,
+      "generatedMediaOnly": true,
+      "certificateBypass": true,
+      "endpoints": [
+        {
+          "pairs": [
+            {
+              "localType": "relay",
+              "remoteType": "relay",
+              "relayProtocol": "tcp",
+              "framesDecoded": 5,
+              "audioBytes": 605,
+              "audioEnergy": 0.07
+            }
+          ],
+          "participants": 2,
+          "displayedVideos": 1,
+          "remoteAudioSinks": 1
+        },
+        {
+          "pairs": [
+            {
+              "localType": "relay",
+              "remoteType": "relay",
+              "relayProtocol": "tcp",
+              "framesDecoded": 6,
+              "audioBytes": 1073,
+              "audioEnergy": 0.25000000000000006
+            }
+          ],
+          "participants": 2,
+          "displayedVideos": 1,
+          "remoteAudioSinks": 1
+        }
+      ],
+      "credential_requests": 0
+    },
+    {
+      "transport": "tls",
+      "passed": true,
+      "applicationRelayOnly": true,
+      "injectedIceServers": false,
+      "configuredThroughSettings": true,
+      "invitationOmitsCredentials": true,
+      "generatedMediaOnly": true,
+      "certificateBypass": true,
+      "endpoints": [
+        {
+          "pairs": [
+            {
+              "localType": "relay",
+              "remoteType": "relay",
+              "relayProtocol": "tls",
+              "framesDecoded": 6,
+              "audioBytes": 578,
+              "audioEnergy": 0.09
+            }
+          ],
+          "participants": 2,
+          "displayedVideos": 1,
+          "remoteAudioSinks": 1
+        },
+        {
+          "pairs": [
+            {
+              "localType": "relay",
+              "remoteType": "relay",
+              "relayProtocol": "tls",
+              "framesDecoded": 9,
+              "audioBytes": 1434,
+              "audioEnergy": 0.3200000000000001
+            }
+          ],
+          "participants": 2,
+          "displayedVideos": 1,
+          "remoteAudioSinks": 1
+        }
+      ],
+      "credential_requests": 0
+    }
+  ],
+  "limits": [
+    "Same-host loopback with generated media and a disposable Nostr fixture",
+    "TLS test certificate bypass; no public trust, NAT or blocked-UDP qualification",
+    "Owner-selected short-lived credentials entered through actual Connections Settings",
+    "No Android build or physical GrapheneOS acceptance"
+  ],
+  "app_build": {
+    "file_count": 355,
+    "sha256": "2e09f8615514bfd7ecfbd35d60d7db4a4befceb7024fd55c7fe309b99b767b89"
+  },
+  "app_built_by_runner": true,
+  "processes_stopped": true
+}

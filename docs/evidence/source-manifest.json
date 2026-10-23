@@ -3,15 +3,15 @@
   "files": [
     {
       "path": "Cargo.lock",
-      "sha256": "631ac81dcea471098e6f46cea6dc7a60909db57aad4073a8062f2981e77267d2"
+      "sha256": "0d18dfcd6eb6988a7aef2159ea764513eaba7b841d6dbb549d358f856d585194"
     },
     {
       "path": "Cargo.toml",
-      "sha256": "4a6f4d14f9a71242635e43a013396d4f163d610cdcb5c1c7d795412d924726d1"
+      "sha256": "7da1b4cfe614a7228cca44a966d5f0d3fe709f701b884632b5c244ebd926c43c"
     },
     {
       "path": "examples/load.rs",
-      "sha256": "27a9760406d35fa398ee2ec81a3ffdfd3741b81e62ef479a156658990966b6a3"
+      "sha256": "3004c31e70dda52973cfd330424bdf134e2b4343e840be0dba6abd6a7d3626c1"
     },
     {
       "path": "src/auth.rs",
@@ -31,7 +31,7 @@
     },
     {
       "path": "src/turn.rs",
-      "sha256": "c9fcba0ebf63336aad149176b2e44154925c2c73e45894480be00f05c71ce56a"
+      "sha256": "db252c49818801df59795a487190b4d1a68141d18cb3c88590831ae0b9af2a3e"
     },
     {
       "path": "src/wasm.rs",
@@ -42,5 +42,5 @@
       "sha256": "ddcaa1a89a11a1ea438e20a58b7524d55563775eb9f37cb583b01859fa0c1467"
     }
   ],
-  "note": "SHA-256 of current reviewed source files. Historical benchmark/build evidence identifies its own source snapshot; these hashes do not requalify that benchmark against later changes."
+  "note": "SHA-256 of current reviewed source files. Each benchmark identifies its own source snapshot; these hashes do not requalify historical results."
 }

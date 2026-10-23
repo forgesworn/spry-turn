@@ -271,6 +271,68 @@ class Interop(unittest.TestCase):
         c.socket.sendall(data + data)
         self.assertEqual(parse(c.receive())[0], 0x101); self.assertEqual(parse(c.receive())[0], 0x101)
 
+    def test_invalid_stream_lengths_close_only_the_offending_client(self):
+        modes = ["tcp"] + (["tls"] if TLS else [])
+        for mode in modes:
+            for header in (b"\x80\0\0\0", b"\0\x01\xff\xff"):
+                with self.subTest(mode=mode, header=header.hex()):
+                    value = self.client(mode=mode)
+                    value.socket.sendall(header)
+                    try:
+                        self.assertEqual(value.socket.recv(1), b"")
+                    except ConnectionResetError:
+                        pass
+                    healthy = self.client(mode=mode)
+                    self.assertEqual(healthy.request(1, signed=False)[0], 0x101)
+
+    def test_bad_fingerprint_is_dropped_and_listener_recovers(self):
+        value = self.client()
+        damaged = bytearray(packet(1)); damaged[-1] ^= 1
+        value.send(damaged)
+        value.socket.settimeout(0.1)
+        with self.assertRaises(socket.timeout): value.receive()
+        value.socket.settimeout(2)
+        self.assertEqual(value.request(1, signed=False)[0], 0x101)
+
+    def test_malformed_channel_frames_cannot_forward(self):
+        value = self.client(); value.allocate(); remote = self.peer()
+        self.assertEqual(value.peer_request(9, remote.getsockname(), 0x4000)[0], 0x109)
+        malformed = (b"\x40\0\0\x05a", b"\x40\0\0\x01a" + bytes(8), b"\x50\0\0\x01a")
+        remote.settimeout(0.1)
+        for frame in malformed:
+            value.send(frame)
+            with self.assertRaises(socket.timeout): remote.recvfrom(1024)
+        value.send(b"\x40\0\0\x01a")
+        self.assertEqual(remote.recvfrom(1024), (b"a", value.relay))
+
+    def test_unsigned_lifetime_after_integrity_cannot_delete_allocation(self):
+        value = self.client(); value.allocate()
+        tid = secrets.token_bytes(12)
+        data = packet(4, [(USERNAME, value.username), (REALM_ATTR, REALM),
+                          (NONCE, value.nonce)], value.key, tid)[:-8]
+        # MESSAGE-INTEGRITY protects only the preceding attributes. The
+        # fingerprint covers the appended attribute but does not authenticate it.
+        data += attr(LIFETIME, bytes(4))
+        data = data[:2] + struct.pack("!H", len(data) - 20 + 8) + data[4:]
+        data += attr(FP, struct.pack("!I", zlib.crc32(data) ^ 0x5354554E))
+        value.send(data)
+        typ, fields, response_tid = parse(value.receive(), value.key)
+        self.assertEqual((typ, response_tid), (0x104, tid))
+        self.assertGreater(struct.unpack("!I", fields[LIFETIME])[0], 0)
+        self.assertEqual(value.request(4)[0], 0x104)
+
+    def test_expired_allocation_cannot_forward_data(self):
+        value = self.client(); value.allocate(); remote = self.peer()
+        self.assertEqual(value.peer_request(9, remote.getsockname(), 0x4000)[0], 0x109)
+        value.request(4, [(LIFETIME, struct.pack("!I", 1))])
+        time.sleep(1.05)
+        value.send(b"\x40\0\0\x07expired")
+        remote.settimeout(0.1)
+        with self.assertRaises(socket.timeout): remote.recvfrom(1024)
+        remote.sendto(b"expired", value.relay)
+        value.socket.settimeout(0.1)
+        with self.assertRaises(socket.timeout): value.receive()
+
     def test_expiry_enforced_before_sweep(self):
         c = self.client(); c.allocate(); c.request(4, [(LIFETIME, struct.pack("!I", 1))])
         time.sleep(1.05)
