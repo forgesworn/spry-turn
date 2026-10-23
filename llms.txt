@@ -6,7 +6,7 @@ Version 0.1.0. Repository and initial GitHub prerelease are private; authorised 
 
 Native UDP/TCP clients and optional TLS use UDP peer allocations. Browser applications use their existing WebRTC ICE implementation. Ordinary browser WASM cannot host a raw-socket TURN server. Shared TURN secrets belong only to trusted operator tools; give clients short-lived credentials.
 
-This is an initial implementation, without full coturn parity or production qualification. Relay-port ranges, static user databases, TCP relay allocations, DTLS, dual allocations and Archy/Sapflow integration are not implemented. Physical phone and public-network acceptance remain open.
+This is an initial implementation, without full coturn parity or production qualification. UDP peer-relay port ranges are optional and fail closed on exhaustion. Static user databases, TCP relay allocations, DTLS, dual allocations and deployed Archy/Sapflow integration are not implemented. Physical phone and public-network acceptance remain open.
 
 Native ARM64 M4 Max UDP loopback measurements show 17–22% more throughput than the tested coturn configuration. The connected-UDP optimisation adds one socket per allocation, and process RSS excludes kernel buffers. Consult the benchmark method before reusing any figures.
 
@@ -23,7 +23,7 @@ These files provide navigation and source context for authorised readers and too
 
 ## Operate and support
 
-- [Independent operation](https://github.com/forgesworn/spry-turn/blob/main/docs/operations.md): Reachability, secret rotation, TLS, limits and missing port-range control.
+- [Independent operation](https://github.com/forgesworn/spry-turn/blob/main/docs/operations.md): Bounded relay ports, firewall/NAT plan, secret rotation, TLS and limits.
 - [Security](https://github.com/forgesworn/spry-turn/blob/main/SECURITY.md): Reporting channel and transport/credential boundaries.
 - [Support and donations](https://github.com/forgesworn/spry-turn/blob/main/SUPPORT.md): Bug reports and established ForgeSworn funding destinations.
 

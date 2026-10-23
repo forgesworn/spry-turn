@@ -18,7 +18,7 @@ investigatory powers; those additions may precede the linked public copy.
 
 The owner has chosen software publication without a maintainer-operated
 default relay or central KithMoot calling entitlement. The repository starts
-private, under MIT, with package publication disabled (`Cargo.toml:6`, `:10`).
+private, under MIT, with package publication disabled (`Cargo.toml:6`, `:14`).
 The owner reports local implementation and tests only: no service is
 deployed. Code publication, a build and a running communications service
 are separate events. No public operational service is established by the
@@ -34,7 +34,7 @@ Nothing here changes another application's deployment or legal position.
 
 The library's default listener is loopback; the executable requires an
 operator-provided secret and explicit configuration to expose another
-address (`src/turn.rs:112`, `src/main.rs:53`, `:81`). There is no runtime
+address (`src/turn.rs:127`, `src/main.rs:54`, `:82`). There is no runtime
 hosted endpoint default or discovery lookup. The source has no application
 room model, member directory, room-invitation authority or KithMoot
 entitlement issuer. TURN resource authentication is separate from admission
@@ -42,20 +42,20 @@ to an application conversation. The REST credential
 helper accepts an operator secret and a username, while server nonces bind
 to address, time and realm (`src/auth.rs:13`, `:29`, `:54`, `:73`). An operator
 that holds the secret can issue transport credentials; that fact does not give
-it room membership authority (`src/turn.rs:843`).
+it room membership authority (`src/turn.rs:868`).
 
 Allocation, permission, channel and connection state is held in memory,
-with expiry and capacity limits (`src/turn.rs:190`, `:337`, `:773`, `:1040`,
-`:1076`, `:1240`, `:1251`). The forwarding paths relay datagrams between sockets
-and keep aggregate packet/byte/drop counters (`src/turn.rs:883`, `:1309`,
-`:1343`; `src/limits.rs:41`). The default optimisation can add a connected
+with expiry and capacity limits (`src/turn.rs:213`, `:351`, `:798`, `:1065`,
+`:1114`, `:1295`, `:1348`). The forwarding paths relay datagrams between sockets
+and keep aggregate packet/byte/drop counters (`src/turn.rs:908`, `:1358`,
+`:1392`; `src/limits.rs:41`). The default optimisation can add a connected
 client-facing UDP socket per authenticated UDP allocation for a concrete IPv4
-listener on Unix, with a portable fallback (`Cargo.toml:13`, `:19`;
-`src/turn.rs:380`, `:1078`). This retains the same transport credentials,
+listener on Unix, with a portable fallback (`Cargo.toml:17`, `:23`;
+`src/turn.rs:395`, `:1103`). This retains the same transport credentials,
 permissions and application-admission boundary. The reviewed code has no
 payload-recording or per-client access-log writer. It emits startup/error diagnostics, and the
 credential subcommand deliberately prints a credential pair
-(`src/main.rs:35`, `:112`, `:145`). Host logs, shell history, process
+(`src/main.rs:36`, `:119`, `:152`). Host logs, shell history, process
 inspection, crash handling and any service wrapper require a separate
 deployment audit; in-memory expiry is not a forensic-erasure claim.
 

@@ -17,11 +17,44 @@ it does not configure a router, discover a mapping, open firewall ports or
 solve carrier-grade NAT. Its address family must match the relay family.
 Use one relay family per instance; dual allocations are not implemented.
 
-Client listener reachability alone is insufficient. UDP peer relay sockets
-use OS-assigned ephemeral ports. There is currently no `--min-port` or
-`--max-port` option and no bounded relay-port range. A deployment requiring
-a narrowly specified firewall range must wait for that feature. Do not
-copy a coturn firewall recipe and assume matching behaviour.
+Client listener reachability alone is insufficient. `--relay-ports FIRST:LAST`
+selects an inclusive UDP peer-relay range, for example `49160:49191`. Both
+ports must be nonzero and the first must not exceed the last. With this
+option, allocations bind only within that range. Occupied host ports are
+skipped; exhaustion returns an authenticated TURN 508 response and never
+falls back to an ephemeral port. Released ports can be allocated again.
+The range is not reserved at startup. Allow headroom for occupied ports,
+and keep other services out of the selected range. Narrow ranges limit
+available allocations even when `--max-allocations` is higher.
+
+Without the option, peer sockets retain OS-assigned ephemeral ports for
+backwards compatibility. A public package must choose a bounded range
+explicitly. These bounds apply to UDP peer-relay allocations, separately
+from the UDP/TCP client listener, optional TLS listener and optimised
+client-facing sockets. A single-port range is supported; it does not
+implement EVEN-PORT or reservation tokens.
+
+## Public endpoint deployment plan
+
+Public operation is still unqualified. The deploying operator owns each
+step below; installing software must not open or publish a service silently.
+
+| Item | Operator configuration and readback |
+|---|---|
+| Client listeners | Allow inbound UDP/TCP only on the chosen `--listen` port and TCP on the chosen TLS port; use concrete bind addresses or a deliberate wildcard listener with concrete `--relay-ip` |
+| Relay sockets | Choose `--relay-ports FIRST:LAST`; allow inbound peer UDP on that range at the host and provider firewall, with required outbound UDP and return traffic |
+| NAT | If used, configure one-to-one address translation and preserve relay ports; `--public-ip` changes the advertised address only |
+| Certificate | Supply a currently valid chain trusted by the intended clients, with the DNS name used in their `turns:` URI covered by the certificate; keep its private key on the operator node |
+| Renewal | Arrange issuance, renewal and an operator-controlled restart; files are read at startup and active allocations are lost on restart |
+| Readiness | Check authenticated Allocate, permitted bidirectional traffic and trusted TLS from an independent network, including a client with UDP blocked; a listening TCP socket is insufficient |
+| Retention | Read back process-manager, container, host, crash-dump and hosting-provider logging; lack of a payload/access-log writer in Spry does not disable these |
+
+TURN over TCP/TLS still uses UDP between relay and peer. Opening only a TLS
+port is insufficient. Restrict unrelated inbound services and preserve the
+default private-peer restrictions. This is a plan, not an applied firewall,
+certificate-renewal implementation or public-network acceptance result.
+Port bounds are exposure/resource controls; they do not settle who provides
+an underlying communications service or establish a legal exemption.
 
 ## Credentials
 

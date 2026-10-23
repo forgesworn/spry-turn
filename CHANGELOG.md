@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Optional inclusive `--relay-ports FIRST:LAST` bounds UDP peer allocations.
+  Occupied ports are skipped; exhaustion returns 508 without falling back
+  outside the range. Existing default ephemeral allocation is unchanged.
+- Operator firewall/NAT/certificate plan and bounded-range socket/browser
+  regression coverage. Public deployment qualification remains open.
+
 ## 0.1.0 — 23 October 2026
 
 Initial private prerelease. No package registry, public relay or Archy

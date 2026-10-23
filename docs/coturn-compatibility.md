@@ -21,7 +21,7 @@ The goal is a small forwarding core with measured resource costs.
 | Allocation, per-user, connection and bandwidth limits | Implemented; names and semantics differ from coturn |
 | NAT-advertised relay IP | `--public-ip`; actual NAT mapping is operator responsibility |
 | Static long-term username/password database | Not implemented |
-| Fixed relay-port range | Not implemented; sockets use OS-assigned ports |
+| Fixed UDP relay-port range | `--relay-ports FIRST:LAST`; exhaustion fails with 508, no ephemeral fallback |
 | Dual allocations, EVEN-PORT and reservation tokens | Not implemented |
 | RFC 8489 SHA-256 authentication | Not implemented |
 | TCP relay allocations (RFC 6062) | Not implemented |
@@ -40,6 +40,7 @@ These are conceptual mappings, not a compatible configuration syntax:
 |---|---|
 | `listening-ip` and `listening-port` | `--listen IP:PORT` |
 | `relay-ip` | `--relay-ip IP` |
+| `min-port` / `max-port` | Inclusive `--relay-ports FIRST:LAST`; no coturn configuration-file parsing |
 | `external-ip` | `--public-ip IP`; no automatic mapping discovery |
 | `realm` | `--realm NAME` |
 | `use-auth-secret` / `static-auth-secret` | Required `SPRY_TURN_SECRET` environment variable |

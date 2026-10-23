@@ -6,7 +6,7 @@ Version 0.1.0. Repository and initial GitHub prerelease are private; authorised 
 
 Native UDP/TCP clients and optional TLS use UDP peer allocations. Browser applications use their existing WebRTC ICE implementation. Ordinary browser WASM cannot host a raw-socket TURN server. Shared TURN secrets belong only to trusted operator tools; give clients short-lived credentials.
 
-This is an initial implementation, without full coturn parity or production qualification. Relay-port ranges, static user databases, TCP relay allocations, DTLS, dual allocations and Archy/Sapflow integration are not implemented. Physical phone and public-network acceptance remain open.
+This is an initial implementation, without full coturn parity or production qualification. UDP peer-relay port ranges are optional and fail closed on exhaustion. Static user databases, TCP relay allocations, DTLS, dual allocations and deployed Archy/Sapflow integration are not implemented. Physical phone and public-network acceptance remain open.
 
 Native ARM64 M4 Max UDP loopback measurements show 17–22% more throughput than the tested coturn configuration. The connected-UDP optimisation adds one socket per allocation, and process RSS excludes kernel buffers. Consult the benchmark method before reusing any figures.
 
@@ -576,6 +576,7 @@ Source: [src/turn.rs](https://github.com/forgesworn/spry-turn/blob/main/src/turn
 |---|---|
 | `listen` | `127.0.0.1:3478`, shared UDP/TCP listening address |
 | `relay_ip` | `127.0.0.1`, local bind address of UDP peer sockets |
+| `relay_port_range` | `None` for OS ephemeral ports, or `Some((first, last))` for an inclusive nonzero UDP relay range with no fallback |
 | `advertised_ip` | `None`; optional NAT-visible relay IP of the same address family |
 | `realm` | `spry-turn`, long-term authentication realm |
 | `secret` | Caller supplied, at least 32 bytes |
@@ -588,7 +589,8 @@ Source: [src/turn.rs](https://github.com/forgesworn/spry-turn/blob/main/src/turn
 
 `Server::bind(config)` validates configuration and binds listeners. Realm
 must contain 1–128 bytes, relay bind IP must be concrete and numeric limits
-must be positive. The CLI additionally restricts loopback-peer opt-in to a
+must be positive. A configured relay range requires `1 <= first <= last`;
+port exhaustion produces TURN 508 without widening the range. The CLI additionally restricts loopback-peer opt-in to a
 loopback-only listener; embedding hosts must enforce the same policy.
 
 | Method | Result |
@@ -694,7 +696,7 @@ The goal is a small forwarding core with measured resource costs.
 | Allocation, per-user, connection and bandwidth limits | Implemented; names and semantics differ from coturn |
 | NAT-advertised relay IP | `--public-ip`; actual NAT mapping is operator responsibility |
 | Static long-term username/password database | Not implemented |
-| Fixed relay-port range | Not implemented; sockets use OS-assigned ports |
+| Fixed UDP relay-port range | `--relay-ports FIRST:LAST`; exhaustion fails with 508, no ephemeral fallback |
 | Dual allocations, EVEN-PORT and reservation tokens | Not implemented |
 | RFC 8489 SHA-256 authentication | Not implemented |
 | TCP relay allocations (RFC 6062) | Not implemented |
@@ -713,6 +715,7 @@ These are conceptual mappings, not a compatible configuration syntax:
 |---|---|
 | `listening-ip` and `listening-port` | `--listen IP:PORT` |
 | `relay-ip` | `--relay-ip IP` |
+| `min-port` / `max-port` | Inclusive `--relay-ports FIRST:LAST`; no coturn configuration-file parsing |
 | `external-ip` | `--public-ip IP`; no automatic mapping discovery |
 | `realm` | `--realm NAME` |
 | `use-auth-secret` / `static-auth-secret` | Required `SPRY_TURN_SECRET` environment variable |
@@ -776,11 +779,44 @@ it does not configure a router, discover a mapping, open firewall ports or
 solve carrier-grade NAT. Its address family must match the relay family.
 Use one relay family per instance; dual allocations are not implemented.
 
-Client listener reachability alone is insufficient. UDP peer relay sockets
-use OS-assigned ephemeral ports. There is currently no `--min-port` or
-`--max-port` option and no bounded relay-port range. A deployment requiring
-a narrowly specified firewall range must wait for that feature. Do not
-copy a coturn firewall recipe and assume matching behaviour.
+Client listener reachability alone is insufficient. `--relay-ports FIRST:LAST`
+selects an inclusive UDP peer-relay range, for example `49160:49191`. Both
+ports must be nonzero and the first must not exceed the last. With this
+option, allocations bind only within that range. Occupied host ports are
+skipped; exhaustion returns an authenticated TURN 508 response and never
+falls back to an ephemeral port. Released ports can be allocated again.
+The range is not reserved at startup. Allow headroom for occupied ports,
+and keep other services out of the selected range. Narrow ranges limit
+available allocations even when `--max-allocations` is higher.
+
+Without the option, peer sockets retain OS-assigned ephemeral ports for
+backwards compatibility. A public package must choose a bounded range
+explicitly. These bounds apply to UDP peer-relay allocations, separately
+from the UDP/TCP client listener, optional TLS listener and optimised
+client-facing sockets. A single-port range is supported; it does not
+implement EVEN-PORT or reservation tokens.
+
+## Public endpoint deployment plan
+
+Public operation is still unqualified. The deploying operator owns each
+step below; installing software must not open or publish a service silently.
+
+| Item | Operator configuration and readback |
+|---|---|
+| Client listeners | Allow inbound UDP/TCP only on the chosen `--listen` port and TCP on the chosen TLS port; use concrete bind addresses or a deliberate wildcard listener with concrete `--relay-ip` |
+| Relay sockets | Choose `--relay-ports FIRST:LAST`; allow inbound peer UDP on that range at the host and provider firewall, with required outbound UDP and return traffic |
+| NAT | If used, configure one-to-one address translation and preserve relay ports; `--public-ip` changes the advertised address only |
+| Certificate | Supply a currently valid chain trusted by the intended clients, with the DNS name used in their `turns:` URI covered by the certificate; keep its private key on the operator node |
+| Renewal | Arrange issuance, renewal and an operator-controlled restart; files are read at startup and active allocations are lost on restart |
+| Readiness | Check authenticated Allocate, permitted bidirectional traffic and trusted TLS from an independent network, including a client with UDP blocked; a listening TCP socket is insufficient |
+| Retention | Read back process-manager, container, host, crash-dump and hosting-provider logging; lack of a payload/access-log writer in Spry does not disable these |
+
+TURN over TCP/TLS still uses UDP between relay and peer. Opening only a TLS
+port is insufficient. Restrict unrelated inbound services and preserve the
+default private-peer restrictions. This is a plan, not an applied firewall,
+certificate-renewal implementation or public-network acceptance result.
+Port bounds are exposure/resource controls; they do not settle who provides
+an underlying communications service or establish a legal exemption.
 
 ## Credentials
 
@@ -1095,7 +1131,21 @@ No credentials, real endpoints, machine paths or media are included.
 
 Canonical source: [docs/verification.md](https://github.com/forgesworn/spry-turn/blob/main/docs/verification.md)
 
-# Initial standalone verification
+# Standalone verification
+
+## Bounded relay ports, local increment
+
+The optional UDP relay-port range passed 22 independent socket tests with
+the default TLS build, including a signed 508 on exhaustion, occupied-port
+skipping, reuse after deallocation and continued forwarding by another
+allocation. Chromium passed relay-only generated audio/video/data over
+UDP, TCP and TLS, with selected local and remote relay ports asserted
+inside the configured range. See the [bounded receipt](https://github.com/forgesworn/spry-turn/blob/main/docs/evidence/bounded-relay-ports-20261023.json).
+The existing initial-release benchmark and hosted CI below do not qualify
+this new runtime change. Public firewall/NAT, certificate lifecycle, Archy
+installation and phone acceptance remain unverified.
+
+## Initial implementation evidence
 
 23 October 2026. Private MIT software project; no public relay, credential
 endpoint, application service or Archy integration has been deployed.
@@ -1128,8 +1178,8 @@ GitHub hosting is private under `forgesworn/spry-turn`; publication to package
 registries, image registries, public releases and Pages remains disabled or
 absent. [Hosted CI](https://github.com/forgesworn/spry-turn/actions/runs/40015270709)
 passed on Linux and macOS for implementation commit
-`48d75adf51c73b1ef2a51a3cb663e424f2b4ea35`. Subsequent handover edits change
-documentation only; hosted CI is separate evidence from the local checks.
+`48d75adf51c73b1ef2a51a3cb663e424f2b4ea35`. That run predates the bounded-port
+increment; hosted CI is separate evidence from the new local checks.
 
 Retained local build evidence is ignored by Git:
 
@@ -1171,7 +1221,9 @@ Canonical source: [GOALS.md](https://github.com/forgesworn/spry-turn/blob/main/G
 
 ## Before replacing an existing deployment
 
-- [ ] Operator-selected bounded relay port range and firewall/certificate runbook.
+- [x] Operator-selected bounded UDP relay port range and firewall/certificate plan.
+- [ ] Applied firewall/NAT, trusted public certificate lifecycle and independent
+  cross-network deployment acceptance; a local plan is not this evidence.
 - [ ] Real KithMoot web and native interoperability against a separately chosen
   server, without adding a project-operated credential service.
 - [ ] Packet-loss, jitter, blocked UDP, IPv6, long-lived refresh, reconnect,
@@ -1206,6 +1258,14 @@ Do not silently remove transport support required by existing clients.
 Canonical source: [CHANGELOG.md](https://github.com/forgesworn/spry-turn/blob/main/CHANGELOG.md)
 
 # Changelog
+
+## Unreleased
+
+- Optional inclusive `--relay-ports FIRST:LAST` bounds UDP peer allocations.
+  Occupied ports are skipped; exhaustion returns 508 without falling back
+  outside the range. Existing default ephemeral allocation is unchanged.
+- Operator firewall/NAT/certificate plan and bounded-range socket/browser
+  regression coverage. Public deployment qualification remains open.
 
 ## 0.1.0 — 23 October 2026
 
@@ -1406,7 +1466,7 @@ investigatory powers; those additions may precede the linked public copy.
 
 The owner has chosen software publication without a maintainer-operated
 default relay or central KithMoot calling entitlement. The repository starts
-private, under MIT, with package publication disabled (`Cargo.toml:6`, `:10`).
+private, under MIT, with package publication disabled (`Cargo.toml:6`, `:14`).
 The owner reports local implementation and tests only: no service is
 deployed. Code publication, a build and a running communications service
 are separate events. No public operational service is established by the
@@ -1422,7 +1482,7 @@ Nothing here changes another application's deployment or legal position.
 
 The library's default listener is loopback; the executable requires an
 operator-provided secret and explicit configuration to expose another
-address (`src/turn.rs:112`, `src/main.rs:53`, `:81`). There is no runtime
+address (`src/turn.rs:127`, `src/main.rs:54`, `:82`). There is no runtime
 hosted endpoint default or discovery lookup. The source has no application
 room model, member directory, room-invitation authority or KithMoot
 entitlement issuer. TURN resource authentication is separate from admission
@@ -1430,20 +1490,20 @@ to an application conversation. The REST credential
 helper accepts an operator secret and a username, while server nonces bind
 to address, time and realm (`src/auth.rs:13`, `:29`, `:54`, `:73`). An operator
 that holds the secret can issue transport credentials; that fact does not give
-it room membership authority (`src/turn.rs:843`).
+it room membership authority (`src/turn.rs:868`).
 
 Allocation, permission, channel and connection state is held in memory,
-with expiry and capacity limits (`src/turn.rs:190`, `:337`, `:773`, `:1040`,
-`:1076`, `:1240`, `:1251`). The forwarding paths relay datagrams between sockets
-and keep aggregate packet/byte/drop counters (`src/turn.rs:883`, `:1309`,
-`:1343`; `src/limits.rs:41`). The default optimisation can add a connected
+with expiry and capacity limits (`src/turn.rs:213`, `:351`, `:798`, `:1065`,
+`:1114`, `:1295`, `:1348`). The forwarding paths relay datagrams between sockets
+and keep aggregate packet/byte/drop counters (`src/turn.rs:908`, `:1358`,
+`:1392`; `src/limits.rs:41`). The default optimisation can add a connected
 client-facing UDP socket per authenticated UDP allocation for a concrete IPv4
-listener on Unix, with a portable fallback (`Cargo.toml:13`, `:19`;
-`src/turn.rs:380`, `:1078`). This retains the same transport credentials,
+listener on Unix, with a portable fallback (`Cargo.toml:17`, `:23`;
+`src/turn.rs:395`, `:1103`). This retains the same transport credentials,
 permissions and application-admission boundary. The reviewed code has no
 payload-recording or per-client access-log writer. It emits startup/error diagnostics, and the
 credential subcommand deliberately prints a credential pair
-(`src/main.rs:35`, `:112`, `:145`). Host logs, shell history, process
+(`src/main.rs:36`, `:119`, `:152`). Host logs, shell history, process
 inspection, crash handling and any service wrapper require a separate
 deployment audit; in-memory expiry is not a forensic-erasure claim.
 

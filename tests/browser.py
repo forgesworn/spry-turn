@@ -25,8 +25,10 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--binary", type=Path, default=Path("target/release/spry-turn"))
     parser.add_argument("--tls", action="store_true")
+    parser.add_argument("--relay-ports", help="Optional inclusive FIRST:LAST range for peer allocations")
     args = parser.parse_args()
-    fixture = Fixture(args.binary.resolve(), tls=args.tls)
+    limits = ("--relay-ports", args.relay_ports) if args.relay_ports else ()
+    fixture = Fixture(args.binary.resolve(), tls=args.tls, limits=limits)
     http = ThreadingHTTPServer(("127.0.0.1", 0), Page)
     thread = threading.Thread(target=http.serve_forever, daemon=True); thread.start()
     try:
@@ -36,6 +38,8 @@ def main():
         if args.tls: urls += [f"turns:127.0.0.1:{fixture.tls_port}?transport=tcp"]
         config = [{"urls": url, "username": username, "credential": credential} for url in urls]
         env = {**os.environ, "SPRY_BROWSER_ICE": json.dumps(config), "SPRY_BROWSER_ORIGIN": f"http://127.0.0.1:{http.server_port}"}
+        # Always overwrite inherited assertion state to match this fixture.
+        env["SPRY_BROWSER_RELAY_PORTS"] = args.relay_ports or ""
         subprocess.run(["node", str(Path(__file__).with_suffix('.mjs'))], env=env, check=True, timeout=90)
     finally:
         fixture.close(); http.shutdown(); thread.join(timeout=3); http.server_close()

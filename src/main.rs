@@ -8,6 +8,7 @@ The credential command emits a TURN REST username/password JSON pair.\n\n\
 Options:\n\
   --listen ADDRESS              UDP and TCP listener (127.0.0.1:3478)\n\
   --relay-ip IP                 Local relay bind address (listener IP)\n\
+  --relay-ports FIRST:LAST       Inclusive UDP relay range (OS ephemeral by default)\n\
   --public-ip IP                Advertised relay IP if behind one-to-one NAT\n\
   --realm NAME                  Authentication realm (spry-turn)\n\
   --max-allocations COUNT        Total allocation limit (1024)\n\
@@ -84,6 +85,12 @@ fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
                 relay_given = true;
             }
             "--public-ip" => config.advertised_ip = Some(value.parse()?),
+            "--relay-ports" => {
+                let (first, last) = value
+                    .split_once(':')
+                    .ok_or("use --relay-ports FIRST:LAST")?;
+                config.relay_port_range = Some((first.parse()?, last.parse()?));
+            }
             "--realm" => config.realm = value,
             "--max-allocations" => config.max_allocations = value.parse()?,
             "--max-per-user" => config.max_per_user = value.parse()?,

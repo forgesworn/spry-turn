@@ -17,7 +17,9 @@
 
 ## Before replacing an existing deployment
 
-- [ ] Operator-selected bounded relay port range and firewall/certificate runbook.
+- [x] Operator-selected bounded UDP relay port range and firewall/certificate plan.
+- [ ] Applied firewall/NAT, trusted public certificate lifecycle and independent
+  cross-network deployment acceptance; a local plan is not this evidence.
 - [ ] Real KithMoot web and native interoperability against a separately chosen
   server, without adding a project-operated credential service.
 - [ ] Packet-loss, jitter, blocked UDP, IPv6, long-lived refresh, reconnect,

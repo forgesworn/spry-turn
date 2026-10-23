@@ -3,6 +3,7 @@ import { pathToFileURL } from 'node:url';
 const modulePath = process.env.SPRY_PLAYWRIGHT_PATH;
 const { chromium } = await import(modulePath ? pathToFileURL(modulePath).href : 'playwright');
 const config = JSON.parse(process.env.SPRY_BROWSER_ICE);
+const relayPorts = process.env.SPRY_BROWSER_RELAY_PORTS?.split(':').map(Number);
 const browser = await chromium.launch({ headless: true, args: ['--autoplay-policy=no-user-gesture-required', '--ignore-certificate-errors'] });
 try {
   const page = await browser.newPage();
@@ -46,6 +47,7 @@ try {
           const local = pair && stats.find(s => s.id === pair.localCandidateId);
           const remote = pair && stats.find(s => s.id === pair.remoteCandidateId);
           return { local: local?.candidateType, remote: remote?.candidateType, relayProtocol: local?.relayProtocol,
+            localPort: local?.port, remotePort: remote?.port,
             framesDecoded: stats.filter(s => s.type === 'inbound-rtp' && s.kind === 'video').reduce((n,s) => n+(s.framesDecoded??0),0),
             audioBytes: stats.filter(s => s.type === 'inbound-rtp' && s.kind === 'audio').reduce((n,s) => n+(s.bytesReceived??0),0) };
         }));
@@ -57,6 +59,10 @@ try {
       if (!received || !evidence.every(e => e.local === 'relay' && e.remote === 'relay' && e.framesDecoded > 0 && e.audioBytes > 0)) throw new Error('missing bidirectional decoded media');
       return { transport: iceServer.urls.split('?')[1] ?? 'tls', dataRoundTrip: received, endpoints: evidence };
     }, iceServer);
+    if (relayPorts && result.endpoints.some(e =>
+      ![e.localPort, e.remotePort].every(port => Number.isInteger(port) && port >= relayPorts[0] && port <= relayPorts[1]))) {
+      throw new Error('selected relay candidate escaped configured port range');
+    }
     console.log(JSON.stringify(result));
   }
 } finally { await browser.close(); }

@@ -1,4 +1,18 @@
-# Initial standalone verification
+# Standalone verification
+
+## Bounded relay ports, local increment
+
+The optional UDP relay-port range passed 22 independent socket tests with
+the default TLS build, including a signed 508 on exhaustion, occupied-port
+skipping, reuse after deallocation and continued forwarding by another
+allocation. Chromium passed relay-only generated audio/video/data over
+UDP, TCP and TLS, with selected local and remote relay ports asserted
+inside the configured range. See the [bounded receipt](evidence/bounded-relay-ports-20261023.json).
+The existing initial-release benchmark and hosted CI below do not qualify
+this new runtime change. Public firewall/NAT, certificate lifecycle, Archy
+installation and phone acceptance remain unverified.
+
+## Initial implementation evidence
 
 23 October 2026. Private MIT software project; no public relay, credential
 endpoint, application service or Archy integration has been deployed.
@@ -31,8 +45,8 @@ GitHub hosting is private under `forgesworn/spry-turn`; publication to package
 registries, image registries, public releases and Pages remains disabled or
 absent. [Hosted CI](https://github.com/forgesworn/spry-turn/actions/runs/40015270709)
 passed on Linux and macOS for implementation commit
-`48d75adf51c73b1ef2a51a3cb663e424f2b4ea35`. Subsequent handover edits change
-documentation only; hosted CI is separate evidence from the local checks.
+`48d75adf51c73b1ef2a51a3cb663e424f2b4ea35`. That run predates the bounded-port
+increment; hosted CI is separate evidence from the new local checks.
 
 Retained local build evidence is ignored by Git:
 
