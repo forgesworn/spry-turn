@@ -1,8 +1,22 @@
 # spry-turn
 
-A small standalone STUN/TURN server and embeddable Rust library. MIT,
-initially private. The aim is low CPU, bounded memory and a short packet
-forwarding path. Performance claims belong in [the measured comparison](docs/benchmarks.md).
+A lightweight standalone **STUN/TURN server in Rust**, an embeddable native
+library and a portable **WebAssembly packet codec**. UDP and TCP clients,
+optional TLS, coturn-compatible shared-secret credentials, bounded resources
+and no media stack. MIT licensed; the repository and initial release are private.
+
+[Documentation](docs/README.md) · [Quick start](docs/getting-started.md) ·
+[WebRTC and native integration](docs/integration.md) ·
+[Coturn compatibility](docs/coturn-compatibility.md) ·
+[API](docs/api.md) · [Support development](SUPPORT.md#donations) ·
+[LLM index](llms.txt)
+
+In the measured native Apple M4 Max UDP loopback comparison, spry-turn
+delivered **17–22% more packets/s** than the tested coturn configuration,
+with **19–23% less server CPU time** and **78–82% less process RSS**.
+The optimisation uses an extra UDP socket per allocation; RSS excludes
+kernel socket buffers. These results do not establish WAN, Linux or TLS
+performance. See [the method, raw results and limitations](docs/benchmarks.md).
 
 The first target is a server running independently on a normal computer.
 Later, an Archy owner can install it and configure KithMoot to use their
@@ -176,3 +190,31 @@ MIT applies to our code. Dependency notices are in
 [THIRD_PARTY_LICENSES.txt](THIRD_PARTY_LICENSES.txt); published RFC test data
 is credited in [NOTICE](NOTICE). There is no package publication or hosted
 service deployment in this repository.
+
+## Documentation and discovery
+
+Start with the [documentation index](docs/README.md), then choose the
+[operator guide](docs/operations.md), [integration guide](docs/integration.md)
+or [Rust/WASM API reference](docs/api.md). [Coturn compatibility](docs/coturn-compatibility.md)
+maps supported features and migration gaps. [Verification](docs/verification.md),
+[benchmarks](docs/benchmarks.md) and [the remaining work](GOALS.md) distinguish
+implemented behaviour from production qualification.
+
+AI tools can read [llms.txt](llms.txt) for a short canonical index or
+[llms-full.txt](llms-full.txt) for generated documentation context. Both
+are maintained from the same source documents and checked in CI. Private
+repository access is required; these files do not make the project public
+or guarantee search-engine or model indexing.
+
+## Support development
+
+spry-turn is part of [ForgeSworn](https://github.com/forgesworn), maintained
+by TheCryptoDonkey. Donations support development, testing and documentation.
+
+- [GitHub Sponsors](https://github.com/sponsors/TheCryptoDonkey)
+- [Ko-fi](https://ko-fi.com/brays)
+- [ForgeSworn on Geyser](https://geyser.fund/project/forgesworn)
+- Lightning: `profusemeat89@walletofsatoshi.com`
+
+See [support and donation details](SUPPORT.md), including Nostr zaps.
+Donations are optional and do not purchase relay access or a service guarantee.

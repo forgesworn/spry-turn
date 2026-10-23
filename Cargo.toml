@@ -5,8 +5,12 @@ edition = "2024"
 rust-version = "1.85"
 license = "MIT"
 authors = ["TheCryptoDonkey"]
-description = "A small bounded packet relay with optional TURN support"
+description = "Lightweight Rust STUN/TURN server and embeddable packet codec with UDP, TCP, TLS and WASM support"
 repository = "https://github.com/forgesworn/spry-turn"
+documentation = "https://github.com/forgesworn/spry-turn/blob/main/docs/README.md"
+readme = "README.md"
+keywords = ["turn", "stun", "webrtc", "relay", "wasm"]
+categories = ["network-programming", "command-line-utilities", "wasm"]
 publish = false
 
 [features]
