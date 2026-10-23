@@ -2,13 +2,13 @@
 
 > Lightweight Rust STUN/TURN server, embeddable native relay and WASM packet codec. MIT; maintained by TheCryptoDonkey under ForgeSworn.
 
-Version 0.1.0. Repository and initial GitHub prerelease are private; authorised access is required for source and release artefacts. There is no crates.io, docs.rs or npm publication, hosted relay, credential service or public documentation site.
+Version 0.2.0. Repository and initial GitHub prerelease are private; authorised access is required for source and release artefacts. There is no crates.io, docs.rs or npm publication, hosted relay, credential service or public documentation site.
 
 Native UDP/TCP clients and optional TLS use UDP peer allocations. Browser applications use their existing WebRTC ICE implementation. Ordinary browser WASM cannot host a raw-socket TURN server. Shared TURN secrets belong only to trusted operator tools; give clients short-lived credentials.
 
 This is an initial implementation, without full coturn parity or production qualification. UDP peer-relay port ranges are optional and fail closed on exhaustion. Static user databases, TCP relay allocations, DTLS, dual allocations and deployed Archy/Sapflow integration are not implemented. Physical phone and public-network acceptance remain open.
 
-Native ARM64 M4 Max UDP loopback measurements show 17–22% more throughput than the tested coturn configuration. The connected-UDP optimisation adds one socket per allocation, and process RSS excludes kernel buffers. Consult the benchmark method before reusing any figures.
+Historical native ARM64 M4 Max UDP loopback measurements show 17–22% more throughput than the tested coturn configuration. They predate the bounded relay-port feature and do not requalify later runtime changes. The connected-UDP optimisation adds one socket per allocation, and process RSS excludes kernel buffers. Consult the benchmark method before reusing any figures.
 
 These files provide navigation and source context for authorised readers and tools. They do not change repository visibility or guarantee indexing by search engines or language models.
 
@@ -36,8 +36,9 @@ and no media stack. MIT licensed; the repository and initial release are private
 In the measured native Apple M4 Max UDP loopback comparison, spry-turn
 delivered **17–22% more packets/s** than the tested coturn configuration,
 with **19–23% less server CPU time** and **78–82% less process RSS**.
-The optimisation uses an extra UDP socket per allocation; RSS excludes
-kernel socket buffers. These results do not establish WAN, Linux or TLS
+The recorded benchmark predates bounded relay ports. The optimisation
+uses an extra UDP socket per allocation; RSS excludes kernel socket buffers.
+These results do not establish WAN, Linux or TLS
 performance. See [the method, raw results and limitations](https://github.com/forgesworn/spry-turn/blob/main/docs/benchmarks.md).
 
 The first target is a server running independently on a normal computer.
@@ -52,6 +53,8 @@ There are no hosted defaults in the code.
   ChannelBind, Send/Data indications and ChannelData.
 - UDP relaying, with clients connecting over UDP or TCP. The `tls` feature
   adds TLS 1.2/1.3 client connections using rustls.
+- Optional inclusive UDP peer-relay port range, with occupied-port skipping,
+  authenticated 508 on exhaustion and no allocation outside the range.
 - Coturn-compatible TURN REST credentials: expiry-prefixed usernames and
   a shared secret. Credential generation is an operator-run local command.
 - IPv4 or IPv6 relay address family per configured instance. Native IPv6
@@ -120,6 +123,11 @@ To listen on a chosen interface, supply `--listen IP:PORT` and, if needed,
 `--public-ip IP` advertises an operator-configured NAT address. The
 operator must provide actual reachability and firewall rules; installing
 the server cannot make an inaccessible home connection a public relay.
+
+Use `--relay-ports 49160:49191` to bound peer UDP allocations for an
+operator-controlled firewall/NAT configuration. Without it, allocations
+retain OS-assigned ephemeral ports. See [the operator guide](https://github.com/forgesworn/spry-turn/blob/main/docs/operations.md)
+for reachability, resource budgets and port-preserving NAT requirements.
 
 TLS is optional at build time:
 
@@ -311,13 +319,13 @@ cd spry-turn
 ```
 
 Source is the portable installation path. Cargo and npm publication are
-disabled. The private v0.1.0 GitHub prerelease also carries a macOS ARM64
+disabled. The private v0.2.0 GitHub prerelease also carries a macOS ARM64
 TLS-enabled executable archive and a WASM codec archive. It does not make
 the source or artefacts publicly downloadable. Authorised users can fetch
 and verify the archives in an empty directory:
 
 ```sh
-gh release download v0.1.0 --repo forgesworn/spry-turn
+gh release download v0.2.0 --repo forgesworn/spry-turn
 shasum -a 256 -c SHA256SUMS
 ```
 
@@ -545,7 +553,7 @@ Canonical source: [docs/api.md](https://github.com/forgesworn/spry-turn/blob/mai
 
 # Rust and WASM API reference
 
-Version 0.1.0. Source is authoritative; there is no published crates.io,
+Version 0.2.0. Source is authoritative; there is no published crates.io,
 docs.rs or npm package. Authorised users can generate local Rust API pages
 with `cargo doc --locked --all-features --no-deps`.
 
@@ -681,7 +689,7 @@ The goal is a small forwarding core with measured resource costs.
 
 ## Feature map
 
-| Coturn deployment need | spry-turn 0.1.0 |
+| Coturn deployment need | spry-turn 0.2.0 |
 |---|---|
 | STUN Binding | Implemented |
 | TURN UDP relay allocations | Implemented |
@@ -903,7 +911,7 @@ Canonical source: [SECURITY.md](https://github.com/forgesworn/spry-turn/blob/mai
 
 # Security policy
 
-spry-turn 0.1.0 is an initial implementation. It has local socket/browser
+spry-turn 0.2.0 is an initial implementation. It has local socket/browser
 verification and bounded parsing/state, but no independent security audit
 or production qualification. See [verification](https://github.com/forgesworn/spry-turn/blob/main/docs/verification.md) and
 [remaining work](https://github.com/forgesworn/spry-turn/blob/main/GOALS.md).
@@ -987,6 +995,9 @@ in the server, library or codec.
 Canonical source: [docs/benchmarks.md](https://github.com/forgesworn/spry-turn/blob/main/docs/benchmarks.md)
 
 # Measured comparison
+
+These measurements predate the bounded relay-port feature in v0.2.0.
+They identify their own source snapshot and do not requalify later changes.
 
 23 October 2026. The final, architecture-matched Apple M4 Max run shows
 17–22% higher delivered-packet throughput than the coturn configuration
@@ -1259,13 +1270,18 @@ Canonical source: [CHANGELOG.md](https://github.com/forgesworn/spry-turn/blob/ma
 
 # Changelog
 
-## Unreleased
+## 0.2.0 — 23 October 2026
+
+Private prerelease. Adds a public `Config::relay_port_range` field; Rust
+hosts using struct literals must supply it, or use `Config::local(secret)`.
 
 - Optional inclusive `--relay-ports FIRST:LAST` bounds UDP peer allocations.
   Occupied ports are skipped; exhaustion returns 508 without falling back
   outside the range. Existing default ephemeral allocation is unchanged.
 - Operator firewall/NAT/certificate plan and bounded-range socket/browser
   regression coverage. Public deployment qualification remains open.
+- Versioned native/WASM release archives, current API/installation guides
+  and regenerated LLM context. Donation destinations are unchanged.
 
 ## 0.1.0 — 23 October 2026
 

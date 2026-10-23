@@ -3,11 +3,11 @@
   "files": [
     {
       "path": "Cargo.lock",
-      "sha256": "42ec0f375bb45f2a2a609a5715cb093bb02287d76bc26f61ddf5923a7f06f47c"
+      "sha256": "631ac81dcea471098e6f46cea6dc7a60909db57aad4073a8062f2981e77267d2"
     },
     {
       "path": "Cargo.toml",
-      "sha256": "33ba27dc991a47957c5161cb6a37d7e6b961e077b861ad318400d21df2d652a4"
+      "sha256": "4a6f4d14f9a71242635e43a013396d4f163d610cdcb5c1c7d795412d924726d1"
     },
     {
       "path": "examples/load.rs",

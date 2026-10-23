@@ -2,13 +2,13 @@
 
 > Lightweight Rust STUN/TURN server, embeddable native relay and WASM packet codec. MIT; maintained by TheCryptoDonkey under ForgeSworn.
 
-Version 0.1.0. Repository and initial GitHub prerelease are private; authorised access is required for source and release artefacts. There is no crates.io, docs.rs or npm publication, hosted relay, credential service or public documentation site.
+Version 0.2.0. Repository and initial GitHub prerelease are private; authorised access is required for source and release artefacts. There is no crates.io, docs.rs or npm publication, hosted relay, credential service or public documentation site.
 
 Native UDP/TCP clients and optional TLS use UDP peer allocations. Browser applications use their existing WebRTC ICE implementation. Ordinary browser WASM cannot host a raw-socket TURN server. Shared TURN secrets belong only to trusted operator tools; give clients short-lived credentials.
 
 This is an initial implementation, without full coturn parity or production qualification. UDP peer-relay port ranges are optional and fail closed on exhaustion. Static user databases, TCP relay allocations, DTLS, dual allocations and deployed Archy/Sapflow integration are not implemented. Physical phone and public-network acceptance remain open.
 
-Native ARM64 M4 Max UDP loopback measurements show 17–22% more throughput than the tested coturn configuration. The connected-UDP optimisation adds one socket per allocation, and process RSS excludes kernel buffers. Consult the benchmark method before reusing any figures.
+Historical native ARM64 M4 Max UDP loopback measurements show 17–22% more throughput than the tested coturn configuration. They predate the bounded relay-port feature and do not requalify later runtime changes. The connected-UDP optimisation adds one socket per allocation, and process RSS excludes kernel buffers. Consult the benchmark method before reusing any figures.
 
 These files provide navigation and source context for authorised readers and tools. They do not change repository visibility or guarantee indexing by search engines or language models.
 
@@ -32,7 +32,7 @@ These files provide navigation and source context for authorised readers and too
 - [Native M4 benchmarks](https://github.com/forgesworn/spry-turn/blob/main/docs/benchmarks.md): Matched ARM64 coturn comparison, raw evidence and resource trade-offs.
 - [Verification](https://github.com/forgesworn/spry-turn/blob/main/docs/verification.md): Actual local/CI evidence and explicitly unqualified gates.
 - [Acceptance and roadmap](https://github.com/forgesworn/spry-turn/blob/main/GOALS.md): Completed standalone work, missing coturn features and later integrations.
-- [Changelog](https://github.com/forgesworn/spry-turn/blob/main/CHANGELOG.md): Initial private prerelease contents.
+- [Changelog](https://github.com/forgesworn/spry-turn/blob/main/CHANGELOG.md): Current and historical private prerelease contents.
 
 ## Optional
 

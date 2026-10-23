@@ -14,8 +14,9 @@ and no media stack. MIT licensed; the repository and initial release are private
 In the measured native Apple M4 Max UDP loopback comparison, spry-turn
 delivered **17–22% more packets/s** than the tested coturn configuration,
 with **19–23% less server CPU time** and **78–82% less process RSS**.
-The optimisation uses an extra UDP socket per allocation; RSS excludes
-kernel socket buffers. These results do not establish WAN, Linux or TLS
+The recorded benchmark predates bounded relay ports. The optimisation
+uses an extra UDP socket per allocation; RSS excludes kernel socket buffers.
+These results do not establish WAN, Linux or TLS
 performance. See [the method, raw results and limitations](docs/benchmarks.md).
 
 The first target is a server running independently on a normal computer.
@@ -30,6 +31,8 @@ There are no hosted defaults in the code.
   ChannelBind, Send/Data indications and ChannelData.
 - UDP relaying, with clients connecting over UDP or TCP. The `tls` feature
   adds TLS 1.2/1.3 client connections using rustls.
+- Optional inclusive UDP peer-relay port range, with occupied-port skipping,
+  authenticated 508 on exhaustion and no allocation outside the range.
 - Coturn-compatible TURN REST credentials: expiry-prefixed usernames and
   a shared secret. Credential generation is an operator-run local command.
 - IPv4 or IPv6 relay address family per configured instance. Native IPv6
@@ -98,6 +101,11 @@ To listen on a chosen interface, supply `--listen IP:PORT` and, if needed,
 `--public-ip IP` advertises an operator-configured NAT address. The
 operator must provide actual reachability and firewall rules; installing
 the server cannot make an inaccessible home connection a public relay.
+
+Use `--relay-ports 49160:49191` to bound peer UDP allocations for an
+operator-controlled firewall/NAT configuration. Without it, allocations
+retain OS-assigned ephemeral ports. See [the operator guide](docs/operations.md)
+for reachability, resource budgets and port-preserving NAT requirements.
 
 TLS is optional at build time:
 

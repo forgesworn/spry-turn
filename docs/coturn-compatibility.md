@@ -6,7 +6,7 @@ The goal is a small forwarding core with measured resource costs.
 
 ## Feature map
 
-| Coturn deployment need | spry-turn 0.1.0 |
+| Coturn deployment need | spry-turn 0.2.0 |
 |---|---|
 | STUN Binding | Implemented |
 | TURN UDP relay allocations | Implemented |
