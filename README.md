@@ -3,7 +3,7 @@
 A lightweight standalone **STUN/TURN server in Rust**, an embeddable native
 library and a portable **WebAssembly packet codec**. UDP and TCP clients,
 optional TLS, coturn-compatible shared-secret credentials, bounded resources
-and no media stack. MIT licensed; the repository and initial release are private.
+and no media stack. MIT licensed, copyright 2026 TheCryptoDonkey. The source and GitHub prereleases are public.
 
 [Documentation](docs/README.md) · [Quick start](docs/getting-started.md) ·
 [WebRTC and native integration](docs/integration.md) ·

@@ -1,5 +1,13 @@
 # Changelog
 
+## Public source, 23 October 2026
+
+The owner authorised public MIT source and the existing GitHub prereleases.
+History and release archives were checked before visibility changed. Existing
+tags and archive bytes are retained; historical private-release wording below
+describes their original creation. Package registries and hosted services remain
+separate scope. This documentation change does not requalify runtime performance.
+
 ## 0.2.0 — 23 October 2026
 
 Private prerelease. Adds a public `Config::relay_port_range` field; Rust

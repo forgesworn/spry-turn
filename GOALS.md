@@ -13,7 +13,7 @@
 - [x] Native connected-UDP and direct-readiness-slot tuning, tested against
   a native baseline and coturn with resource costs recorded.
 - [x] WASM protocol arena, actual execution and bounded buffer reuse test.
-- [x] Private repository, source/secret review and CI readback.
+- [x] Public MIT source, source/secret review and CI readback.
 
 ## Before replacing an existing deployment
 

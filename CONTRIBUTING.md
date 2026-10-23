@@ -2,8 +2,8 @@
 
 Read [AGENTS.md](AGENTS.md) and [GOALS.md](GOALS.md). Keep the forwarding core
 small, safe Rust and independent of media, application admission and hosted
-services. Keep the repository, prerelease and fixtures private unless the
-owner explicitly authorises public publication.
+services. Source and GitHub prereleases are public. Keep test fixtures
+generated and free of private endpoints, credentials and media.
 
 Use synthetic peers, credentials and media. Do not commit private endpoints,
 real machine paths, keys or packet captures. Use this checkout's `target/`

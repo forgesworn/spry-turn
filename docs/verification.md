@@ -41,7 +41,8 @@ endpoint, application service or Archy integration has been deployed.
   checksum fields use explicit path/SHA-256 records; no test credentials,
   private endpoints, machine paths or actual media are committed.
 
-GitHub hosting is private under `forgesworn/spry-turn`; publication to package
+At the initial verification, GitHub hosting was private under
+`forgesworn/spry-turn`. Publication to package
 registries, image registries, public releases and Pages remains disabled or
 absent. [Hosted CI](https://github.com/forgesworn/spry-turn/actions/runs/40015270709)
 passed on Linux and macOS for implementation commit

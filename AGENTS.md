@@ -6,8 +6,9 @@ dependencies. Transparent UDP is for an explicitly configured upstream;
 TURN is optional. Do not silently turn either into an open arbitrary proxy.
 
 - British English. MIT. Commit as TheCryptoDonkey with a GitHub no-reply email.
-- This repository starts private. Do not publish packages, images, releases,
-  pages or public repositories without the owner's instruction.
+- The owner authorised public MIT source and the existing GitHub prereleases
+  on 23 October 2026. Package registries, images, Pages and a hosted relay
+  remain separate scope; do not add them without the owner's instruction.
 - No real endpoints, credentials, private source, media or machine paths in
   committed evidence. Fixtures must be generated locally.
 - `unsafe` is forbidden in our code. Keep dependency features small.
