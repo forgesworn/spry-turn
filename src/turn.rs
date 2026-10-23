@@ -30,6 +30,9 @@ const MAX_PEERS: usize = 32;
 pub struct Config {
     pub listen: SocketAddr,
     pub relay_ip: IpAddr,
+    /// Inclusive UDP peer-relay range. None retains OS-assigned ephemeral ports.
+    /// A configured range never falls back to an ephemeral port on exhaustion.
+    pub relay_port_range: Option<(u16, u16)>,
     pub advertised_ip: Option<IpAddr>,
     pub realm: String,
     pub secret: Vec<u8>,
@@ -47,6 +50,16 @@ pub struct Config {
 #[cfg(test)]
 mod policy_tests {
     use super::*;
+
+    #[test]
+    fn invalid_relay_ranges_are_refused_before_binding() {
+        for range in [(0, 0), (0, 65535), (40001, 40000)] {
+            let mut config = Config::local(vec![1; 32]);
+            config.listen.set_port(0);
+            config.relay_port_range = Some(range);
+            assert!(Server::bind(config).is_err());
+        }
+    }
 
     #[test]
     #[cfg(feature = "direct-index")]
@@ -113,6 +126,7 @@ impl Config {
         Self {
             listen: "127.0.0.1:3478".parse().expect("literal"),
             relay_ip: "127.0.0.1".parse().expect("literal"),
+            relay_port_range: None,
             advertised_ip: None,
             realm: "spry-turn".into(),
             secret,
@@ -340,6 +354,7 @@ pub struct Server {
     #[cfg(feature = "direct-index")]
     relays: RelaySlots,
     relay_ports: HashSet<u16>,
+    next_relay_port: u16,
     connections: HashMap<Token, Connection>,
     next_token: usize,
     nonces: auth::Nonces,
@@ -439,6 +454,14 @@ impl Server {
     }
 
     pub fn bind(config: Config) -> io::Result<Self> {
+        if config
+            .relay_port_range
+            .is_some_and(|(first, last)| first == 0 || first > last)
+        {
+            return Err(io::Error::other(
+                "relay ports require 1 <= first <= last <= 65535",
+            ));
+        }
         #[cfg(feature = "direct-index")]
         if config.max_allocations > (RelaySlots::MASK >> 2) - 1 {
             return Err(io::Error::other(
@@ -483,6 +506,7 @@ impl Server {
             None
         };
         let now = Instant::now();
+        let next_relay_port = config.relay_port_range.map_or(0, |(first, _)| first);
         Ok(Self {
             config,
             poll,
@@ -494,6 +518,7 @@ impl Server {
             allocations: HashMap::new(),
             relays: Default::default(),
             relay_ports: HashSet::new(),
+            next_relay_port,
             connections: HashMap::new(),
             next_token: 3,
             nonces: auth::Nonces::new()
@@ -1048,7 +1073,7 @@ impl Server {
             self.error(client, peer, m, 486, Some(&key));
             return;
         }
-        let socket = UdpSocket::bind(SocketAddr::new(self.config.relay_ip, 0));
+        let socket = self.bind_relay_socket();
         let Ok(mut socket) = socket else {
             self.error(client, peer, m, 508, Some(&key));
             return;
@@ -1100,6 +1125,30 @@ impl Server {
         #[cfg(not(feature = "direct-index"))]
         self.relays.insert(token, client);
         self.allocated(client, peer, m, &key);
+    }
+
+    fn bind_relay_socket(&mut self) -> io::Result<UdpSocket> {
+        let Some((first, last)) = self.config.relay_port_range else {
+            return UdpSocket::bind(SocketAddr::new(self.config.relay_ip, 0));
+        };
+        // Rotate through the bounded range once. Occupied host ports are skipped,
+        // but neither capacity exhaustion nor a bind error widens the range.
+        for _ in u32::from(first)..=u32::from(last) {
+            let port = self.next_relay_port;
+            self.next_relay_port = if port == last { first } else { port + 1 };
+            if self.relay_ports.contains(&port) {
+                continue;
+            }
+            match UdpSocket::bind(SocketAddr::new(self.config.relay_ip, port)) {
+                Ok(socket) => return Ok(socket),
+                Err(error) if error.kind() == io::ErrorKind::AddrInUse => continue,
+                Err(error) => return Err(error),
+            }
+        }
+        Err(io::Error::new(
+            io::ErrorKind::AddrInUse,
+            "relay port range exhausted",
+        ))
     }
 
     fn allocated(&mut self, client: Client, peer: SocketAddr, m: &Message<'_>, key: &[u8]) {

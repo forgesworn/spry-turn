@@ -282,6 +282,78 @@ class Interop(unittest.TestCase):
         a.allocate(); _, fields, _ = b.request(3, signed=False); b.nonce = fields[NONCE]
         self.assertEqual(error_code(b.request(3, [(TRANSPORT, b"\x11\0\0\0")])[1]), 486)
 
+    def reserve_relay_range(self):
+        # Hold a generated contiguous range through server startup so the control
+        # listener cannot accidentally take one of the test relay ports.
+        for _ in range(64):
+            sockets = []
+            try:
+                first = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                sockets.append(first); first.bind(("127.0.0.1", 0))
+                port = first.getsockname()[1]
+                if port > 65533:
+                    raise OSError("range would overflow")
+                for offset in (1, 2):
+                    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                    sockets.append(sock); sock.bind(("127.0.0.1", port + offset))
+                for sock in sockets: self.addCleanup(sock.close)
+                return port, sockets
+            except OSError:
+                for sock in sockets: sock.close()
+        self.fail("could not reserve generated contiguous relay ports")
+
+    def test_relay_range_exhaustion_reuse_and_bidirectional_data(self):
+        first, reserved = self.reserve_relay_range()
+        f = Fixture(BINARY, tls=TLS, limits=("--relay-ports", f"{first}:{first + 2}"))
+        self.addCleanup(f.close)
+        # Leave the first port occupied by another host process.
+        reserved[1].close(); reserved[2].close()
+        modes = ["udp", "tcp"] + (["tls"] if TLS else [])
+        for mode in modes:
+            with self.subTest(mode=mode):
+                a, b, c = [Client(f, mode=mode) for _ in range(3)]
+                for client in (a, b, c): self.addCleanup(client.close)
+                relay_a, relay_b = a.allocate(), b.allocate()
+                self.assertEqual({relay_a[1], relay_b[1]}, {first + 1, first + 2})
+                # The failure must be integrity-protected, not an unsignalled
+                # timeout or a successful allocation outside the configured range.
+                _, fields, _ = c.request(3, signed=False); c.nonce = fields[NONCE]
+                c.send(packet(3, [(TRANSPORT, b"\x11\0\0\0"), (USERNAME, c.username),
+                                  (REALM_ATTR, REALM), (NONCE, c.nonce)], c.key))
+                self.assertEqual(error_code(parse(c.receive(), c.key)[1]), 508)
+                peer = self.peer(); endpoint = peer.getsockname()
+                self.assertEqual(b.peer_request(9, endpoint, 0x4000)[0], 0x109)
+                b.send(struct.pack("!HH", 0x4000, 5) + b"range")
+                data, source = peer.recvfrom(1024)
+                self.assertEqual((data, source), (b"range", relay_b))
+                peer.sendto(b"reply", relay_b)
+                self.assertEqual(b.receive()[4:9], b"reply")
+                self.assertEqual(a.request(4, [(LIFETIME, bytes(4))])[0], 0x104)
+                self.assertEqual(c.allocate(), relay_a)
+                # Releasing a different allocation must not disturb b's channel.
+                peer.sendto(b"still-live", relay_b)
+                self.assertEqual(b.receive()[4:14], b"still-live")
+                for client in (b, c):
+                    self.assertEqual(client.request(4, [(LIFETIME, bytes(4))])[0], 0x104)
+                for client in (a, b, c): client.close()
+
+    def test_single_relay_port_and_nat_advertisement_preserve_port(self):
+        first, reserved = self.reserve_relay_range()
+        f = Fixture(BINARY, limits=("--relay-ports", f"{first}:{first}",
+                                   "--public-ip", "203.0.113.7"))
+        self.addCleanup(f.close); reserved[0].close()
+        c = Client(f); self.addCleanup(c.close)
+        self.assertEqual(c.allocate(), ("203.0.113.7", first))
+
+    def test_invalid_relay_port_cli_refuses_startup(self):
+        for value in ("0:0", "0:65535", "40001:40000", "65536:65536", "-1:9", "1", "1:2:3"):
+            with self.subTest(value=value):
+                result = subprocess.run([str(BINARY), "serve", "--listen", "127.0.0.1:0", "--relay-ports", value],
+                                        env={**os.environ, "SPRY_TURN_SECRET": secrets.token_hex(32)},
+                                        capture_output=True, timeout=3)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn(b"ready", result.stderr)
+
     def test_per_credential_quota(self):
         f = Fixture(BINARY, limits=("--max-per-user", "1")); self.addCleanup(f.close)
         expiry = int(time.time()) + 3600

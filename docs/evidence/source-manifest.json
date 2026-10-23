@@ -3,11 +3,11 @@
   "files": [
     {
       "path": "Cargo.lock",
-      "sha256": "42ec0f375bb45f2a2a609a5715cb093bb02287d76bc26f61ddf5923a7f06f47c"
+      "sha256": "631ac81dcea471098e6f46cea6dc7a60909db57aad4073a8062f2981e77267d2"
     },
     {
       "path": "Cargo.toml",
-      "sha256": "62b62c3c2e74f91f987afe0b920a0aa23017c79d8d4927e6a0fef5834ed29e99"
+      "sha256": "4a6f4d14f9a71242635e43a013396d4f163d610cdcb5c1c7d795412d924726d1"
     },
     {
       "path": "examples/load.rs",
@@ -27,11 +27,11 @@
     },
     {
       "path": "src/main.rs",
-      "sha256": "82d79f81f6a804f7cda282e653639d105e21de87160df67fa870900c34d4209c"
+      "sha256": "acfa1beffe68df2a3b4c8f59c40550eab23d7b8dfc812dcc475ba110899d325c"
     },
     {
       "path": "src/turn.rs",
-      "sha256": "787612976bffdb26613c166762fdcc7fad6e891b447204a6793443c057d6d10d"
+      "sha256": "c9fcba0ebf63336aad149176b2e44154925c2c73e45894480be00f05c71ce56a"
     },
     {
       "path": "src/wasm.rs",
@@ -42,5 +42,5 @@
       "sha256": "ddcaa1a89a11a1ea438e20a58b7524d55563775eb9f37cb583b01859fa0c1467"
     }
   ],
-  "note": "SHA-256 of reviewed source files. Native M4 build source hashes and compiler details are recorded separately in m4-build.json."
+  "note": "SHA-256 of current reviewed source files. Historical benchmark/build evidence identifies its own source snapshot; these hashes do not requalify that benchmark against later changes."
 }

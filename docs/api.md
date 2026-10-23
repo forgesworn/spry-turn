@@ -1,6 +1,6 @@
 # Rust and WASM API reference
 
-Version 0.1.0. Source is authoritative; there is no published crates.io,
+Version 0.2.0. Source is authoritative; there is no published crates.io,
 docs.rs or npm package. Authorised users can generate local Rust API pages
 with `cargo doc --locked --all-features --no-deps`.
 
@@ -31,6 +31,7 @@ Source: [src/turn.rs](../src/turn.rs).
 |---|---|
 | `listen` | `127.0.0.1:3478`, shared UDP/TCP listening address |
 | `relay_ip` | `127.0.0.1`, local bind address of UDP peer sockets |
+| `relay_port_range` | `None` for OS ephemeral ports, or `Some((first, last))` for an inclusive nonzero UDP relay range with no fallback |
 | `advertised_ip` | `None`; optional NAT-visible relay IP of the same address family |
 | `realm` | `spry-turn`, long-term authentication realm |
 | `secret` | Caller supplied, at least 32 bytes |
@@ -43,7 +44,8 @@ Source: [src/turn.rs](../src/turn.rs).
 
 `Server::bind(config)` validates configuration and binds listeners. Realm
 must contain 1–128 bytes, relay bind IP must be concrete and numeric limits
-must be positive. The CLI additionally restricts loopback-peer opt-in to a
+must be positive. A configured relay range requires `1 <= first <= last`;
+port exhaustion produces TURN 508 without widening the range. The CLI additionally restricts loopback-peer opt-in to a
 loopback-only listener; embedding hosts must enforce the same policy.
 
 | Method | Result |

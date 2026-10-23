@@ -1,6 +1,6 @@
 # Security policy
 
-spry-turn 0.1.0 is an initial implementation. It has local socket/browser
+spry-turn 0.2.0 is an initial implementation. It has local socket/browser
 verification and bounded parsing/state, but no independent security audit
 or production qualification. See [verification](docs/verification.md) and
 [remaining work](GOALS.md).

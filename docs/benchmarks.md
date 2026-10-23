@@ -1,5 +1,8 @@
 # Measured comparison
 
+These measurements predate the bounded relay-port feature in v0.2.0.
+They identify their own source snapshot and do not requalify later changes.
+
 23 October 2026. The final, architecture-matched Apple M4 Max run shows
 17–22% higher delivered-packet throughput than the coturn configuration
 tested, about 19–23% less server CPU time for the complete workload, and

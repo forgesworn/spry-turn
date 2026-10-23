@@ -1,0 +1,106 @@
+{
+  "date": "2026-10-23",
+  "base_ref": "a9f94fe",
+  "default_tls_binary_sha256": "ba1e6a1956c935352ba169d0a592a44e2b2708a1095feab0748b4dacd4fc5553",
+  "checks": {
+    "all_features_unit_tests": 9,
+    "minimal_limits_unit_tests": 1,
+    "codec_auth_unit_tests": 6,
+    "independent_socket_tests_default_tls": 22,
+    "bounded_chromium_transports": [
+      "udp",
+      "tcp",
+      "tls"
+    ],
+    "bounded_chromium_assertions": [
+      "relay-only candidates both ends",
+      "selected local and remote relay ports within 49160:49191",
+      "bidirectional decoded generated video",
+      "received audio bytes both ends",
+      "data round trip"
+    ],
+    "fmt": true,
+    "all_features_clippy_warnings_denied": true,
+    "wasm_minimal_clippy_warnings_denied": true,
+    "independent_socket_tests_portable_tls": 22
+  },
+  "range_contract": {
+    "scope": "UDP peer-relay allocations",
+    "inclusive": true,
+    "invalid_zero_reversed_overflow_refused": true,
+    "occupied_host_port_skipped": true,
+    "exhaustion_signed_error": 508,
+    "ephemeral_fallback": false,
+    "released_port_reused": true,
+    "unaffected_allocation_kept_forwarding": true,
+    "nat_advertised_port_preserved": true,
+    "default_ephemeral_mode_unchanged": true
+  },
+  "setup_failure": "An initial socket invocation started before the new build completed and used the previous executable, which rejected --relay-ports. The completed build passed all 22 cases.",
+  "not_established": {
+    "public_network": true,
+    "applied_firewall_or_nat": true,
+    "public_certificate_renewal": true,
+    "archy_installation": true,
+    "physical_grapheneos": true,
+    "intermittent_native_call_stall_fixed": true,
+    "osa_exemption": true
+  },
+  "performance_comparison": false,
+  "task_services_stopped": true,
+  "portable_tls_binary_sha256": "a078fffa925aba9067f96a94302ebd0741342089ce318f3d9520fc73d50001f1",
+  "chromium_samples": [
+    {
+      "relay_protocol": "udp",
+      "selected_ports": [
+        49160,
+        49163
+      ],
+      "frames_decoded": [
+        4,
+        4
+      ],
+      "audio_bytes": [
+        297,
+        297
+      ]
+    },
+    {
+      "relay_protocol": "tcp",
+      "selected_ports": [
+        49164,
+        49165
+      ],
+      "frames_decoded": [
+        2,
+        3
+      ],
+      "audio_bytes": [
+        228,
+        228
+      ]
+    },
+    {
+      "relay_protocol": "tls",
+      "selected_ports": [
+        49166,
+        49167
+      ],
+      "frames_decoded": [
+        3,
+        4
+      ],
+      "audio_bytes": [
+        355,
+        355
+      ]
+    }
+  ],
+  "source_sha256": {
+    "src/main.rs": "acfa1beffe68df2a3b4c8f59c40550eab23d7b8dfc812dcc475ba110899d325c",
+    "src/turn.rs": "c9fcba0ebf63336aad149176b2e44154925c2c73e45894480be00f05c71ce56a",
+    "tests/interop.py": "a811feb6820900e46c88c23cf46fd80a4e266787f996e53c6ef0e116a8e614bd",
+    "tests/browser.py": "5f3d1f7fb4c9b2e1dc15f2560bd0594e1a95389cfa53144eb8a4b1279b905ec5",
+    "tests/browser.mjs": "dfe7f7e27caca2038c0f5b3d48569b39a3f84cc5841bb104741a9148bb818c68"
+  }
+}
