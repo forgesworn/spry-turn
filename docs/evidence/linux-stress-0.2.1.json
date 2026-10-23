@@ -1,0 +1,100 @@
+{
+  "schema": 1,
+  "kind": "standalone-local-sustained-qualification",
+  "seed": 7411,
+  "requested_churn_seconds": 15,
+  "binary_sha256": "71c43084a568b85fbebf5ad814734277a24d46910f5c321eecf21ca286e3b6f7",
+  "binary_version": "spry-turn 0.2.1",
+  "harness_source_sha256": {
+    "tests/stress.py": "088a68026f50497a781c03e72622db6c335efe024010a6380f088faff8c8b111",
+    "tests/interop.py": "f3e603f8c09363f276476f20eec047c12118f630b3cb09a6ae5620caf55e1e7b"
+  },
+  "passed": true,
+  "phases": {
+    "churn": {
+      "rounds": 363,
+      "allocations": 2905,
+      "signed_exhaustions": 363,
+      "tampered_nonce_rejections": 363,
+      "wrong_key_rejections": 363,
+      "private_peer_rejections": 363,
+      "stable_roundtrips": 363,
+      "refreshed_roundtrips": 28,
+      "churn_roundtrips": 2541,
+      "client_transports": [
+        "udp",
+        "tcp",
+        "tls"
+      ],
+      "configured_relay_ports": 8,
+      "max_churn_rounds_per_second": 25,
+      "issued_control_requests": 12738,
+      "observed_seconds": 15.194,
+      "resources": {
+        "baseline": {
+          "rss_bytes": 2621440,
+          "open_descriptors": 9
+        },
+        "final": {
+          "rss_bytes": 2891776,
+          "open_descriptors": 9
+        },
+        "max_sampled_rss_bytes": 2891776,
+        "max_sampled_open_descriptors": 9,
+        "samples": 8,
+        "rss_regression_budget_bytes": 16777216,
+        "scope": "Server-only coarse process RSS/FD sampling; excludes kernel socket memory and does not prove absence of leaks."
+      }
+    },
+    "loss_and_jitter": {
+      "sent_roundtrips": 256,
+      "received_roundtrips": 161,
+      "incomplete_roundtrips": 95,
+      "proxy_dropped_datagrams": 95,
+      "proxy_delayed_datagrams": 375,
+      "reordered_roundtrips": 66,
+      "max_injected_delay_ms": 8,
+      "scope": "Seeded userspace UDP proxy; corruption/duplicates forbidden, loss/reordering permitted."
+    },
+    "credential_expiry": {
+      "live_credential_expiry_rejected": true,
+      "expired_allocate_rejected": true,
+      "new_credential_recovery": true
+    },
+    "slow_streams": {
+      "connection_limit": 2,
+      "saturated_partial_streams": 2,
+      "extra_stream_rejected": true,
+      "absolute_unauthenticated_timeout_recovered": true,
+      "unrelated_udp_roundtrips": 85,
+      "observed_seconds": 17.184
+    },
+    "slow_readers": {
+      "transports": [
+        {
+          "client_transport": "tcp",
+          "paused_inbound_bytes": 57600,
+          "ordered_frames_drained": 48,
+          "post_drain_roundtrip_and_refresh": true,
+          "unrelated_udp_progress": true
+        },
+        {
+          "client_transport": "tls",
+          "paused_inbound_bytes": 57600,
+          "ordered_frames_drained": 48,
+          "post_drain_roundtrip_and_refresh": true,
+          "unrelated_udp_progress": true
+        }
+      ],
+      "scope": "Paused readers and drain/resume over real sockets. OS buffers vary; the public test does not prove an internal WouldBlock event."
+    },
+    "control_burst_recovery": {
+      "offered_binding_requests": 10000,
+      "received_binding_responses": 3838,
+      "offered_requests_per_second": 301890,
+      "post_burst_channel_roundtrip_and_refresh": true,
+      "scope": "A finite UDP control burst; absent replies can reflect socket buffers as well as control admission. Tests recovery, not drop attribution."
+    }
+  },
+  "elapsed_seconds": 57.663
+}

@@ -16,6 +16,7 @@ jobs:
         with:
           node-version: 24
       - run: npm run check:docs
+      - run: node tests/kithmoot-guard.mjs
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -26,11 +27,30 @@ jobs:
       - run: cargo test --locked --no-default-features --features turn --lib
       - if: matrix.os == 'ubuntu-latest'
         run: |
+          cargo fmt --manifest-path experiments/linux-batch/Cargo.toml -- --check
+          cargo clippy --locked --manifest-path experiments/linux-batch/Cargo.toml --target-dir target --all-targets -- -D warnings
+          cargo test --locked --manifest-path experiments/linux-batch/Cargo.toml --target-dir target
+          mkdir -p .local
+          cargo run --locked --release --manifest-path experiments/linux-batch/Cargo.toml --target-dir target -- --packets 1024 --runs 1 > .local/ci-batching.jsonl
+      - if: matrix.os == 'ubuntu-latest'
+        run: |
           rustup target add wasm32-unknown-unknown
           cargo clippy --locked --target wasm32-unknown-unknown --no-default-features --features wasm --lib -- -D warnings
           cargo build --locked --release --target wasm32-unknown-unknown --no-default-features --features wasm --lib
       - run: cargo build --locked --release --features tls
       - run: python3 tests/interop.py --tls
+      - run: python3 tests/stress.py --binary target/release/spry-turn --seconds 15 --tls --output .local/ci-stress.json
       - run: npm ci --ignore-scripts
       - run: npx playwright install --with-deps chromium
       - run: python3 tests/browser.py --tls --relay-ports 49160:49191
+  fuzz:
+    runs-on: ubuntu-latest
+    env:
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2025-12-05
+      - run: cargo install cargo-fuzz --version 0.13.2 --locked
+      - run: python3 tests/fuzz.py --toolchain nightly-2025-12-05 --seconds 30 --output .local/ci-fuzz.json

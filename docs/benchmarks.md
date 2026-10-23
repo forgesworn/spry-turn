@@ -1,5 +1,9 @@
 # Measured comparison
 
+For v0.2.1, use the [current standalone qualification](qualification-0.2.1.md),
+which includes bounded-port UDP/TCP/TLS measurements and controlled tuning.
+The figures below retain their original source and method.
+
 These measurements predate the bounded relay-port feature in v0.2.0.
 They identify their own source snapshot and do not requalify later changes.
 

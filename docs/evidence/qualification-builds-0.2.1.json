@@ -1,0 +1,123 @@
+{
+  "schema": 1,
+  "date": "2026-10-23",
+  "source_manifest_sha256": "b694b5412cbf084fda037bf4d8008b5cfc9d14753008f1b37bbd0367014a0bc7",
+  "runtime_sources_verified_against_checkout": true,
+  "server_source_changed_after_measurement": false,
+  "macos": {
+    "target": "aarch64-apple-darwin",
+    "rustc": "1.96.0 (ac68faa20 2026-05-25)",
+    "compiler_host": "x86_64-apple-darwin",
+    "measured_binary_architecture": "arm64",
+    "runtime_emulation": false,
+    "features": [
+      "runtime",
+      "turn",
+      "direct-index",
+      "connected-udp",
+      "tls"
+    ],
+    "rustflags": "Build-home and scratch paths remapped; no CPU-specific or PGO flags",
+    "server": {
+      "sha256": "0bbcfa0c3efd6cce6a749c706e144de1740e37eb44c146f37a8887319c7085fb",
+      "bytes": 1197760,
+      "architectures": [
+        "arm64"
+      ]
+    },
+    "loader": {
+      "sha256": "6c0f19acc27e837e67d6bbb47f2726f783d19f7903435b8f083e53a2632fc8ea",
+      "bytes": 1297744,
+      "architectures": [
+        "arm64"
+      ]
+    },
+    "coturn": {
+      "sha256": "80303f4b0082e4fc6ed0ca7af4058a5c87b3acd1641f36f92404923b5b0a0d33",
+      "bytes": 487032,
+      "architectures": [
+        "arm64"
+      ]
+    }
+  },
+  "linux": {
+    "target": "aarch64-unknown-linux-gnu",
+    "rustc": "1.94.1 (e408947bf 2026-03-25)",
+    "llvm": "21.1.8",
+    "features": [
+      "runtime",
+      "turn",
+      "direct-index",
+      "connected-udp",
+      "tls"
+    ],
+    "rustflags": null,
+    "glibc_build_environment": "Debian GLIBC 2.36-9+deb12u13",
+    "linked_system_libraries": [
+      "libgcc_s.so.1",
+      "libc.so.6",
+      "ld-linux-aarch64.so.1"
+    ],
+    "container_cpu_quota": 2,
+    "container_memory_limit_bytes": 2147483648,
+    "vm_visible_memory_bytes": 4107407360,
+    "server": {
+      "sha256": "71c43084a568b85fbebf5ad814734277a24d46910f5c321eecf21ca286e3b6f7",
+      "bytes": 1381008,
+      "architectures": [
+        "arm64"
+      ]
+    },
+    "loader": {
+      "sha256": "c5f23366313383fbe821998c08e22dab4bdffd4f8b2c5352b63df873fe677c19",
+      "bytes": 1512240,
+      "architectures": [
+        "arm64"
+      ]
+    },
+    "coturn": {
+      "sha256": "9a0e57534696b0955dc84174548747b1f08f42c9899b6afd40f93b54438cbae7",
+      "bytes": 627904,
+      "architectures": [
+        "arm64"
+      ]
+    }
+  },
+  "shared_release_settings": {
+    "lto": true,
+    "codegen_units": 1,
+    "panic": "abort",
+    "strip": true,
+    "coturn_source_version": "4.18.0",
+    "coturn_source_sha256": "28d55294ac596fbd129b293a85e7bb1c5dc4bd15b7fb55c500f355149e5f4e28",
+    "coturn_cflags": "-O3 -DNDEBUG",
+    "coturn_modifications": false,
+    "coturn_databases_and_prometheus": "disabled"
+  },
+  "pgo": {
+    "experimental_only": true,
+    "shipped": false,
+    "profile": {
+      "raw_files": 6,
+      "merged_sha256": "efc12caeba1bcb4bdf406d30ed61af53e2be9556dc9380f00aafb7d26374d9db",
+      "maximum_function_count": 14045496,
+      "total_count": 166916851,
+      "nonzero_counters_verified": true
+    },
+    "binary": {
+      "sha256": "e7adccef07d64d7faaeb1d432153ca6cde9f3e0a500ab9a820f59b28f7d68780",
+      "bytes": 1181520,
+      "architectures": [
+        "arm64"
+      ]
+    },
+    "profile_host_source_sha256": "e5f223885b1233cf5ab8b51457b7ac516378a9a88332f216c87bd90f7fb8e06a",
+    "training_driver_source_sha256": "78cf3dbaa0c13a82563fbddb7f3f37608c7e1078d8b450d06ca8059d84f518ab",
+    "rejected_continuous_attempt": {
+      "reason": "All counters were zero despite training traffic",
+      "maximum_function_count": 0,
+      "total_count": 0,
+      "excluded_from_performance_claims": true
+    }
+  }
+}

@@ -6,8 +6,11 @@ import subprocess
 
 root = Path(__file__).resolve().parents[1]
 packages = {}
-for platform in ["aarch64-apple-darwin", "aarch64-unknown-linux-gnu", "x86_64-unknown-linux-gnu"]:
-    metadata = json.loads(subprocess.check_output(["cargo", "metadata", "--format-version", "1", "--locked", "--all-features", "--filter-platform", platform], cwd=root))
+targets = [(platform, ["--all-features"]) for platform in
+           ["aarch64-apple-darwin", "aarch64-unknown-linux-gnu", "x86_64-unknown-linux-gnu"]]
+targets.append(("wasm32-unknown-unknown", ["--no-default-features", "--features", "wasm"]))
+for platform, features in targets:
+    metadata = json.loads(subprocess.check_output(["cargo", "metadata", "--format-version", "1", "--locked", *features, "--filter-platform", platform], cwd=root))
     nodes = {n["id"]: n for n in metadata["resolve"]["nodes"]}
     pending = [metadata["resolve"]["root"]]; active = set()
     while pending:
@@ -15,7 +18,7 @@ for platform in ["aarch64-apple-darwin", "aarch64-unknown-linux-gnu", "x86_64-un
         if node in active: continue
         active.add(node); pending.extend(dep["pkg"] for dep in nodes[node]["deps"])
     packages.update({p["id"]: p for p in metadata["packages"] if p["id"] in active})
-sections = ["Third-party dependencies for all features on macOS arm64 and Linux arm64/x86_64.\nOther targets require their own licence collection before distribution.\nRegenerate: python3 scripts/licences.py\n"]
+sections = ["Third-party dependencies for all features on macOS arm64 and Linux arm64/x86_64,\nand for the wasm feature on wasm32-unknown-unknown.\nOther targets require their own licence collection before distribution.\nRegenerate: python3 scripts/licences.py\n"]
 for package in sorted(packages.values(), key=lambda p: (p["name"], p["version"])):
     if package["source"] is None: continue
     base = Path(package["manifest_path"]).parent

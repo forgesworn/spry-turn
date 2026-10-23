@@ -13,7 +13,9 @@ performance and explicit compatibility gaps. The source and GitHub prereleases a
 | Find Rust types, Cargo features and WASM methods | [API reference](api.md) |
 | Assess an existing coturn configuration | [Coturn compatibility](coturn-compatibility.md) |
 | Configure addresses, credentials, TLS and resource limits | [Operations](operations.md) |
-| Inspect measured M4 throughput, CPU and memory | [Benchmarks](benchmarks.md) |
+| Inspect current throughput, latency and resource measurements | [Standalone qualification](qualification-0.2.1.md), [historical benchmarks](benchmarks.md) |
+| Reproduce optional performance experiments | [Batching, process scaling and PGO](performance-experiments.md) |
+| Test the actual KithMoot web client with an owner-selected relay | [KithMoot acceptance](kithmoot-acceptance.md) |
 | Check what passed and what remains unqualified | [Verification](verification.md), [acceptance checklist](../GOALS.md) |
 | Report bugs or support development | [Support and donations](../SUPPORT.md) |
 

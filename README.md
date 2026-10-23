@@ -11,13 +11,14 @@ and no media stack. MIT licensed, copyright 2026 TheCryptoDonkey. The source and
 [API](docs/api.md) · [Support development](SUPPORT.md#donations) ·
 [LLM index](llms.txt)
 
-In the measured native Apple M4 Max UDP loopback comparison, spry-turn
-delivered **17–22% more packets/s** than the tested coturn configuration,
-with **19–23% less server CPU time** and **78–82% less process RSS**.
-The recorded benchmark predates bounded relay ports. The optimisation
-uses an extra UDP socket per allocation; RSS excludes kernel socket buffers.
-These results do not establish WAN, Linux or TLS
-performance. See [the method, raw results and limitations](docs/benchmarks.md).
+The full v0.2.1 native M4 Max loopback matrix measured **16–22% more UDP
+packets/s** and **27–35% more TLS packets/s** than the tested coturn
+configuration. TCP ranged from 1.2% behind to 8.5% ahead. These are delivered
+rates for six workload cells per transport, with bounded relay ports and
+TLS enabled in the Rust build. Linux VM results differ, including UDP
+regressions. Process RSS excludes kernel socket memory.
+See [current measurements and limitations](docs/qualification-0.2.1.md)
+and the [historical UDP comparison](docs/benchmarks.md).
 
 The first target is a server running independently on a normal computer.
 Later, an Archy owner can install it and configure KithMoot to use their
@@ -50,7 +51,8 @@ in its receive buffer, avoiding a payload copy on the return path. One
 non-blocking Mio event loop owns sockets and allocation state; no per-packet
 tasks or worker queues. Generation-tagged slots route readiness events
 without hashing internal tokens and reject stale events after reuse.
-TCP/TLS uses bounded output buffers.
+TCP/TLS uses bounded output buffers and updates writable readiness only
+when backpressure changes, avoiding a registration syscall per packet.
 The library forbids unsafe Rust in its own code; dependencies may use it.
 
 Concrete IPv4 listeners use a connected client-facing UDP socket per
@@ -84,7 +86,8 @@ credential locally using the same environment:
 For larger workloads, size the process file-descriptor limit for listeners,
 two sockets per optimised UDP allocation and any TCP/TLS connections.
 `--max-allocations` limits logical allocations; it cannot raise an OS limit.
-The comparison runner sets 4,096 for its own processes only.
+The comparison runner raises its own descriptor floor towards 4,096 where
+the hard limit permits, and records the actual inherited limit.
 
 Use an opaque transport label. Do not put room IDs, personal identities or
 application membership in usernames. The credential output is a secret;

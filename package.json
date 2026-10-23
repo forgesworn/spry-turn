@@ -5,7 +5,7 @@
   "scripts": {
     "docs:generate": "node scripts/docs.mjs --write",
     "check:docs": "node scripts/docs.mjs",
-    "check": "npm run check:docs && cargo fmt --all -- --check && cargo clippy --locked --all-features --all-targets -- -D warnings && cargo test --locked --all-features && cargo test --locked --no-default-features --lib && cargo test --locked --no-default-features --features turn --lib",
+    "check": "npm run check:docs && node tests/kithmoot-guard.mjs && cargo fmt --all -- --check && cargo clippy --locked --all-features --all-targets -- -D warnings && cargo test --locked --all-features && cargo test --locked --no-default-features --lib && cargo test --locked --no-default-features --features turn --lib",
     "test:browser": "python3 tests/browser.py --tls --relay-ports 49160:49191"
   },
   "devDependencies": { "playwright": "1.62.1" }

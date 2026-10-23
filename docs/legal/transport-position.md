@@ -27,15 +27,18 @@ presence of server source.
 
 The intended deployment is a standalone, coturn-style TURN server on an
 independently operated Archy node. KithMoot would select it through ordinary
-TURN configuration. Integration, actual operator independence and device
-acceptance remain unproved. Sapflow support is a later optional goal.
+TURN configuration. Local KithMoot web interoperability is now qualified
+with owner-selected credentials and no credential-service request; see the
+[application receipt and limits](../kithmoot-acceptance.md). Archy packaging,
+actual operator independence, cross-network and physical-device acceptance
+remain unproved. Sapflow support is a later optional goal.
 Nothing here changes another application's deployment or legal position.
 
 ## Implemented boundary
 
 The library's default listener is loopback; the executable requires an
 operator-provided secret and explicit configuration to expose another
-address (`src/turn.rs:127`, `src/main.rs:54`, `:82`). There is no runtime
+address (`src/turn.rs:186`, `src/main.rs:54`, `:82`). There is no runtime
 hosted endpoint default or discovery lookup. The source has no application
 room model, member directory, room-invitation authority or KithMoot
 entitlement issuer. TURN resource authentication is separate from admission
@@ -43,16 +46,16 @@ to an application conversation. The REST credential
 helper accepts an operator secret and a username, while server nonces bind
 to address, time and realm (`src/auth.rs:13`, `:29`, `:54`, `:73`). An operator
 that holds the secret can issue transport credentials; that fact does not give
-it room membership authority (`src/turn.rs:868`).
+it room membership authority (`src/turn.rs:937`).
 
 Allocation, permission, channel and connection state is held in memory,
-with expiry and capacity limits (`src/turn.rs:213`, `:351`, `:798`, `:1065`,
-`:1114`, `:1295`, `:1348`). The forwarding paths relay datagrams between sockets
-and keep aggregate packet/byte/drop counters (`src/turn.rs:908`, `:1358`,
-`:1392`; `src/limits.rs:41`). The default optimisation can add a connected
+with expiry and capacity limits (`src/turn.rs:265`, `:433`, `:867`, `:1134`,
+`:1170`, `:1358`, `:1369`). The forwarding paths relay datagrams between sockets
+and keep aggregate packet/byte/drop counters (`src/turn.rs:977`, `:1427`,
+`:1461`; `src/limits.rs:41`). The default optimisation can add a connected
 client-facing UDP socket per authenticated UDP allocation for a concrete IPv4
 listener on Unix, with a portable fallback (`Cargo.toml:17`, `:23`;
-`src/turn.rs:395`, `:1103`). This retains the same transport credentials,
+`src/turn.rs:477`, `:1172`). This retains the same transport credentials,
 permissions and application-admission boundary. The reviewed code has no
 payload-recording or per-client access-log writer. It emits startup/error diagnostics, and the
 credential subcommand deliberately prints a credential pair

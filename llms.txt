@@ -2,13 +2,13 @@
 
 > Lightweight Rust STUN/TURN server, embeddable native relay and WASM packet codec. MIT; maintained by TheCryptoDonkey under ForgeSworn.
 
-Version 0.2.0. Source and GitHub prereleases are public, under MIT, copyright 2026 TheCryptoDonkey. There is no crates.io, docs.rs or npm publication, hosted relay, credential service or public documentation site.
+Version 0.2.1. Source and GitHub prereleases are public, under MIT, copyright 2026 TheCryptoDonkey. There is no crates.io, docs.rs or npm publication, hosted relay, credential service or public documentation site.
 
 Native UDP/TCP clients and optional TLS use UDP peer allocations. Browser applications use their existing WebRTC ICE implementation. Ordinary browser WASM cannot host a raw-socket TURN server. Shared TURN secrets belong only to trusted operator tools; give clients short-lived credentials.
 
 This is an initial implementation, without full coturn parity or production qualification. UDP peer-relay port ranges are optional and fail closed on exhaustion. Static user databases, TCP relay allocations, DTLS, dual allocations and deployed Archy/Sapflow integration are not implemented. Physical phone and public-network acceptance remain open.
 
-Historical native ARM64 M4 Max UDP loopback measurements show 17–22% more throughput than the tested coturn configuration. They predate the bounded relay-port feature and do not requalify later runtime changes. The connected-UDP optimisation adds one socket per allocation, and process RSS excludes kernel buffers. Consult the benchmark method before reusing any figures.
+The full v0.2.1 native ARM64 M4 Max loopback matrix measured 16–22% higher UDP delivery rate and 27–35% higher TLS delivery rate than the tested coturn configuration; TCP ranged from 1.2% behind to 8.5% ahead. Linux VM results differ, including UDP regressions. These are workload results, not maximum WAN capacity. Stream and kernel socket memory have separate costs. Consult current qualification and raw evidence before reusing figures.
 
 These files provide navigation and source context for readers and tools. They do not change repository visibility or guarantee indexing by search engines or language models.
 
@@ -30,6 +30,9 @@ These files provide navigation and source context for readers and tools. They do
 ## Evidence and status
 
 - [Native M4 benchmarks](https://github.com/forgesworn/spry-turn/blob/main/docs/benchmarks.md): Matched ARM64 coturn comparison, raw evidence and resource trade-offs.
+- [Current standalone qualification](https://github.com/forgesworn/spry-turn/blob/main/docs/qualification-0.2.1.md): Bounded-port UDP/TCP/TLS measurements, controlled tuning, latency and resource limits.
+- [KithMoot acceptance](https://github.com/forgesworn/spry-turn/blob/main/docs/kithmoot-acceptance.md): Actual web application with operator credentials, generated media and explicit physical-phone gates.
+- [Performance experiments](https://github.com/forgesworn/spry-turn/blob/main/docs/performance-experiments.md): Separate Linux batching, process scaling and profile-guided experiments; no implied runtime integration.
 - [Verification](https://github.com/forgesworn/spry-turn/blob/main/docs/verification.md): Actual local/CI evidence and explicitly unqualified gates.
 - [Acceptance and roadmap](https://github.com/forgesworn/spry-turn/blob/main/GOALS.md): Completed standalone work, missing coturn features and later integrations.
 - [Changelog](https://github.com/forgesworn/spry-turn/blob/main/CHANGELOG.md): Current and historical prerelease contents.

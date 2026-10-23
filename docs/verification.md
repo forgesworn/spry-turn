@@ -1,5 +1,56 @@
 # Standalone verification
 
+## v0.2.1 qualification
+
+The stream-readiness optimisation passed ten all-feature Rust unit tests,
+including actual TCP backpressure, queue draining, removal of writable
+interest and subsequent progress. Twenty-seven independent socket tests
+passed on macOS and native ARM64 Linux, including the five added malformed
+input, integrity and expiry regressions. A later
+[fixture startup correction](evidence/fixture-startup-0.2.1.json) adds five
+independent subprocess regressions, giving **32 passing tests** on both
+platforms. It reserves TCP/UDP together, keeps TLS separate and bounds
+collision retries, startup reads and cleanup. The unchanged public API remains
+at the v0.2.0 configuration shape.
+
+On Apple M1, the [180-second churn run](evidence/stress-0.2.1.json) completed
+30,137 allocations, 3,767 signed port-exhaustion responses and 337 refreshes
+of a short-lived standing allocation. It exercised UDP/TCP/TLS, failed
+authentication, private-peer rejection and resumed forwarding. Server
+descriptors returned from nine to nine; process RSS rose from 2.08 to
+4.19 MB. Its fixed regression budget and duration are not a leak proof.
+The same receipt records seeded datagram loss, delay and reordering,
+credential expiry/replacement, partial-stream reclamation, TCP/TLS paused
+reader recovery and post-overload progress.
+
+The [300-second ASan/libFuzzer campaign](evidence/fuzz-0.2.1.json) completed
+15,241,706 inputs with zero crash artefacts, `cov=698` and `ft=1561`.
+It records the target/core hashes, seed, toolchain and corpus digests.
+This is coverage-guided codec/auth testing, not network-runtime fuzzing or
+independent security acceptance.
+
+The [hardened wrapper smoke run](evidence/fuzz-wrapper-0.2.1.json) adds a
+separate 30 seconds and 344,105 inputs after lockfile preflight and process
+cleanup changes. It also passed with zero crash artefacts. The earlier
+300-second receipt retains the exact wrapper and parser hashes it tested.
+
+The [actual KithMoot web application](evidence/kithmoot-web-0.2.1.json),
+source `24038110`, passed generated bidirectional decoded video and audio
+through spry-turn over UDP, TCP and TLS. Both browsers configured owner
+credentials through Settings, selected relay candidates, omitted credentials
+from invitations and made zero `/turn` requests. See the
+[reproduction and limits](kithmoot-acceptance.md). Browser TLS bypasses its
+test certificate; the native benchmark client separately validates a
+generated certificate through its test trust store.
+
+The [current comparison](qualification-0.2.1.md) contains complete M4 and
+Linux matrices: 216 runs and 96,423,584 checked packets, plus a controlled
+v0.2.0/v0.2.1/coturn tuning trial over all three client transports. It supersedes no
+historical receipt: each identifies its own method and source. Public
+firewall/NAT, trusted public certificate renewal, physical GrapheneOS and
+Archy acceptance remain open. The existing independently operated private
+coturn deployment was inspected read-only and remains unchanged.
+
 ## Bounded relay ports, local increment
 
 The optional UDP relay-port range passed 22 independent socket tests with

@@ -2,13 +2,13 @@
 
 > Lightweight Rust STUN/TURN server, embeddable native relay and WASM packet codec. MIT; maintained by TheCryptoDonkey under ForgeSworn.
 
-Version 0.2.0. Source and GitHub prereleases are public, under MIT, copyright 2026 TheCryptoDonkey. There is no crates.io, docs.rs or npm publication, hosted relay, credential service or public documentation site.
+Version 0.2.1. Source and GitHub prereleases are public, under MIT, copyright 2026 TheCryptoDonkey. There is no crates.io, docs.rs or npm publication, hosted relay, credential service or public documentation site.
 
 Native UDP/TCP clients and optional TLS use UDP peer allocations. Browser applications use their existing WebRTC ICE implementation. Ordinary browser WASM cannot host a raw-socket TURN server. Shared TURN secrets belong only to trusted operator tools; give clients short-lived credentials.
 
 This is an initial implementation, without full coturn parity or production qualification. UDP peer-relay port ranges are optional and fail closed on exhaustion. Static user databases, TCP relay allocations, DTLS, dual allocations and deployed Archy/Sapflow integration are not implemented. Physical phone and public-network acceptance remain open.
 
-Historical native ARM64 M4 Max UDP loopback measurements show 17–22% more throughput than the tested coturn configuration. They predate the bounded relay-port feature and do not requalify later runtime changes. The connected-UDP optimisation adds one socket per allocation, and process RSS excludes kernel buffers. Consult the benchmark method before reusing any figures.
+The full v0.2.1 native ARM64 M4 Max loopback matrix measured 16–22% higher UDP delivery rate and 27–35% higher TLS delivery rate than the tested coturn configuration; TCP ranged from 1.2% behind to 8.5% ahead. Linux VM results differ, including UDP regressions. These are workload results, not maximum WAN capacity. Stream and kernel socket memory have separate costs. Consult current qualification and raw evidence before reusing figures.
 
 These files provide navigation and source context for readers and tools. They do not change repository visibility or guarantee indexing by search engines or language models.
 
@@ -33,13 +33,14 @@ and no media stack. MIT licensed, copyright 2026 TheCryptoDonkey. The source and
 [API](https://github.com/forgesworn/spry-turn/blob/main/docs/api.md) · [Support development](https://github.com/forgesworn/spry-turn/blob/main/SUPPORT.md#donations) ·
 [LLM index](https://github.com/forgesworn/spry-turn/blob/main/llms.txt)
 
-In the measured native Apple M4 Max UDP loopback comparison, spry-turn
-delivered **17–22% more packets/s** than the tested coturn configuration,
-with **19–23% less server CPU time** and **78–82% less process RSS**.
-The recorded benchmark predates bounded relay ports. The optimisation
-uses an extra UDP socket per allocation; RSS excludes kernel socket buffers.
-These results do not establish WAN, Linux or TLS
-performance. See [the method, raw results and limitations](https://github.com/forgesworn/spry-turn/blob/main/docs/benchmarks.md).
+The full v0.2.1 native M4 Max loopback matrix measured **16–22% more UDP
+packets/s** and **27–35% more TLS packets/s** than the tested coturn
+configuration. TCP ranged from 1.2% behind to 8.5% ahead. These are delivered
+rates for six workload cells per transport, with bounded relay ports and
+TLS enabled in the Rust build. Linux VM results differ, including UDP
+regressions. Process RSS excludes kernel socket memory.
+See [current measurements and limitations](https://github.com/forgesworn/spry-turn/blob/main/docs/qualification-0.2.1.md)
+and the [historical UDP comparison](https://github.com/forgesworn/spry-turn/blob/main/docs/benchmarks.md).
 
 The first target is a server running independently on a normal computer.
 Later, an Archy owner can install it and configure KithMoot to use their
@@ -72,7 +73,8 @@ in its receive buffer, avoiding a payload copy on the return path. One
 non-blocking Mio event loop owns sockets and allocation state; no per-packet
 tasks or worker queues. Generation-tagged slots route readiness events
 without hashing internal tokens and reject stale events after reuse.
-TCP/TLS uses bounded output buffers.
+TCP/TLS uses bounded output buffers and updates writable readiness only
+when backpressure changes, avoiding a registration syscall per packet.
 The library forbids unsafe Rust in its own code; dependencies may use it.
 
 Concrete IPv4 listeners use a connected client-facing UDP socket per
@@ -106,7 +108,8 @@ credential locally using the same environment:
 For larger workloads, size the process file-descriptor limit for listeners,
 two sockets per optimised UDP allocation and any TCP/TLS connections.
 `--max-allocations` limits logical allocations; it cannot raise an OS limit.
-The comparison runner sets 4,096 for its own processes only.
+The comparison runner raises its own descriptor floor towards 4,096 where
+the hard limit permits, and records the actual inherited limit.
 
 Use an opaque transport label. Do not put room IDs, personal identities or
 application membership in usernames. The credential output is a secret;
@@ -270,7 +273,9 @@ performance and explicit compatibility gaps. The source and GitHub prereleases a
 | Find Rust types, Cargo features and WASM methods | [API reference](https://github.com/forgesworn/spry-turn/blob/main/docs/api.md) |
 | Assess an existing coturn configuration | [Coturn compatibility](https://github.com/forgesworn/spry-turn/blob/main/docs/coturn-compatibility.md) |
 | Configure addresses, credentials, TLS and resource limits | [Operations](https://github.com/forgesworn/spry-turn/blob/main/docs/operations.md) |
-| Inspect measured M4 throughput, CPU and memory | [Benchmarks](https://github.com/forgesworn/spry-turn/blob/main/docs/benchmarks.md) |
+| Inspect current throughput, latency and resource measurements | [Standalone qualification](https://github.com/forgesworn/spry-turn/blob/main/docs/qualification-0.2.1.md), [historical benchmarks](https://github.com/forgesworn/spry-turn/blob/main/docs/benchmarks.md) |
+| Reproduce optional performance experiments | [Batching, process scaling and PGO](https://github.com/forgesworn/spry-turn/blob/main/docs/performance-experiments.md) |
+| Test the actual KithMoot web client with an owner-selected relay | [KithMoot acceptance](https://github.com/forgesworn/spry-turn/blob/main/docs/kithmoot-acceptance.md) |
 | Check what passed and what remains unqualified | [Verification](https://github.com/forgesworn/spry-turn/blob/main/docs/verification.md), [acceptance checklist](https://github.com/forgesworn/spry-turn/blob/main/GOALS.md) |
 | Report bugs or support development | [Support and donations](https://github.com/forgesworn/spry-turn/blob/main/SUPPORT.md) |
 
@@ -318,22 +323,25 @@ cd spry-turn
 ```
 
 Source is the portable installation path. Cargo and npm publication are
-disabled. The public v0.2.0 GitHub prerelease also carries a macOS ARM64
-TLS-enabled executable archive and a WASM codec archive. Fetch and verify
-the archives in an empty directory, or use the release page's downloads:
+disabled. The public v0.2.1 GitHub prerelease carries macOS ARM64 and
+GNU/Linux ARM64 TLS-enabled executable archives, and a WASM codec archive.
+Fetch and verify the archives in an empty directory, or use the release
+page's downloads:
 
 ```sh
-gh release download v0.2.0 --repo forgesworn/spry-turn
+gh release download v0.2.1 --repo forgesworn/spry-turn
 shasum -a 256 -c SHA256SUMS
 ```
 
-[Download v0.2.0](https://github.com/forgesworn/spry-turn/releases/tag/v0.2.0).
+[Download v0.2.1](https://github.com/forgesworn/spry-turn/releases/tag/v0.2.1).
 Existing archives and tags retain their original bytes; older bundled guides
 may describe the private access that applied when those releases were created.
 
-The macOS executable is not a Linux, Windows or phone build. A release
-does not establish production or physical-device acceptance. The source
-build below remains available for other supported native environments.
+Choose the matching operating-system archive. The Linux executable was
+tested with Debian glibc 2.36 and needs glibc and libgcc; it is not an Alpine
+musl, Windows or phone build. A release does not establish production or
+physical-device acceptance. Source builds remain available for other
+supported native environments.
 
 Rust 1.85 or newer is declared; Rust 1.94.1 and 1.96 were used for the
 initial verification and native M4 measurements. Current CI checks stable
@@ -555,7 +563,7 @@ Canonical source: [docs/api.md](https://github.com/forgesworn/spry-turn/blob/mai
 
 # Rust and WASM API reference
 
-Version 0.2.0. Source is authoritative; there is no published crates.io,
+Version 0.2.1. Source is authoritative; there is no published crates.io,
 docs.rs or npm package. Authorised users can generate local Rust API pages
 with `cargo doc --locked --all-features --no-deps`.
 
@@ -996,6 +1004,10 @@ Canonical source: [docs/benchmarks.md](https://github.com/forgesworn/spry-turn/b
 
 # Measured comparison
 
+For v0.2.1, use the [current standalone qualification](https://github.com/forgesworn/spry-turn/blob/main/docs/qualification-0.2.1.md),
+which includes bounded-port UDP/TCP/TLS measurements and controlled tuning.
+The figures below retain their original source and method.
+
 These measurements predate the bounded relay-port feature in v0.2.0.
 They identify their own source snapshot and do not requalify later changes.
 
@@ -1138,11 +1150,710 @@ No credentials, real endpoints, machine paths or media are included.
 
 ---
 
+## Source: Current standalone qualification
+
+Canonical source: [docs/qualification-0.2.1.md](https://github.com/forgesworn/spry-turn/blob/main/docs/qualification-0.2.1.md)
+
+# Standalone performance and reliability
+
+This qualification measures the bounded-port standalone implementation in
+v0.2.1. It is separate from the [original UDP comparison](https://github.com/forgesworn/spry-turn/blob/main/docs/benchmarks.md).
+Every receipt identifies its executable and source; no result establishes
+maximum WAN capacity or full coturn compatibility.
+
+The [build and source receipt](https://github.com/forgesworn/spry-turn/blob/main/docs/evidence/qualification-builds-0.2.1.json)
+matches both ordinary native release executables to the binaries measured
+in the primary matrices. PGO and portable alternatives are explicitly
+separate experiments.
+
+## Complete M4 matrix
+
+The [full native M4 matrix](https://github.com/forgesworn/spry-turn/blob/main/docs/evidence/m4-final-0.2.1.json) completed 108
+runs and 53,075,648 measured forwarded packets without observed payload
+loss, reordering or corruption. Three repetitions cover 1/16/128 allocations,
+160/1,200-byte payloads and both servers over UDP/TCP/TLS. Like the Linux
+matrix, it uses an eight-packet window per load worker. At least 200,000
+round trips and two seconds are required in each throughput phase.
+
+| Client transport | spry packets/s at 128 allocations / 1,200 B | coturn packets/s | Difference at that cell | Difference across all six cells |
+|---|---:|---:|---:|---:|
+| UDP | 271,644 | 223,168 | +21.7% | +16.2% to +22.2% |
+| TCP | 302,240 | 305,790 | -1.2% | -1.2% to +8.5% |
+| TLS | 264,697 | 196,161 | +34.9% | +27.1% to +34.9% |
+
+Values are medians of three runs. This is an Apple M4 Max with 16 logical
+CPUs, native ARM64 executables and existing workloads left running. Rust
+1.96 builds use generic ARM64, LTO, one codegen unit and stripped symbols.
+The default connected-UDP feature and optional TLS are enabled; no PGO or
+M4-only instructions are used for these primary results. Coturn 4.18.0 is
+the pinned, unmodified reference with database backends and Prometheus
+disabled, `-O3 -DNDEBUG` and `relay-threads=0`.
+
+The two complete matrices contain 216 runs and 96,423,584 checked packets.
+Their payload checks passed; the separate Linux kernel counters still have
+their own scope. These rates and three-run medians do not establish a
+maximum capacity, statistical significance or a result for every machine.
+
+## Controlled M4 tuning
+
+Three repetitions, 128 allocations, 1,200-byte payloads, four native load
+workers and a 32-packet window per worker. Each throughput phase runs for
+at least two seconds and completes at least 200,000 round trips. Server
+order alternates, with fresh processes and credentials. Both servers use
+the same bounded UDP relay-port range. All executables are native ARM64;
+the Rust server includes optional TLS in every row.
+
+| Client transport | v0.2.0 packets/s | v0.2.1 packets/s | coturn packets/s | v0.2.1 against coturn |
+|---|---:|---:|---:|---:|
+| UDP | 291,196 | 292,464 | 244,760 | +19.5% |
+| TCP | 312,708 | 330,799 | 340,869 | -3.0% |
+| TLS | 273,799 | 285,779 | 213,236 | +34.0% |
+
+These are medians of delivered forwarding rates in the
+[27-run controlled experiment](https://github.com/forgesworn/spry-turn/blob/main/docs/evidence/m4-tuning-0.2.1.json). No loss,
+reordering or payload corruption was observed in completed runs. The UDP
+peer leg remains UDP with every client transport. TLS negotiated TLS 1.3
+and AES-256-GCM-SHA384 for both servers; the load client validates the
+generated localhost certificate through an explicit test trust store.
+
+The retained runtime change caches each stream's writable-interest state.
+The event loop registers writable readiness when output becomes blocked,
+then removes it after draining. It avoids a registration syscall for every
+packet while keeping read interest active. No dependency, thread, unsafe
+block or packet buffer was added. A real-socket unit test forces
+backpressure, drains the queue, checks the transition back to read interest
+and verifies later forwarding. The controlled medians improve spry-turn's
+own TCP throughput by 5.8% and TLS throughput by 4.4%.
+
+| Client transport | spry loaded RTT p99, µs | coturn loaded RTT p99, µs | spry process RSS, MB | coturn process RSS, MB |
+|---|---:|---:|---:|---:|
+| UDP | 836.7 | 1,006.3 | 2.24 | 11.35 |
+| TCP | 778.5 | 1,010.4 | 12.21 | 11.70 |
+| TLS | 872.2 | 1,273.6 | 14.89 | 20.43 |
+
+Loaded RTT includes time queued behind the batch, both relay directions,
+client work and the echo peer. It samples every 64th packet into bounded
+per-worker reservoirs. The separately recorded sequential RTT is measured
+before throughput; its small changes do not support a general latency-win
+claim. Stream buffers cost memory: spry-turn's TCP RSS exceeds the tested
+coturn configuration here. Decimal MB excludes kernel memory and shared
+dependency files.
+
+## Linux ARM64 virtual machine
+
+The [complete Linux matrix](https://github.com/forgesworn/spry-turn/blob/main/docs/evidence/linux-final-0.2.1.json) contains 108
+successful runs: three repetitions across 1/16/128 allocations, 160/1,200
+byte payloads, UDP/TCP/TLS and both servers. It completed 43,347,936 measured
+forwarded packets with no observed payload loss, reordering or corruption.
+This is native ARM64 Linux 7.0.14-linuxkit inside Docker on Apple M1, with
+a two-vCPU quota, 2 GiB container memory limit and approximately 4 GiB
+VM-visible RAM. Existing host/VM workloads remained running; this is not
+bare-metal Linux or an otherwise idle machine.
+
+Both servers use the same eight-packet window on Linux. Initial 32-packet
+bursts exceeded coturn's default 32 KiB TCP output congestion threshold:
+26 × 1,204-byte frames passed, while 28 frames exceeded that bound. Coturn
+intentionally drops peer datagrams under that pressure. The initial trial
+did not complete; its surviving UDP timings also use that different window.
+Those results are retained as [Linux diagnostics](https://github.com/forgesworn/spry-turn/blob/main/docs/evidence/linux-burst-failure-0.2.1.json)
+alongside the complete matrix. A later M4 PGO experiment using the same
+32-packet window also encountered coturn congestion; its
+[partial receipt](https://github.com/forgesworn/spry-turn/blob/main/docs/evidence/m4-burst-failure-0.2.1.json) is excluded from
+the primary and PGO comparison figures.
+
+| Client transport, 128 allocations / 1,200 B | spry packets/s | coturn packets/s | spry loaded RTT p99, ms | coturn loaded RTT p99, ms |
+|---|---:|---:|---:|---:|
+| UDP | 56,511 | 66,823 | 11.073 | 5.712 |
+| TCP | 151,614 | 103,278 | 2.167 | 4.085 |
+| TLS | 54,424 | 41,801 | 7.510 | 8.541 |
+
+The M4 advantage does not generalise to every Linux case. UDP is slower in
+five of six Linux matrix cells. At the row above, spry-turn trails coturn
+by 15.4% over UDP and leads by 46.8% over TCP and 30.2% over TLS. These are
+workload medians on this constrained VM, not a general platform ranking.
+
+At that allocation/payload size, spry/coturn process RSS medians are
+2.286/11.682 MB for UDP, 6.484/11.882 MB for TCP and 8.991/16.945 MB for
+TLS. The raw receipt separately records process-owned socket counters.
+Some TCP/TLS socket drop counters are nonzero even though every measured
+payload arrived correctly; TCP recovery and kernel counters have a
+different scope from the generator's payload checks. Do not report this
+as zero kernel drops or total system-memory use.
+
+## Reproduce and interpret resources
+
+Build the load generator with the same TLS feature and native target as
+the server. Supply unmodified coturn built by the pinned preparation script.
+
+```sh
+cargo build --locked --release --features tls \
+  --target aarch64-apple-darwin --bin spry-turn --example load
+python3 scripts/prepare-coturn.py .local/reference
+python3 scripts/compare.py \
+  --spry target/aarch64-apple-darwin/release/spry-turn \
+  --loader target/aarch64-apple-darwin/release/examples/load \
+  --coturn .local/reference/coturn-4.18.0/bin/turnserver \
+  --required-arch arm64 --runs 3 --clients 1 16 128 --sizes 160 1200 \
+  --transports udp tcp tls --packets 200000 --min-seconds 2 \
+  --output .local/qualification.json
+```
+
+Use `aarch64-unknown-linux-gnu` on native ARM64 Linux, or the actual native
+target on another host. The runner refuses architecture mismatches when
+`--required-arch` is supplied. `--baseline` adds a reviewed alternative
+server, `--workers` controls generator concurrency and
+`--coturn-relay-threads` records the reference configuration. These are
+benchmark controls, not worker support in the server.
+
+For the Linux matrix, supply `--window 8` and use
+`python3 scripts/prepare-coturn.py .local/reference --prefix /usr` with the
+distribution's libevent/OpenSSL development packages installed.
+
+This is a closed-loop delivered-packet workload. More allocations do not
+mean every allocation is independently saturated. Duration floors improve
+sampling but do not establish maximum sustainable packets/s. CPU seconds
+cover server startup, allocation setup, warm-up, both measurement phases
+and resource inspection. Duration-floor runs can deliver different packet
+counts, so total CPU alone cannot establish efficiency. The generator runs
+in a separate process and is excluded from server CPU accounting.
+
+RSS is sampled every 50 ms. Descriptor and socket-memory snapshots are
+taken after throughput while all client connections and allocations remain
+live, before releasing the generator. They are quiescent snapshots, not
+peak socket memory. Linux attributes `ss -m -e` records to process-owned
+socket inodes and aggregates each counter separately. In particular,
+`rb`/`tb` are configured ceilings, not allocated memory. The counters do
+not include every kernel object and must not be added to RSS to claim
+total system memory. macOS reports this measurement as unavailable;
+the extra connected UDP socket per allocation still needs a descriptor
+and kernel-memory budget. See the [Linux ss manual](https://www.man7.org/linux/man-pages/man8/ss.8.html).
+
+## Application and remaining acceptance
+
+The actual [KithMoot web application](https://github.com/forgesworn/spry-turn/blob/main/docs/kithmoot-acceptance.md) has a separate
+generated-media runner. It enters operator credentials through the real
+Connections settings and checks that the client makes no `/turn` request.
+Browser certificate bypass is explicitly distinct from the trusted test
+TLS used by the native benchmark client.
+
+Private cross-network operation, trusted public certificate lifecycle,
+physical GrapheneOS calls, long-lived refresh/credential renewal and
+independent security review remain separate gates. Archy and Sapflow
+integration follow standalone qualification; no publisher-operated service
+is added by this work.
+
+---
+
+## Source: KithMoot acceptance
+
+Canonical source: [docs/kithmoot-acceptance.md](https://github.com/forgesworn/spry-turn/blob/main/docs/kithmoot-acceptance.md)
+
+# KithMoot client acceptance
+
+spry-turn speaks standard TURN. KithMoot can use that transport without
+adding KithMoot, WebRTC or media codecs to the server. Each device chooses
+its operator and enters the credentials supplied for that relay. The
+publisher need not run a relay or credential service.
+
+## Run the actual web application locally
+
+The acceptance runner builds an authorised KithMoot source checkout using
+its existing Node dependencies, then serves that unchanged production app
+on loopback. It starts a disposable Nostr signalling fixture and a separate
+spry-turn process. Each browser enters the operator's short-lived TURN
+credentials through the real Settings → Connections form. The shared
+secret stays in the fixture; only its expiring username and credential
+reach the client. The fixture refuses `/turn`, and the test asserts that
+the application never requests it. No credential service is needed.
+
+```sh
+cargo build --locked --release --features tls --bin spry-turn
+python3 tests/kithmoot.py \
+  --kithmoot /path/to/authorised/kithmoot \
+  --binary target/release/spry-turn \
+  --output .local/kithmoot-web.json
+```
+
+Install KithMoot's pinned dependencies in that checkout beforehand. The
+runner uses this repository's Playwright installation and Chromium, as
+described in [standalone verification](https://github.com/forgesworn/spry-turn/blob/main/docs/verification.md). `--app-dist`
+accepts an existing production build instead; its content digest is
+recorded, and the receipt says whether the runner built it. No source from
+the other project is committed into this repository. The receipt identifies
+the source commit, relevant file checksums, app build digest and exact
+spry-turn executable hash.
+
+For each transport, two independent browser contexts create and join a
+real KithMoot room, then use its camera and microphone controls. The
+application's own “Hide my IP address” preference selects relay-only ICE.
+The test observes peer connections and rejects any direct configuration;
+it supplies no substitute ICE servers. Both sides must display remote
+video, decode video frames and receive audio bytes with positive audio
+energy. Selected candidates must be relay candidates at both ends with
+the requested relay protocol. HTTP and signalling are restricted to local
+fixtures; generated camera frames and an oscillator are the only media.
+
+The default run qualifies UDP, plain TCP and TLS separately in Chromium.
+KithMoot's explicit device relay path preserves plain TCP where the browser
+supports it. WebKit rejects that URI and needs UDP or TLS alternatives;
+this Chromium run does not qualify WebKit. The app's legacy same-origin
+credential resolver has different filtering rules and is not the path
+tested here. spry-turn's independent
+[socket and browser suites](https://github.com/forgesworn/spry-turn/blob/main/CONTRIBUTING.md) also cover all three server
+transports. The invitation is checked to exclude the device's username and
+credential.
+
+The runner stops its servers and browser processes, including on failure,
+and removes its temporary build and credentials. The requested JSON
+receipt contains counters and digests, without room invitations, TURN
+credentials, addresses or machine paths. Keep raw failure logs private:
+browser error messages can include a room invitation.
+
+## What this proves
+
+This is real web application and server interoperability on one machine.
+It exercises KithMoot's explicit relay Settings, room signalling, media
+controls, peer negotiation and decoded media through spry-turn. Browser
+TLS uses an explicit test-certificate bypass. It establishes neither
+trusted public certificate validation nor cross-network reachability.
+
+spry-turn does not add an HTTP credential issuer, a publisher-operated
+service or a hosted default. The operator generates short-lived credentials
+locally and distributes those to their clients. This fixture qualifies the
+identified web source and executable, rather than every released KithMoot
+client or an unrelated public deployment.
+
+## Choose an operator on each device
+
+The KithMoot web source at
+[`24038110`](https://github.com/forgesworn/kithmoot/commit/24038110cd4a60037b5e3f6a6c0131af65478102)
+provides Relay addresses, Relay username and Relay password under
+Settings → Connections. Enter the TURN URLs alongside the credential
+minted for that operator, then leave and reopen the room. The device
+choice takes precedence over the room's ICE URL hints. Credentials remain
+on the device and are omitted from invitations. Never put the shared TURN
+secret into a client, room link or descriptor.
+
+The older room ICE field carries URLs alone; it is insufficient to provide
+a TURN username and password. Use the explicit call-relay Settings rather
+than treating that field as a credential mechanism.
+
+Android source at
+[`c0ad53b2`](https://github.com/forgesworn/kithmoot-android/commit/c0ad53b20fa3ed50900bf672916d3aa458634c05)
+also has explicit per-device `CallRelayConfig`, with credentials associated
+only with the saved URLs. Its relay-only resolver returns no relay when
+none is configured. That source inspection is separate from executing a
+native call against spry-turn; no Android binary was changed or tested by
+this runner.
+
+Existing coturn accounts using persistent usernames and passwords cannot
+be reused unchanged: spry-turn currently supports shared-secret REST
+credentials. Keep a working private coturn instance until clients have
+chosen and accepted a separate spry-turn instance with its own credentials.
+
+Expiring credentials need operator renewal. These device Settings do not
+establish an automatic renewal service. Qualify the standing-call,
+credential replacement and reconnect behaviour before relying on long
+sessions. Room membership and identities remain separate from transport
+credential issuance.
+
+## Independent deployment and GrapheneOS gate
+
+Before replacing an existing TURN deployment, test a separately chosen
+operator with the [firewall, NAT and certificate plan](https://github.com/forgesworn/spry-turn/blob/main/docs/operations.md).
+Use two different access networks and trusted certificates. Force each
+client transport in turn, confirm the actual selected relay pair and
+bidirectional displayed media, then repeat with client UDP blocked.
+Keep relay-to-peer UDP available: TURN over TLS does not change that leg.
+
+On a physical GrapheneOS device without sandboxed Google Play, configure
+the operator in the actual native client. Verify native/web media in both
+directions, network changes, a standing call
+through allocation and credential renewal, reconnect and explicit expiry
+failure. Check that unavailable credentials never silently defeat a
+relay-only choice. Record the installed package identity, selected
+transport and sanitised counters independently from browser evidence.
+
+No Android device was attached during this source inspection. The existing
+native browser interoperability instrumentation is emulator-only; do not
+run it on a person's physical phone. Native compilation, emulator checks
+and physical GrapheneOS acceptance are distinct gates, and none is supplied
+by this web runner. Archy installation follows standalone acceptance.
+
+---
+
+## Source: Performance experiments
+
+Canonical source: [docs/performance-experiments.md](https://github.com/forgesworn/spry-turn/blob/main/docs/performance-experiments.md)
+
+# Performance experiments
+
+These experiments inform later runtime changes. The shipping server keeps
+its existing dependencies, one event loop and ordinary release build.
+
+## Linux UDP receive batching
+
+The separate development crate in `experiments/linux-batch` measures a
+specific question: how much receive-call overhead can be amortised when
+several UDP datagrams are already queued on one descriptor? It adds no
+dependency or feature to the spry-turn runtime.
+
+It uses pinned nix 0.31.3 with only `net` and `uio` features. Its safe
+[`recvmmsg` API](https://docs.rs/nix/0.31.3/nix/sys/socket/fn.recvmmsg.html)
+and preallocated `MultiHeaders` avoid introducing unsafe code here. The
+call uses `MSG_DONTWAIT` and no kernel timeout: the documented Linux
+timeout behaviour can otherwise leave a partly filled call blocked.
+
+Run on Linux from the repository root, sharing the existing target tree:
+
+```sh
+cargo fmt --manifest-path experiments/linux-batch/Cargo.toml -- --check
+cargo clippy --locked --manifest-path experiments/linux-batch/Cargo.toml \
+  --target-dir target --all-targets -- -D warnings
+cargo test --locked --manifest-path experiments/linux-batch/Cargo.toml \
+  --target-dir target
+cargo build --locked --release \
+  --manifest-path experiments/linux-batch/Cargo.toml --target-dir target
+target/release/spry-linux-batch-experiment --packets 65536 --runs 3 \
+  > .local/linux-batch.jsonl
+```
+
+Every variant first queues the same 32-datagram offered window, then drains
+it. A single `recv_from` baseline is compared with `recvmmsg` capacities
+1, 8 and 32. Payloads are 160 and 1,200 bytes. One hot receiver socket is
+contrasted with 32 receiver sockets holding one ready datagram each. These
+are unconnected sockets; this does not measure spry-turn's connected-UDP
+path. Order
+rotates between repetitions. Warm-up traffic is excluded from reported
+packet counts and timing. All sockets bind loopback on ephemeral ports;
+there are no services, files containing credentials or fixture threads.
+Each sample has a wall-time bound and stops on an unexpected receive result.
+
+The receiver timer includes source, sequence and every payload-byte check,
+but excludes sending and queue fill. Whole-workload time includes those
+sender costs. Output is newline-delimited JSON: a method record followed
+by raw samples. Receive-call counts are instrumented API calls, not an
+independent `strace` measurement. Returned batch occupancy, payload arena,
+I/O-view and header storage are reported. Header storage follows the pinned
+dependency's structures and excludes allocator overhead. Socket receive
+buffer limits are configuration values, **not measured kernel memory**.
+Whole-process RSS and forwarding latency are not supplied by this tool.
+
+This is a receive-queue microbenchmark, not maximum network throughput or a
+spry-turn performance result. It deliberately arranges ready queues. Real
+TURN allocations spread traffic across sockets; increasing batch capacity
+cannot combine packets from different descriptors. Extra arena space and
+header setup may cost more than the saved calls when queues hold only one
+packet. Any integration must demonstrate an improvement in the actual
+server, including fairness, p99 latency, full supported datagram sizes and
+kernel memory, before changing the runtime.
+
+### Recorded run
+
+The coordinated Linux VM run completed all 48 samples: 3,145,728 measured
+datagrams, with no observed source, ordering, length or payload failures.
+The [receipt](https://github.com/forgesworn/spry-turn/blob/main/docs/evidence/linux-batch-0.2.1.json) and
+[raw newline-delimited samples](https://github.com/forgesworn/spry-turn/blob/main/docs/evidence/linux-batch-0.2.1.jsonl) retain the
+method, build identities and results.
+The two focused tests also passed. The binary was built with Rust 1.94.1
+for aarch64, using a two-vCPU container quota and a 2 GiB container memory
+limit inside the configured 4 GiB VM. This is distinct from native M4 or
+bare-metal Linux forwarding measurements.
+
+The table shows median whole-workload cost reduction against `recv_from`,
+including the sender. Positive values mean less elapsed time; negative
+values mean more. Receiver-only timings and every raw sample are retained
+in the experiment receipt.
+
+| Ready receiver sockets | Payload | Batch 8 cost reduction | Batch 32 cost reduction | Packets per batch call, 8 / 32 |
+|---|---:|---:|---:|---:|
+| One hot socket | 160 B | 7.5% | -16.0% | 8 / 32 |
+| One hot socket | 1,200 B | 17.7% | 23.6% | 8 / 32 |
+| 32 sockets, one queued packet each | 160 B | -26.7% | -29.7% | 1 / 1 |
+| 32 sockets, one queued packet each | 1,200 B | 14.0% | -30.6% | 1 / 1 |
+
+Batch 8 reduced receiver-plus-validation time by 27–37% for one hot
+socket. Larger capacity did not provide a consistent whole-workload gain.
+With a single packet per socket, batch 32 still required one receive call
+per packet and increased whole-workload cost by about 30%. Three runs in a
+shared VM include scheduling noise; the mixed cells must remain visible.
+
+The 1,200-byte receive arena grows from 1,200 bytes for the baseline to
+9,600 bytes for batch 8 and 38,400 bytes for batch 32. The corresponding
+preallocated header structures add 696 and 2,616 bytes, excluding allocator
+overhead. Actual server support for full UDP datagrams would need a larger
+arena or another deliberate buffer strategy.
+
+The experiment remains outside the runtime. It identifies queue occupancy
+as a requirement for a useful batching path; it does not establish that
+spry-turn should batch every allocation or that the server became faster.
+
+## Default and portable builds on Linux
+
+The portable trial compares two builds of the **same 0.2.1 runtime and
+loader source**, alongside unmodified coturn. Both spry builds include TLS
+and the stream-interest optimisation. The default build also enables
+`connected-udp` and `direct-index`; the portable build enables only
+`runtime,turn,tls`. The receipt calls the portable variant `spry-baseline`
+because that is the comparison script's optional second-binary label.
+It is not the historical 0.2.0 source baseline.
+
+The [build identities](https://github.com/forgesworn/spry-turn/blob/main/docs/evidence/linux-variants-0.2.1.json) record identical
+release settings, generic aarch64 targets and unset `RUSTFLAGS`. Both
+executables are 1,381,008 bytes. The original default executable and loader
+were copied and hash-verified before rebuilding in the same target tree.
+
+The [27 socket runs](https://github.com/forgesworn/spry-turn/blob/main/docs/evidence/linux-portable-0.2.1.json) completed
+10,830,224 forwarded packets without an observed payload error. Each run
+uses 128 allocations, four load workers, 1,200-byte payloads and an
+8-packet window per worker. The throughput phase completes at least
+200,000 round trips and lasts at least two seconds. Fresh server order
+alternates across three repetitions per transport and variant.
+
+These measurements ran in a two-vCPU, 2 GiB container inside a configured
+4 GiB Docker Desktop LinuxKit VM. Existing physical-host workloads remained
+running. This is a constrained VM observation, not isolated Linux hardware
+performance. The ranges below retain the substantial variation between
+repetitions; all rates are delivered forwarded packets per second.
+
+| Client transport | Default median (range) | Portable median (range) | coturn median (range) |
+|---|---:|---:|---:|
+| UDP | 86,149 (68,986–121,028) | 67,539 (53,104–87,014) | 84,155 (83,311–212,893) |
+| TCP | 127,926 (100,460–137,656) | 91,631 (77,892–96,418) | 103,053 (72,228–103,106) |
+| TLS | 54,373 (39,376–82,748) | 45,436 (44,015–73,021) | 42,366 (31,027–47,489) |
+
+All three medians favour the default in this trial. The wide ranges and
+shared VM do not establish that feature selection caused those differences.
+There is no measured case here for changing the shipped runtime to the
+portable variant.
+
+The descriptor trade-off is concrete. At 128 UDP allocations, the default
+holds 257 UDP sockets and 262 descriptors, against 129 sockets and
+134 descriptors for the portable build. Median process RSS is about
+2.732 MB and 2.740 MB respectively. Quiescent Linux `ss` counter `f`
+reports 1,052,672 and 528,384 bytes; it is one socket-memory accounting
+field, not total kernel memory. The corresponding summed `rb` buffer
+ceilings are about 54.9 MB and 27.6 MB: these are configured limits, not
+resident allocations. TCP/TLS allocation socket counts are the same in
+both builds. Neither the similar RSS nor these individual counters prove
+equal total system memory.
+
+To reproduce, preserve the first build before selecting portable features.
+Use the checkout's existing target tree and a locally prepared coturn
+reference as described in [the main comparison](https://github.com/forgesworn/spry-turn/blob/main/docs/benchmarks.md#reproduce).
+
+```sh
+cargo build --locked --release --target aarch64-unknown-linux-gnu \
+  --features tls --bin spry-turn --example load
+mkdir -p .local/variants
+cp target/aarch64-unknown-linux-gnu/release/spry-turn .local/variants/spry-default
+cp target/aarch64-unknown-linux-gnu/release/examples/load .local/variants/load
+cargo build --locked --release --target aarch64-unknown-linux-gnu \
+  --no-default-features --features runtime,turn,tls --bin spry-turn
+cp target/aarch64-unknown-linux-gnu/release/spry-turn .local/variants/spry-portable
+python3 scripts/compare.py \
+  --spry .local/variants/spry-default --baseline .local/variants/spry-portable \
+  --loader .local/variants/load \
+  --coturn .local/reference/coturn-4.18.0/bin/turnserver \
+  --required-arch arm64 --runs 3 --clients 128 --sizes 1200 \
+  --transports udp tcp tls --window 8 --min-seconds 2 --packets 200000 \
+  --output .local/linux-portable.json
+```
+
+## Independent process scaling
+
+The [worker experiment receipt](https://github.com/forgesworn/spry-turn/blob/main/docs/evidence/linux-workers-0.2.1.json) compares
+one and two independently addressed default spry-turn processes, then
+repeats the same comparison with coturn. It adds no worker feature to the
+server. The total workload remains 128 allocations and four load workers:
+two processes receive 64 allocations and two workers each, with disjoint
+relay-port ranges. Both servers use one relay event loop per process.
+
+A readiness barrier releases the generators after all server probes pass.
+Each generator then performs its own allocation setup, warm-up and
+sequential latency sampling. Throughput phases are therefore not perfectly
+aligned. The tool estimates each phase end from the arrival of its flushed
+result line and subtracts the generator's reported duration for its start.
+Aggregate rate divides all delivered packets by the enclosing interval
+across those phases. It does not sum the individual process rates. Pipe
+and scheduling delays introduce timing uncertainty; the receipt records
+each estimated interval and its overlap.
+
+Twelve groups, comprising 18 server-process runs, completed 6,422,416
+forwarded packets without an observed payload error. The workload uses
+UDP, 1,200-byte payloads and window 8, with three repetitions of each
+server/process-count case. Each process receives its share of 200,000
+minimum round trips and runs its throughput
+phase for at least three seconds. The VM and container limits are the same
+as the portable trial above.
+
+| Server | Processes | Estimated aggregate median packets/s | Range |
+|---|---:|---:|---:|
+| spry-turn | 1 | 137,795 | 129,886–138,317 |
+| spry-turn | 2 | 167,677 | 140,077–257,081 |
+| coturn | 1 | 94,876 | 88,071–178,757 |
+| coturn | 2 | 270,221 | 135,910–275,201 |
+
+Two-process phase overlap is 92.8–99.7% for spry-turn and 80.8–98.9% for
+coturn. These variable VM samples do not establish linear scaling or a
+stable comparative advantage. Separately addressed processes also need
+explicit client distribution; this experiment supplies no shared listener,
+automatic failover or maximum-capacity result.
+
+For spry-turn, the median sum of individual post-phase process RSS
+snapshots grows from 2.736 MB to 5.329 MB. Descriptor counts grow from
+262 to 268 and UDP sockets from 257 to 258. Those snapshots are not a
+simultaneous whole-system peak. The summed `f` socket-memory counter grows
+from 1,052,672 to 1,056,768 bytes; other kernel allocation structures remain
+outside that counter. Complete server CPU time is 1.929 s and 2.381 s,
+including startup and resource inspection. The duration floor produces
+different delivered packet counts, so these CPU totals alone do not measure
+CPU efficiency at equal work.
+
+Use the preserved default executable and loader from the build commands
+above. The [script](https://github.com/forgesworn/spry-turn/blob/main/scripts/worker-scaling.py) refuses to overwrite an
+existing evidence file and stops its own server and generator processes
+on completion or failure.
+
+```sh
+python3 scripts/worker-scaling.py \
+  --spry .local/variants/spry-default --loader .local/variants/load \
+  --coturn .local/reference/coturn-4.18.0/bin/turnserver \
+  --required-arch arm64 --processes 1 2 --runs 3 \
+  --clients 128 --workers 4 --packets 200000 \
+  --size 1200 --window 8 --min-seconds 3 \
+  --output .local/linux-workers.json
+```
+
+## Profile-guided optimisation
+
+The [M4 PGO comparison](https://github.com/forgesworn/spry-turn/blob/main/docs/evidence/m4-pgo-0.2.1.json) uses the same source,
+release settings and TLS feature as the ordinary build. Only the profile
+compiler flags differ. A finite Rust embedding host trains the actual
+server library with generated UDP/TCP/TLS traffic at both payload sizes,
+then exits normally so LLVM can write its counters. Training covers six
+workloads with 16 allocations. The profile is checked for nonzero execution
+counters before use.
+
+The 27-run comparison uses 128 allocations, 1,200-byte payloads, window 8,
+three repetitions and the same duration/count floors as the main runner.
+All runs passed payload checks. The receipt's `spry-turn` label means the
+experimental PGO build; `spry-baseline` is the ordinary v0.2.1 release build.
+
+| Client transport | Ordinary release packets/s | PGO packets/s | Difference |
+|---|---:|---:|---:|
+| UDP | 282,300 | 286,885 | +1.6% |
+| TCP | 315,054 | 317,897 | +0.9% |
+| TLS | 270,745 | 273,211 | +0.9% |
+
+Those small median changes are within the scale of run variation; the
+experiment does not establish a worthwhile general throughput gain. The
+executable shrinks from 1,197,760 to 1,181,520 bytes. The shipping artefact
+remains the ordinary release build, which does not depend on a workload
+profile or a particular training machine. A different representative
+workload or larger repeated study could justify revisiting that choice.
+
+The [training receipt](https://github.com/forgesworn/spry-turn/blob/main/docs/evidence/pgo-training-0.2.1.json) and
+[build/profile identity](https://github.com/forgesworn/spry-turn/blob/main/docs/evidence/qualification-builds-0.2.1.json) identify
+the training host, loader, merged profile and compiler settings.
+The first continuous-profile attempt produced files whose counters were
+all zero. They were rejected, and no rates based on that profile are used
+here. The finite host produced six raw files with a merged total count of
+166,916,851 and maximum function count of 14,045,496. Compiler warnings
+for unexercised functions are retained locally; this training is not full
+path coverage or correctness qualification. A 32-packet-window attempt
+also encountered coturn congestion; its partial receipt is linked from
+the [main qualification](https://github.com/forgesworn/spry-turn/blob/main/docs/qualification-0.2.1.md#linux-arm64-virtual-machine).
+
+Follow the [Rust PGO workflow](https://doc.rust-lang.org/rustc/profile-guided-optimization.html)
+with the matching toolchain's `llvm-profdata`. Use a fresh private profile
+directory and the checkout's existing target tree. Preserve the ordinary
+server and loader before instrumentation, as in the portable experiment.
+For example, on native Apple ARM64:
+
+```sh
+rustup component add llvm-tools-preview
+mkdir .local/pgo
+SPRY_PGO_DIR="$(pwd)/.local/pgo"
+SPRY_LLVM_PROFDATA="$(rustc --print target-libdir)/../bin/llvm-profdata"
+RUSTFLAGS="-Cprofile-generate=$SPRY_PGO_DIR" \
+  cargo build --locked --release --target aarch64-apple-darwin \
+  --features tls --example profile_server
+LLVM_PROFILE_FILE="$SPRY_PGO_DIR/%p.profraw" \
+  python3 scripts/train-pgo.py \
+  --server target/aarch64-apple-darwin/release/examples/profile_server \
+  --loader .local/variants/load --profile-dir "$SPRY_PGO_DIR" \
+  --profdata-tool "$SPRY_LLVM_PROFDATA" --output .local/pgo-training.json
+RUSTFLAGS="-Cprofile-use=$SPRY_PGO_DIR/merged.profdata -Cllvm-args=-pgo-warn-missing-function" \
+  cargo build --locked --release --target aarch64-apple-darwin \
+  --features tls --bin spry-turn
+```
+
+All other compiler flags must match between instrumentation and profile
+use; keep any path-remapping flags in both stages. The finite host is
+restricted to loopback and generated test credentials. Profiles and raw
+logs remain private scratch. Compare the resulting binary against the
+preserved ordinary build with the same native loader; it is still a
+closed-loop workload rather than maximum network capacity.
+
+---
+
 ## Source: Verification
 
 Canonical source: [docs/verification.md](https://github.com/forgesworn/spry-turn/blob/main/docs/verification.md)
 
 # Standalone verification
+
+## v0.2.1 qualification
+
+The stream-readiness optimisation passed ten all-feature Rust unit tests,
+including actual TCP backpressure, queue draining, removal of writable
+interest and subsequent progress. Twenty-seven independent socket tests
+passed on macOS and native ARM64 Linux, including the five added malformed
+input, integrity and expiry regressions. A later
+[fixture startup correction](https://github.com/forgesworn/spry-turn/blob/main/docs/evidence/fixture-startup-0.2.1.json) adds five
+independent subprocess regressions, giving **32 passing tests** on both
+platforms. It reserves TCP/UDP together, keeps TLS separate and bounds
+collision retries, startup reads and cleanup. The unchanged public API remains
+at the v0.2.0 configuration shape.
+
+On Apple M1, the [180-second churn run](https://github.com/forgesworn/spry-turn/blob/main/docs/evidence/stress-0.2.1.json) completed
+30,137 allocations, 3,767 signed port-exhaustion responses and 337 refreshes
+of a short-lived standing allocation. It exercised UDP/TCP/TLS, failed
+authentication, private-peer rejection and resumed forwarding. Server
+descriptors returned from nine to nine; process RSS rose from 2.08 to
+4.19 MB. Its fixed regression budget and duration are not a leak proof.
+The same receipt records seeded datagram loss, delay and reordering,
+credential expiry/replacement, partial-stream reclamation, TCP/TLS paused
+reader recovery and post-overload progress.
+
+The [300-second ASan/libFuzzer campaign](https://github.com/forgesworn/spry-turn/blob/main/docs/evidence/fuzz-0.2.1.json) completed
+15,241,706 inputs with zero crash artefacts, `cov=698` and `ft=1561`.
+It records the target/core hashes, seed, toolchain and corpus digests.
+This is coverage-guided codec/auth testing, not network-runtime fuzzing or
+independent security acceptance.
+
+The [hardened wrapper smoke run](https://github.com/forgesworn/spry-turn/blob/main/docs/evidence/fuzz-wrapper-0.2.1.json) adds a
+separate 30 seconds and 344,105 inputs after lockfile preflight and process
+cleanup changes. It also passed with zero crash artefacts. The earlier
+300-second receipt retains the exact wrapper and parser hashes it tested.
+
+The [actual KithMoot web application](https://github.com/forgesworn/spry-turn/blob/main/docs/evidence/kithmoot-web-0.2.1.json),
+source `24038110`, passed generated bidirectional decoded video and audio
+through spry-turn over UDP, TCP and TLS. Both browsers configured owner
+credentials through Settings, selected relay candidates, omitted credentials
+from invitations and made zero `/turn` requests. See the
+[reproduction and limits](https://github.com/forgesworn/spry-turn/blob/main/docs/kithmoot-acceptance.md). Browser TLS bypasses its
+test certificate; the native benchmark client separately validates a
+generated certificate through its test trust store.
+
+The [current comparison](https://github.com/forgesworn/spry-turn/blob/main/docs/qualification-0.2.1.md) contains complete M4 and
+Linux matrices: 216 runs and 96,423,584 checked packets, plus a controlled
+v0.2.0/v0.2.1/coturn tuning trial over all three client transports. It supersedes no
+historical receipt: each identifies its own method and source. Public
+firewall/NAT, trusted public certificate renewal, physical GrapheneOS and
+Archy acceptance remain open. The existing independently operated private
+coturn deployment was inspected read-only and remains unchanged.
 
 ## Bounded relay ports, local increment
 
@@ -1230,24 +1941,35 @@ Canonical source: [GOALS.md](https://github.com/forgesworn/spry-turn/blob/main/G
   a native baseline and coturn with resource costs recorded.
 - [x] WASM protocol arena, actual execution and bounded buffer reuse test.
 - [x] Public MIT source, source/secret review and CI readback.
+- [x] Controlled bounded-port M4 UDP/TCP/TLS comparison against v0.2.0 and
+  coturn, with a measured stream-readiness optimisation.
+- [x] Actual KithMoot web application: device-selected credentials, relay-only
+  generated media over UDP/TCP/TLS and no credential-service request.
+- [x] Bounded local allocation churn, injected loss/jitter, credential expiry,
+  slow-client recovery and 300 seconds of coverage-guided ASan fuzzing.
 
 ## Before replacing an existing deployment
 
 - [x] Operator-selected bounded UDP relay port range and firewall/certificate plan.
 - [ ] Applied firewall/NAT, trusted public certificate lifecycle and independent
   cross-network deployment acceptance; a local plan is not this evidence.
-- [ ] Real KithMoot web and native interoperability against a separately chosen
-  server, without adding a project-operated credential service.
+- [ ] Cross-network KithMoot web and physical native interoperability against
+  a separately chosen operator, without a project-operated credential service.
 - [ ] Packet-loss, jitter, blocked UDP, IPv6, long-lived refresh, reconnect,
   certificate validation/renewal and resource-exhaustion qualification.
-- [ ] Broader RFC conformance suite and sustained coverage-guided fuzzing.
+- [ ] Broader RFC conformance and longer network/runtime fuzzing campaigns;
+  the recorded bounded codec/auth campaign is not a security review.
 - [ ] Independent security review, including nonce/auth state and relay targets.
 - [ ] Static long-term user credentials if the target deployments require them.
 - [ ] Decide whether supported coturn deployments need EVEN-PORT, reservation
   tokens, dual allocations, RFC 8489 SHA-256 auth or other extensions.
   Unsupported comprehension-required attributes currently receive 420.
-- [ ] Measure Linux batching and multiple independent workers before adding
-  platform-specific fast paths. macOS results cannot prove Linux performance.
+- [x] Measure Linux receive batching and multiple independent processes before
+  adding runtime paths; the development experiments retain their VM limits.
+- [x] Measure a same-source M4 PGO trial; retain the ordinary release build
+  because the small observed changes do not establish a useful gain.
+- [ ] Repeat Linux performance and resource qualification on independent
+  bare-metal hardware before generalising the virtual-machine observations.
 
 TCP relay allocations (RFC 6062), DTLS client transport, database integrations,
 OAuth, telnet/HTTP administration and clustering are outside the first release.
@@ -1270,6 +1992,22 @@ Do not silently remove transport support required by existing clients.
 Canonical source: [CHANGELOG.md](https://github.com/forgesworn/spry-turn/blob/main/CHANGELOG.md)
 
 # Changelog
+
+## 0.2.1 — 23 October 2026
+
+Public MIT prerelease. Stream readiness registrations now change only when
+backpressure changes write interest. Public Rust configuration is unchanged.
+
+- Native UDP/TCP/TLS benchmark tooling, loaded latency samples, explicit
+  TLS verification, binary identities and live Linux socket-memory counters.
+- Controlled M4 comparison against v0.2.0 and coturn, with TCP/TLS tuning
+  gains, workload limits and memory trade-offs recorded.
+- Twenty-seven socket tests, real backpressure transition coverage,
+  sustained allocation churn, loss/jitter, expiry, slow-client recovery
+  and coverage-guided ASan fuzzing. CI includes bounded stress and fuzz runs.
+- Actual KithMoot web acceptance with relay credentials entered through
+  device Settings, bidirectional generated media and no credential service.
+  Public-network, physical GrapheneOS and Archy acceptance remain open.
 
 ## Public source, 23 October 2026
 
@@ -1348,6 +2086,7 @@ destinations. See [maintaining documentation](https://github.com/forgesworn/spry
 npm run check
 cargo build --locked --release --features tls
 python3 tests/interop.py --tls
+python3 tests/stress.py --tls --seconds 180 --output .local/stress.json
 npm ci --ignore-scripts
 npx playwright install chromium
 python3 tests/browser.py --tls
@@ -1355,8 +2094,28 @@ python3 tests/browser.py --tls
 
 `npm run check` runs documentation validation, Rust formatting, clippy with
 warnings denied, all-feature tests and both minimal library test sets.
+The stress runner caps normal control traffic below admission limits and
+tests a separate overload burst, expiry, churn and slow-client recovery.
+Its seeded loss/jitter proxy is local qualification. A short soak and
+coarse RSS samples do not prove absence of leaks or WAN acceptance.
+
 Python orchestrates independent test sockets and browser fixtures; the
 shipping server, library and socket load generator are Rust.
+
+For coverage-guided ASan parser/auth fuzzing:
+
+```sh
+rustup toolchain install nightly-2025-12-05 --profile minimal
+cargo install cargo-fuzz --version 0.13.2 --locked
+python3 tests/fuzz.py --toolchain nightly-2025-12-05 --seconds 300 \
+  --output .local/fuzz/receipt.json
+```
+
+The isolated [fuzz target](https://github.com/forgesworn/spry-turn/blob/main/fuzz/README.md) has no effect on shipping
+dependencies and reuses the checkout's `target/`. Its corpus and logs stay
+under ignored `.local/fuzz/`. CI runs a bounded 30-second campaign; longer
+manual runs are separate evidence. Test the actual KithMoot application with
+the [operator acceptance runner](https://github.com/forgesworn/spry-turn/blob/main/docs/kithmoot-acceptance.md).
 
 For WASM build and actual execution, use [the API commands](https://github.com/forgesworn/spry-turn/blob/main/docs/api.md#wasm-build).
 Run an appropriate credential/source scan before pushing; never suppress a
@@ -1367,7 +2126,7 @@ checks and interop on Linux/macOS and builds the WASM codec on Linux.
 
 Performance claims require matched executable architectures, real socket
 workloads, alternating server order and disclosed resource costs. Use
-[the existing benchmark method](https://github.com/forgesworn/spry-turn/blob/main/docs/benchmarks.md); a framing microbenchmark
+[the current benchmark method](https://github.com/forgesworn/spry-turn/blob/main/docs/qualification-0.2.1.md); a framing microbenchmark
 cannot establish network throughput. Preserve raw failure evidence alongside
 successful runs and do not confuse loopback with production acceptance.
 
@@ -1502,15 +2261,18 @@ presence of server source.
 
 The intended deployment is a standalone, coturn-style TURN server on an
 independently operated Archy node. KithMoot would select it through ordinary
-TURN configuration. Integration, actual operator independence and device
-acceptance remain unproved. Sapflow support is a later optional goal.
+TURN configuration. Local KithMoot web interoperability is now qualified
+with owner-selected credentials and no credential-service request; see the
+[application receipt and limits](https://github.com/forgesworn/spry-turn/blob/main/docs/kithmoot-acceptance.md). Archy packaging,
+actual operator independence, cross-network and physical-device acceptance
+remain unproved. Sapflow support is a later optional goal.
 Nothing here changes another application's deployment or legal position.
 
 ## Implemented boundary
 
 The library's default listener is loopback; the executable requires an
 operator-provided secret and explicit configuration to expose another
-address (`src/turn.rs:127`, `src/main.rs:54`, `:82`). There is no runtime
+address (`src/turn.rs:186`, `src/main.rs:54`, `:82`). There is no runtime
 hosted endpoint default or discovery lookup. The source has no application
 room model, member directory, room-invitation authority or KithMoot
 entitlement issuer. TURN resource authentication is separate from admission
@@ -1518,16 +2280,16 @@ to an application conversation. The REST credential
 helper accepts an operator secret and a username, while server nonces bind
 to address, time and realm (`src/auth.rs:13`, `:29`, `:54`, `:73`). An operator
 that holds the secret can issue transport credentials; that fact does not give
-it room membership authority (`src/turn.rs:868`).
+it room membership authority (`src/turn.rs:937`).
 
 Allocation, permission, channel and connection state is held in memory,
-with expiry and capacity limits (`src/turn.rs:213`, `:351`, `:798`, `:1065`,
-`:1114`, `:1295`, `:1348`). The forwarding paths relay datagrams between sockets
-and keep aggregate packet/byte/drop counters (`src/turn.rs:908`, `:1358`,
-`:1392`; `src/limits.rs:41`). The default optimisation can add a connected
+with expiry and capacity limits (`src/turn.rs:265`, `:433`, `:867`, `:1134`,
+`:1170`, `:1358`, `:1369`). The forwarding paths relay datagrams between sockets
+and keep aggregate packet/byte/drop counters (`src/turn.rs:977`, `:1427`,
+`:1461`; `src/limits.rs:41`). The default optimisation can add a connected
 client-facing UDP socket per authenticated UDP allocation for a concrete IPv4
 listener on Unix, with a portable fallback (`Cargo.toml:17`, `:23`;
-`src/turn.rs:395`, `:1103`). This retains the same transport credentials,
+`src/turn.rs:477`, `:1172`). This retains the same transport credentials,
 permissions and application-admission boundary. The reviewed code has no
 payload-recording or per-client access-log writer. It emits startup/error diagnostics, and the
 credential subcommand deliberately prints a credential pair

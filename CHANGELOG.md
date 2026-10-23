@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.2.1 — 23 October 2026
+
+Public MIT prerelease. Stream readiness registrations now change only when
+backpressure changes write interest. Public Rust configuration is unchanged.
+
+- Native UDP/TCP/TLS benchmark tooling, loaded latency samples, explicit
+  TLS verification, binary identities and live Linux socket-memory counters.
+- Controlled M4 comparison against v0.2.0 and coturn, with TCP/TLS tuning
+  gains, workload limits and memory trade-offs recorded.
+- Twenty-seven socket tests, real backpressure transition coverage,
+  sustained allocation churn, loss/jitter, expiry, slow-client recovery
+  and coverage-guided ASan fuzzing. CI includes bounded stress and fuzz runs.
+- Actual KithMoot web acceptance with relay credentials entered through
+  device Settings, bidirectional generated media and no credential service.
+  Public-network, physical GrapheneOS and Archy acceptance remain open.
+
 ## Public source, 23 October 2026
 
 The owner authorised public MIT source and the existing GitHub prereleases.
