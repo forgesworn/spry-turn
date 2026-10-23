@@ -29,7 +29,10 @@ endpoint, application service or Archy integration has been deployed.
 
 GitHub hosting is private under `forgesworn/spry-turn`; publication to package
 registries, image registries, public releases and Pages remains disabled or
-absent. Hosted CI is separate evidence from the local checks above.
+absent. [Hosted CI](https://github.com/forgesworn/spry-turn/actions/runs/40015270709)
+passed on Linux and macOS for implementation commit
+`48d75adf51c73b1ef2a51a3cb663e424f2b4ea35`. Subsequent handover edits change
+documentation only; hosted CI is separate evidence from the local checks.
 
 Retained local build evidence is ignored by Git:
 
@@ -40,7 +43,8 @@ Retained local build evidence is ignored by Git:
   matches the reviewed Rust files. Repository ownership metadata subsequently
   changed to the ForgeSworn organisation without changing runtime source.
 
-Task-owned test servers, browsers and M4 scratch builds are stopped/removed
-at handover. Existing unrelated host services are preserved. Real-phone,
+Task-owned test servers and browsers have stopped. The M4 scratch tree was
+removed after evidence capture, and `cargo clean` removed 340.2 MiB of local
+build output. Existing unrelated host services are preserved. Real-phone,
 lossy-network, Linux performance, full coturn conformance and public operator
 acceptance remain the explicit later gates in [GOALS.md](../GOALS.md).
