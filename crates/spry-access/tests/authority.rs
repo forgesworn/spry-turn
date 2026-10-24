@@ -2,7 +2,7 @@ use base64::{
     Engine,
     engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
 };
-use k256::schnorr::SigningKey;
+use secp256k1::{Keypair, SecretKey, schnorr};
 use serde_json::{Value, json};
 use spry_access::{Authority, Config, GRANT_TTL, hash, hex};
 
@@ -38,11 +38,11 @@ fn another_calling_application_supplies_its_own_origin_and_pairing_target() {
             .starts_with("https://another-app.example/connect/#spry=")
     );
 }
-fn key(seed: u8) -> SigningKey {
-    SigningKey::from_bytes(&[seed; 32]).expect("synthetic key")
+fn key(seed: u8) -> Keypair {
+    Keypair::from_secret_key(&SecretKey::from_secret_bytes([seed; 32]).expect("synthetic key"))
 }
 fn public(seed: u8) -> String {
-    hex(&key(seed).verifying_key().to_bytes())
+    hex(&key(seed).x_only_public_key().0.to_byte_array())
 }
 fn fixture() -> Authority {
     let mut config = Config::new(
@@ -92,12 +92,18 @@ fn grant(authority: &mut Authority, id: &Value, now: u64) -> Value {
         .expect("grant")
 }
 fn signed(path: &str, body: &[u8], now: u64, nonce: u8) -> String {
-    let tags = json!([
+    signed_for(path, body, now, nonce, None)
+}
+fn signed_for(path: &str, body: &[u8], now: u64, nonce: u8, audience: Option<&str>) -> String {
+    let mut tags = json!([
         ["u", format!("https://relay.example:3744{path}")],
         ["method", "POST"],
         ["payload", hash(body)],
         ["nonce", URL_SAFE_NO_PAD.encode([nonce; 32])]
     ]);
+    if let Some(audience) = audience {
+        tags.as_array_mut().unwrap().push(json!(["aud", audience]));
+    }
     let id = hash(
         serde_json::to_vec(&json!([0, public(1), now, 27235, tags, ""])).expect("canonical event"),
     );
@@ -106,10 +112,7 @@ fn signed(path: &str, body: &[u8], now: u64, nonce: u8) -> String {
         .chunks_exact(2)
         .map(|p| u8::from_str_radix(std::str::from_utf8(p).expect("hex"), 16).expect("hex"))
         .collect();
-    let sig = hex(&key(1)
-        .sign_raw(&id_bytes, &[0; 32])
-        .expect("signature")
-        .to_bytes());
+    let sig = hex(&schnorr::sign_with_aux_rand(&id_bytes, &key(1), &[0; 32]).to_byte_array());
     "Nostr ".to_owned() + &STANDARD.encode(serde_json::to_vec(&json!({"kind":27235,"created_at":now,"tags":tags,"content":"","pubkey":public(1),"id":id,"sig":sig})).expect("event"))
 }
 
@@ -311,7 +314,25 @@ fn group_access_survives_restart_without_the_paired_client_and_is_revoked_durabl
     let path = scratch.0.join("pairings.json");
     let mut a = fixture();
     a.config.state_file = Some(path.clone());
+    let transport = "spry://generated-fixture-routing-descriptor";
+    assert!(
+        a.set_transport_endpoint(&public(3), transport.into())
+            .is_err()
+    );
+    a.set_transport_endpoint(&public(1), transport.into())
+        .expect("owner configures transport");
+    assert_eq!(
+        a.authenticate(
+            &signed("/v1/pairings", b"{}", NOW, 99),
+            "/v1/pairings",
+            b"{}",
+            NOW
+        )
+        .expect("HTTP signature retains HTTPS target"),
+        public(1)
+    );
     let (pair, _) = pair(&mut a);
+    assert_eq!(pair["endpoint"], transport);
     let access = grant(&mut a, &pair["id"], NOW);
     let stored = std::fs::read_to_string(&path).expect("saved state");
     assert!(!stored.contains(access["token"].as_str().expect("access token")));
@@ -332,6 +353,7 @@ fn group_access_survives_restart_without_the_paired_client_and_is_revoked_durabl
     let mut restarted = fixture();
     restarted.config.state_file = Some(path.clone());
     restarted.restore().expect("restore");
+    assert_eq!(restarted.advertised_endpoint(), transport);
     let credentials = restarted
         .handle(
             "/v1/credentials",
@@ -397,4 +419,25 @@ fn device_capacity_expires_without_requiring_a_new_group_grant() {
         NOW + 601,
     )
     .expect("inactive device slots reclaimed");
+}
+
+#[test]
+fn private_http_proofs_cannot_be_replayed_to_a_node_with_the_same_local_hostname() {
+    let mut a = fixture();
+    a.config.audience = Some("node-a".into());
+    let mut b = fixture();
+    b.config.audience = Some("node-b".into());
+    let proof = signed_for("/v1/pairings", b"{}", NOW, 77, Some("node-a"));
+    a.authenticate(&proof, "/v1/pairings", b"{}", NOW)
+        .expect("correct private node");
+    assert!(b.authenticate(&proof, "/v1/pairings", b"{}", NOW).is_err());
+    assert!(
+        a.authenticate(
+            &signed("/v1/pairings", b"{}", NOW, 78),
+            "/v1/pairings",
+            b"{}",
+            NOW
+        )
+        .is_err()
+    );
 }

@@ -1,5 +1,5 @@
 use base64::{Engine, engine::general_purpose::STANDARD};
-use k256::schnorr::SigningKey;
+use secp256k1::{Keypair, SecretKey, schnorr};
 use serde_json::json;
 use spry_access::{hash, hex};
 use std::{
@@ -34,8 +34,8 @@ fn request(address: SocketAddr, method: &str, path: &str, auth: Option<&str>) ->
 
 #[test]
 fn standalone_host_uses_owner_signatures_without_an_archipelago_installation() {
-    let signing = SigningKey::from_bytes(&[1; 32]).unwrap();
-    let public = hex(&signing.verifying_key().to_bytes());
+    let signing = Keypair::from_secret_key(&SecretKey::from_secret_bytes([1; 32]).unwrap());
+    let public = hex(&signing.x_only_public_key().0.to_byte_array());
     let reserved = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = reserved.local_addr().unwrap();
     drop(reserved);
@@ -101,7 +101,7 @@ fn standalone_host_uses_owner_signatures_without_an_archipelago_installation() {
         .chunks_exact(2)
         .map(|bytes| u8::from_str_radix(std::str::from_utf8(bytes).unwrap(), 16).unwrap())
         .collect();
-    let signature = hex(&signing.sign_raw(&digest, &[0; 32]).unwrap().to_bytes());
+    let signature = hex(&schnorr::sign_with_aux_rand(&digest, &signing, &[0; 32]).to_byte_array());
     let auth = format!("Nostr {}", STANDARD.encode(serde_json::to_vec(&json!({
         "kind":27235,"created_at":now,"tags":tags,"content":"", "pubkey":public,"id":id,"sig":signature
     })).unwrap()));

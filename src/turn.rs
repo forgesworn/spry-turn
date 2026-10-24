@@ -26,6 +26,10 @@ const HEADROOM: usize = 64;
 const MAX_QUEUE: usize = 131_072;
 const MAX_PEERS: usize = 32;
 
+fn local_bridge_address(ip: IpAddr) -> bool {
+    matches!(ip, IpAddr::V4(v) if v.octets()[0] == 127 && (64..=127).contains(&v.octets()[1]))
+}
+
 #[derive(Clone)]
 pub struct Config {
     pub listen: SocketAddr,
@@ -38,6 +42,11 @@ pub struct Config {
     pub secret: Vec<u8>,
     /// Explicit local testing opt-in, never enabled by default.
     pub allow_loopback_peers: bool,
+    /// Explicit local bridge domain: 127.64.0.0/10 on the configured relay ports.
+    /// The client listener is a concrete IPv4 address; the bridge owns peer transport.
+    pub local_peer_bridge: bool,
+    /// Authorised virtual peer aliases, changed by the embedding bridge host.
+    pub bridge_peer_ips: HashSet<std::net::Ipv4Addr>,
     pub max_allocations: usize,
     pub max_per_user: usize,
     pub max_connections: usize,
@@ -59,7 +68,11 @@ mod policy_tests {
         let mut server = Server::bind(config).unwrap();
         let mut client = std::net::TcpStream::connect(server.local_addr().unwrap()).unwrap();
         client.set_nonblocking(true).unwrap();
-        server.accept(TCP);
+        let accepting = Instant::now() + Duration::from_secs(2);
+        while server.connections.is_empty() {
+            server.poll_once(Duration::from_millis(1)).unwrap();
+            assert!(Instant::now() < accepting, "TCP client was not accepted");
+        }
         let token = *server.connections.keys().next().unwrap();
         socket2::SockRef::from(&server.connections[&token].socket)
             .set_send_buffer_size(1024)
@@ -149,6 +162,65 @@ mod policy_tests {
     }
 
     #[test]
+    fn local_bridge_domain_excludes_host_services_and_other_networks() {
+        let mut config = Config::local(vec![1; 32]);
+        config.local_peer_bridge = true;
+        config.relay_ip = "127.64.1.1".parse().unwrap();
+        config.relay_port_range = Some((49160, 49191));
+        config.bridge_peer_ips = [
+            "127.64.1.2".parse().unwrap(),
+            "127.127.255.255".parse().unwrap(),
+        ]
+        .into();
+        let ports = HashSet::from([49160]);
+        for peer in ["127.64.1.2:49160", "127.127.255.255:49191"] {
+            assert!(Server::allowed_peer(&config, &ports, peer.parse().unwrap()));
+        }
+        assert!(Server::allowed_peer(
+            &config,
+            &ports,
+            "127.64.1.1:49160".parse().unwrap()
+        ));
+        for peer in [
+            "127.64.1.1:49161",
+            "127.64.1.2:22",
+            "127.64.1.2:49159",
+            "127.64.1.2:49192",
+            "127.64.1.3:49160",
+            "127.0.0.1:49160",
+            "127.128.0.1:49160",
+            "10.0.0.1:49160",
+            "203.0.113.2:49160",
+            "[::1]:49160",
+            "[::ffff:127.64.1.2]:49160",
+        ] {
+            assert!(
+                !Server::allowed_peer(&config, &ports, peer.parse().unwrap()),
+                "{peer}"
+            );
+        }
+    }
+
+    #[test]
+    fn local_bridge_requires_concrete_client_binding_and_explicit_peer_bounds() {
+        for case in 0..5 {
+            let mut config = Config::local(vec![1; 32]);
+            config.listen.set_port(0);
+            config.local_peer_bridge = true;
+            config.relay_ip = "127.64.1.1".parse().unwrap();
+            config.relay_port_range = Some((49160, 49191));
+            match case {
+                0 => config.listen.set_ip("0.0.0.0".parse().unwrap()),
+                1 => config.relay_ip = "127.0.0.1".parse().unwrap(),
+                2 => config.relay_port_range = None,
+                3 => config.allow_loopback_peers = true,
+                _ => config.advertised_ip = Some("203.0.113.1".parse().unwrap()),
+            }
+            assert!(Server::bind(config).is_err());
+        }
+    }
+
+    #[test]
     fn own_address_is_limited_to_live_relay_ports() {
         let mut config = Config::local(vec![1; 32]);
         config.relay_ip = "203.0.113.1".parse().unwrap();
@@ -192,6 +264,8 @@ impl Config {
             realm: "spry-turn".into(),
             secret,
             allow_loopback_peers: false,
+            local_peer_bridge: false,
+            bridge_peer_ips: HashSet::new(),
             max_allocations: 1024,
             max_per_user: 8,
             max_connections: 256,
@@ -453,6 +527,14 @@ pub fn unix_time() -> u64 {
         .as_secs()
 }
 
+fn credential_lifetime(username: &str, requested: u32, now: SystemTime) -> Duration {
+    let remaining = auth::expires(username)
+        .and_then(|expiry| UNIX_EPOCH.checked_add(Duration::from_secs(expiry)))
+        .and_then(|deadline| deadline.duration_since(now).ok())
+        .unwrap_or_default();
+    Duration::from_secs(u64::from(requested)).min(remaining)
+}
+
 impl Server {
     fn bind_listener(address: SocketAddr) -> io::Result<UdpSocket> {
         #[cfg(all(feature = "connected-udp", unix))]
@@ -571,6 +653,32 @@ impl Server {
                 "advertised address must match relay address family",
             ));
         }
+        if config.local_peer_bridge
+            && (!matches!(config.listen.ip(), IpAddr::V4(ip) if !ip.is_unspecified() && !ip.is_multicast() && !ip.is_broadcast())
+                || !local_bridge_address(config.relay_ip)
+                || config.relay_port_range.is_none()
+                || config.allow_loopback_peers
+                || config.bridge_peer_ips.len() > 8
+                || config.bridge_peer_ips.iter().any(|ip| {
+                    !local_bridge_address(IpAddr::V4(*ip)) || IpAddr::V4(*ip) == config.relay_ip
+                })
+                || config.advertised_ip.is_some_and(|ip| ip != config.relay_ip))
+        {
+            return Err(io::Error::other(
+                "peer bridging requires a concrete IPv4 listener, a virtual relay address and bounded peer aliases/ports",
+            ));
+        }
+        #[cfg(feature = "tls")]
+        if config.local_peer_bridge
+            && config
+                .tls
+                .as_ref()
+                .is_some_and(|(address, _)| !address.ip().is_loopback())
+        {
+            return Err(io::Error::other(
+                "local peer bridging requires loopback TLS",
+            ));
+        }
         let poll = Poll::new()?;
         let mut listener = Self::bind_listener(config.listen)?;
         poll.registry()
@@ -620,6 +728,43 @@ impl Server {
     }
     pub fn allocation_count(&self) -> usize {
         self.allocations.len()
+    }
+
+    /// Update only the explicitly configured bridge's authorised peer aliases.
+    pub fn set_bridge_peer_ips(&mut self, peers: HashSet<std::net::Ipv4Addr>) -> io::Result<()> {
+        if !self.config.local_peer_bridge
+            || peers.len() > 8
+            || peers.iter().any(|ip| {
+                !local_bridge_address(IpAddr::V4(*ip)) || IpAddr::V4(*ip) == self.config.relay_ip
+            })
+        {
+            return Err(io::Error::other("invalid bridge peer aliases"));
+        }
+        self.config.bridge_peer_ips = peers;
+        // Previously installed permissions cannot outlive an alias withdrawal.
+        for allocation in self.allocations.values_mut() {
+            allocation.permissions.retain(|permission| {
+                self.config.bridge_peer_ips.contains(&match permission.ip {
+                    IpAddr::V4(ip) => ip,
+                    _ => return false,
+                }) || permission.ip == self.config.relay_ip
+            });
+            allocation.channels.retain(|channel| {
+                self.config
+                    .bridge_peer_ips
+                    .contains(&match channel.peer.ip() {
+                        IpAddr::V4(ip) => ip,
+                        _ => return false,
+                    })
+                    || channel.peer.ip() == self.config.relay_ip
+            });
+        }
+        Ok(())
+    }
+
+    /// Active relay ports for an embedding adapter's destination checks.
+    pub fn allocated_relay_ports(&self) -> impl Iterator<Item = u16> + '_ {
+        self.relay_ports.iter().copied()
     }
 
     fn token(&mut self) -> Token {
@@ -1167,7 +1312,11 @@ impl Server {
             address.set_ip(ip);
         }
         let now = Instant::now();
-        let lifetime = m.number(LIFETIME).unwrap_or(600).clamp(600, 3600);
+        let lifetime = credential_lifetime(
+            &username,
+            m.number(LIFETIME).unwrap_or(600).clamp(600, 3600),
+            SystemTime::now(),
+        );
         #[cfg(feature = "connected-udp")]
         let client_socket = self.connected_client(client, token);
         self.allocations.insert(
@@ -1180,7 +1329,7 @@ impl Server {
                 address,
                 username,
                 transaction: m.transaction,
-                expires: now + Duration::from_secs(u64::from(lifetime)),
+                expires: now + lifetime,
                 permissions: Vec::new(),
                 channels: Vec::new(),
                 bandwidth: Bucket::new(
@@ -1257,8 +1406,15 @@ impl Server {
             self.error(client, peer, m, 400, Some(&key));
             return;
         }
-        let lifetime = m.number(LIFETIME).unwrap_or(600).min(3600);
-        a.expires = Instant::now() + Duration::from_secs(u64::from(lifetime));
+        let duration = credential_lifetime(
+            &a.username,
+            m.number(LIFETIME).unwrap_or(600).min(3600),
+            SystemTime::now(),
+        );
+        a.expires = Instant::now() + duration;
+        let lifetime = duration
+            .as_secs()
+            .saturating_add(u64::from(duration.subsec_nanos() != 0)) as u32;
         let mut b = Builder::new(REFRESH, 2, m.transaction);
         b.number(LIFETIME, lifetime);
         self.send_client(client, &b.finish(Some(&key)));
@@ -1276,6 +1432,20 @@ impl Server {
             return false;
         }
         let ip = address.ip();
+        if config.local_peer_bridge {
+            if !local_bridge_address(ip) {
+                return false;
+            }
+            if ip == config.relay_ip {
+                return ports.contains(&address.port());
+            }
+            if !matches!(ip, IpAddr::V4(peer) if config.bridge_peer_ips.contains(&peer)) {
+                return false;
+            }
+            return config
+                .relay_port_range
+                .is_some_and(|(first, last)| (first..=last).contains(&address.port()));
+        }
         if ip.is_loopback() {
             return config.allow_loopback_peers;
         }

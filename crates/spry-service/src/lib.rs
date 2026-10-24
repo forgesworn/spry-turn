@@ -1,8 +1,12 @@
 #![forbid(unsafe_code)]
+pub mod mesh;
+mod node;
+pub mod signalling;
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full, Limited};
 use hyper::{Request, Response, StatusCode, body::Incoming, service::service_fn};
 use hyper_util::rt::{TokioIo, TokioTimer};
+use node::{PrivateSettings, ServiceState};
 use serde_json::{Value, json};
 use spry_access::{Authority, Config, MAX_BODY, Refused};
 use std::{
@@ -11,7 +15,7 @@ use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::PathBuf,
     process::Stdio,
-    sync::{Arc, Mutex},
+    sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tokio::{
@@ -37,7 +41,7 @@ impl UiAssets {
         signer_provider: None,
     };
 }
-type State = Arc<Mutex<Authority>>;
+type State = Arc<ServiceState>;
 fn now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -119,7 +123,7 @@ async fn dispatch(
                 let authority = state.lock().map_err(|_| Refused(503, "Unavailable."))?;
                 json_response(
                     200,
-                    json!({"ready":authority.config.ready,"endpoint":authority.config.endpoint,"message":if authority.config.ready { "Ready to pair with KithMoot." } else { authority.config.readiness }}),
+                    json!({"ready":authority.config.ready,"endpoint":authority.config.endpoint,"audience":authority.config.audience,"privateRelay":authority.config.audience.is_some(),"controlReady":state.private()?.is_some_and(|private|private.control_ready()),"message":if authority.config.ready { "Ready to pair with KithMoot." } else { authority.config.readiness }}),
                 )
             }
             _ => return Err(Refused(404, "Not found.")),
@@ -168,13 +172,17 @@ async fn dispatch(
     .map_err(|_| Refused(408, "Request timed out."))?
     .map_err(|_| Refused(413, "Request too large."))?
     .to_bytes();
-    let mut authority = state.lock().map_err(|_| Refused(503, "Unavailable."))?;
-    let key = authority.authenticate(&header, &path, &body, now())?;
+    let key = state
+        .lock()
+        .map_err(|_| Refused(503, "Unavailable."))?
+        .authenticate(&header, &path, &body, now())?;
     let body = serde_json::from_slice(&body).map_err(|_| Refused(400, "Invalid request."))?;
-    Ok(json_response(
-        200,
-        authority.handle(&path, &key, &body, now())?,
-    ))
+    if path == "/v1/pairings" {
+        if let Some(private) = state.private()? {
+            private.prepare_pairing(&state, &key, &body).await?;
+        }
+    }
+    Ok(json_response(200, state.api(&key, &path, &body, now())?))
 }
 async fn serve(
     request: Request<Incoming>,
@@ -368,11 +376,18 @@ async fn binding(address: Ipv4Addr) -> bool {
 pub async fn run_with_assets(
     assets: UiAssets,
 ) -> std::result::Result<(), Box<dyn std::error::Error>> {
+    let secret = env::var("SPRY_TURN_SECRET")?;
+    let private_settings = PrivateSettings::from_environment(secret.as_bytes())?;
+    let endpoint = if private_settings.is_some() {
+        env::var("SPRY_OWNER_URL").or_else(|_| env::var("SPRY_PUBLIC_URL"))?
+    } else {
+        env::var("SPRY_PUBLIC_URL")?
+    };
     let mut config = Config::new(
-        &env::var("SPRY_PUBLIC_URL")?,
+        &endpoint,
         &env::var("SPRY_KITHMOOT_URL").unwrap_or_else(|_| "https://kithmoot.app/j/".into()),
         &env::var("SPRY_OWNER_KEYS")?,
-        env::var("SPRY_TURN_SECRET")?.as_bytes(),
+        secret.as_bytes(),
         Some(
             env::var("SPRY_STATE_FILE")
                 .map_or_else(|_| PathBuf::from("/data/pairings.json"), PathBuf::from),
@@ -398,9 +413,16 @@ pub async fn run_with_assets(
             config.origins.insert(url.origin().ascii_serialization());
         }
     }
+    if let Some(settings) = &private_settings {
+        config.audience = Some(settings.audience().map_err(|_| "Invalid node identity")?);
+        config.readiness = "Waiting for your node’s network.";
+    }
     let mut authority = Authority::new(config);
     authority.restore().map_err(|_| "Pairings unavailable")?;
-    let state = Arc::new(Mutex::new(authority));
+    if private_settings.is_none() && authority.config.transport_endpoint.is_some() {
+        return Err("Private relay settings require a peer network".into());
+    }
+    let state = Arc::new(ServiceState::new(authority));
     let bind: SocketAddr = format!(
         "{}:{}",
         env::var("SPRY_HTTP_BIND").unwrap_or_else(|_| "127.0.0.1".into()),
@@ -411,7 +433,18 @@ pub async fn run_with_assets(
         return Err("The control service must sit behind an HTTPS reverse proxy".into());
     }
     let listener = TcpListener::bind(bind).await?;
-    let mut relay = start_relay(&state).await;
+    let mut relay = if private_settings.is_none() {
+        start_relay(&state).await
+    } else {
+        None
+    };
+    let mut signalling = None;
+    if let Some(settings) = &private_settings {
+        // Keep owner status available while the optional network is starting.
+        if let Ok(started) = settings.start(state.clone()).await {
+            signalling = started;
+        }
+    }
     let permits = Arc::new(Semaphore::new(64));
     let mut monitor = tokio::time::interval(Duration::from_secs(5));
     #[cfg(unix)]
@@ -420,7 +453,12 @@ pub async fn run_with_assets(
         tokio::select! {
             _ = tokio::signal::ctrl_c() => break,
             _ = async { #[cfg(unix)] { terminate.recv().await; } #[cfg(not(unix))] { std::future::pending::<()>().await; } } => break,
-            _ = monitor.tick() => { if relay.as_mut().is_some_and(|child| child.try_wait().ok().flatten().is_some()) { relay = None; if let Ok(mut authority) = state.lock() { authority.config.ready = false; authority.config.readiness = "Spry stopped. Restart the service."; } } },
+            _ = monitor.tick() => {
+                if let Some(settings)=&private_settings {
+                    if state.private().ok().flatten().is_some_and(|private|!private.mesh.healthy()){state.clear_private();signalling=None;}
+                    if state.private().ok().flatten().is_none(){if let Ok(started)=settings.start(state.clone()).await{signalling=started;}}
+                } else if relay.as_mut().is_some_and(|child| child.try_wait().ok().flatten().is_some()) {relay=None;if let Ok(mut authority)=state.lock(){authority.config.ready=false;authority.config.readiness="Spry stopped. Restart the service.";}}
+            },
             accepted = listener.accept() => {
                 let (stream, address) = accepted?;
                 let Ok(permit) = permits.clone().try_acquire_owned() else { drop(stream); continue };
@@ -434,6 +472,8 @@ pub async fn run_with_assets(
             }
         }
     }
+    drop(signalling);
+    state.clear_private();
     if let Some(mut relay) = relay {
         let _ = relay.kill().await;
     }
