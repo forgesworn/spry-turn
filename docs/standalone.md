@@ -119,6 +119,16 @@ progress after 330 seconds. The [packet receipt](evidence/spry-private-nodes-pac
 separately records UDP/TCP forwarding and withdrawal on an isolated network
 with no external connectivity. Both name their exact fixture limits.
 
+The [creator-offline browser receipt](evidence/spry-creator-offline-browser-20261024.json)
+adds a fresh call after the room creator's browser closes and their actual
+Spry container stops. Both remaining clients reload and start relay-only
+audio/video, then continue receiving fresh media after 330 seconds. Run
+`tests/home-flow.mjs` with `--kithmoot <checkout> --node-binary <Linux spry-node>
+--output .local/creator-offline.json --nodes 3 --standing-seconds 330
+--offline-creator true` to reproduce it. The generated signalling relay stays
+available independently of the creator. This checks application behaviour
+and credential renewal; the receipt retains the same browser/network limits.
+
 A mesh whose routing needs an identity lookup can supply `SPRY_PEER_NAME`,
 `SPRY_PEER_RESOLVER` (a loopback DNS socket) and `SPRY_PEER_ZONE`. The optional
 adapter queries only that zone, binds the DNS response to its question and
