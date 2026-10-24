@@ -1,0 +1,288 @@
+{
+  "schema": 1,
+  "passed": true,
+  "scope": "standalone-nodes-fresh-call-and-renewal-without-creator",
+  "binarySha256": "e7c932d8707e8d89aef1866a4576050f1b80a09c64ce37c132c526a456f727d3",
+  "twoNetworkNamespaces": true,
+  "externalNetworkingDisabled": false,
+  "pairedThroughActualUi": true,
+  "injectedIceServers": false,
+  "externalVpsPresent": false,
+  "encryptedNostrControl": true,
+  "customCaValidatedByServices": true,
+  "relayOnly": true,
+  "nodeCount": 3,
+  "standingSeconds": 330,
+  "freshMediaAdvancesAfterStanding": true,
+  "creatorBrowserClosed": true,
+  "creatorNodeStopped": true,
+  "freshCallWithoutCreator": true,
+  "remainingNodes": 2,
+  "two": [
+    {
+      "frames": 33,
+      "audioBytes": 6978,
+      "audioEnergy": 1.6973030353564993,
+      "pairs": [
+        {
+          "local": "relay",
+          "remote": "relay"
+        }
+      ],
+      "relayOnly": true,
+      "videos": 2
+    },
+    {
+      "frames": 23,
+      "audioBytes": 3995,
+      "audioEnergy": 0.920722429532949,
+      "pairs": [
+        {
+          "local": "relay",
+          "remote": "relay"
+        }
+      ],
+      "relayOnly": true,
+      "videos": 2
+    }
+  ],
+  "group": [
+    {
+      "frames": 86,
+      "audioBytes": 27851,
+      "audioEnergy": 7.416098155912503,
+      "pairs": [
+        {
+          "local": "relay",
+          "remote": "relay"
+        },
+        {
+          "local": "relay",
+          "remote": "relay"
+        }
+      ],
+      "relayOnly": true,
+      "videos": 3
+    },
+    {
+      "frames": 178,
+      "audioBytes": 63603,
+      "audioEnergy": 15.153128655316426,
+      "pairs": [
+        {
+          "local": "relay",
+          "remote": "relay"
+        },
+        {
+          "local": "relay",
+          "remote": "relay"
+        },
+        {
+          "local": "relay",
+          "remote": "relay"
+        }
+      ],
+      "relayOnly": true,
+      "videos": 3
+    },
+    {
+      "frames": 116,
+      "audioBytes": 28039,
+      "audioEnergy": 7.272755027600206,
+      "pairs": [
+        {
+          "local": "relay",
+          "remote": "relay"
+        },
+        {
+          "local": "relay",
+          "remote": "relay"
+        },
+        {
+          "local": "relay",
+          "remote": "relay"
+        }
+      ],
+      "relayOnly": true,
+      "videos": 3
+    }
+  ],
+  "reloaded": [
+    {
+      "frames": 133,
+      "audioBytes": 39721,
+      "audioEnergy": 8.989552347951532,
+      "pairs": [
+        {
+          "local": "relay",
+          "remote": "relay"
+        },
+        {
+          "local": "relay",
+          "remote": "relay"
+        },
+        {
+          "local": "relay",
+          "remote": "relay"
+        },
+        {
+          "local": "relay",
+          "remote": "relay"
+        }
+      ],
+      "relayOnly": true,
+      "videos": 3
+    },
+    {
+      "frames": 5,
+      "audioBytes": 1543,
+      "audioEnergy": 0.5234282093287432,
+      "pairs": [
+        {
+          "local": "relay",
+          "remote": "relay"
+        },
+        {
+          "local": "relay",
+          "remote": "relay"
+        }
+      ],
+      "relayOnly": true,
+      "videos": 3
+    },
+    {
+      "frames": 135,
+      "audioBytes": 36786,
+      "audioEnergy": 9.48275502760016,
+      "pairs": [
+        {
+          "local": "relay",
+          "remote": "relay"
+        },
+        {
+          "local": "relay",
+          "remote": "relay"
+        },
+        {
+          "local": "relay",
+          "remote": "relay"
+        },
+        {
+          "local": "relay",
+          "remote": "relay"
+        }
+      ],
+      "relayOnly": true,
+      "videos": 3
+    }
+  ],
+  "withoutCreator": [
+    {
+      "frames": 6,
+      "audioBytes": 506,
+      "audioEnergy": 0.08,
+      "pairs": [
+        {
+          "local": "relay",
+          "remote": "relay"
+        },
+        {
+          "local": "relay",
+          "remote": "relay"
+        },
+        {
+          "local": "relay",
+          "remote": "relay"
+        }
+      ],
+      "relayOnly": true,
+      "videos": 2
+    },
+    {
+      "frames": 24,
+      "audioBytes": 3427,
+      "audioEnergy": 0.7500000000000004,
+      "pairs": [
+        {
+          "local": "relay",
+          "remote": "relay"
+        },
+        {
+          "local": "relay",
+          "remote": "relay"
+        },
+        {
+          "local": "relay",
+          "remote": "relay"
+        },
+        {
+          "local": "relay",
+          "remote": "relay"
+        }
+      ],
+      "relayOnly": true,
+      "videos": 2
+    }
+  ],
+  "afterDeadline": [
+    {
+      "frames": 6124,
+      "audioBytes": 1321647,
+      "audioEnergy": 328.07617526493254,
+      "pairs": [
+        {
+          "local": "relay",
+          "remote": "relay"
+        }
+      ],
+      "relayOnly": true,
+      "videos": 2
+    },
+    {
+      "frames": 6146,
+      "audioBytes": 1329641,
+      "audioEnergy": 329.1888454282654,
+      "pairs": [
+        {
+          "local": "relay",
+          "remote": "relay"
+        }
+      ],
+      "relayOnly": true,
+      "videos": 2
+    }
+  ],
+  "standing": [
+    {
+      "frames": 6185,
+      "audioBytes": 1333878,
+      "audioEnergy": 331.0961752649298,
+      "pairs": [
+        {
+          "local": "relay",
+          "remote": "relay"
+        }
+      ],
+      "relayOnly": true,
+      "videos": 2
+    },
+    {
+      "frames": 6207,
+      "audioBytes": 1341872,
+      "audioEnergy": 332.20884542826263,
+      "pairs": [
+        {
+          "local": "relay",
+          "remote": "relay"
+        }
+      ],
+      "relayOnly": true,
+      "videos": 2
+    }
+  ],
+  "limits": [
+    "Local Docker IPv6 bridge permits egress; signalling is pinned to the generated fixture relay. No FIPS daemon or Internet NAT",
+    "Generated Chromium audio/video, effects off; browser local-network checks disabled",
+    "Owner HTTPS UI mapped to local HTTP fixtures; no physical phone or node installation proof"
+  ]
+}
