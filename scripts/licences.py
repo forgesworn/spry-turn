@@ -12,7 +12,10 @@ targets.append(("wasm32-unknown-unknown", ["--no-default-features", "--features"
 for platform, features in targets:
     metadata = json.loads(subprocess.check_output(["cargo", "metadata", "--format-version", "1", "--locked", *features, "--filter-platform", platform], cwd=root))
     nodes = {n["id"]: n for n in metadata["resolve"]["nodes"]}
-    pending = [metadata["resolve"]["root"]]; active = set()
+    # Native distributions can include the standalone service as well as the
+    # relay. The browser codec only contains the root crate's dependency tree.
+    pending = (metadata["workspace_members"][:] if platform != "wasm32-unknown-unknown"
+               else [metadata["resolve"]["root"]]); active = set()
     while pending:
         node = pending.pop()
         if node in active: continue
@@ -35,4 +38,4 @@ for package in sorted(packages.values(), key=lambda p: (p["name"], p["version"])
         sections.append(f"\n--- {path.name} ---\n" + path.read_text(errors="replace"))
 text = "\n".join(line.rstrip() for line in "\n".join(sections).splitlines()).rstrip() + "\n"
 (root / "THIRD_PARTY_LICENSES.txt").write_text(text)
-print(f"Collected {len(packages) - 1} dependency notices")
+print(f"Collected {sum(p['source'] is not None for p in packages.values())} dependency notices")

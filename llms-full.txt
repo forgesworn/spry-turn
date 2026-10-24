@@ -48,6 +48,11 @@ chosen TURN address and credentials. The software publisher operates no
 relay, credential service, discovery directory or calling entitlement.
 There are no hosted defaults in the code.
 
+Spry is independent of Archipelago. The reusable `spry-turn`, `spry-access`
+and `spry-service` Rust libraries live here, together with a standalone
+pairing service. Archipelago is an optional package and host integration.
+See [standalone use and library boundaries](https://github.com/forgesworn/spry-turn/blob/main/docs/standalone.md).
+
 ## What works
 
 - STUN Binding, authenticated TURN Allocate and Refresh, CreatePermission,
@@ -65,8 +70,9 @@ There are no hosted defaults in the code.
   control request rate and per-allocation bandwidth.
 - Private, loopback, link-local and multicast targets blocked by default.
   Explicit loopback testing is restricted to a loopback-only listener.
-- No media decoders, WebRTC stack, database, async runtime, admin website,
-  analytics, access log, room membership or application admission service.
+- The forwarding library has no media decoders, WebRTC stack, database,
+  async runtime, admin website, analytics, access log or room membership.
+  The separate access and service crates provide optional owner-run pairing.
 
 The UDP ChannelData path borrows incoming payloads and reserves header space
 in its receive buffer, avoiding a payload copy on the return path. One
@@ -269,6 +275,7 @@ performance and explicit compatibility gaps. The source and GitHub prereleases a
 | Task | Guide |
 |---|---|
 | Build and run locally | [Getting started](https://github.com/forgesworn/spry-turn/blob/main/docs/getting-started.md) |
+| Run the standalone service or reuse its libraries | [Standalone and library boundaries](https://github.com/forgesworn/spry-turn/blob/main/docs/standalone.md) |
 | Connect WebRTC, native clients or an embedded host | [Integration](https://github.com/forgesworn/spry-turn/blob/main/docs/integration.md) |
 | Find Rust types, Cargo features and WASM methods | [API reference](https://github.com/forgesworn/spry-turn/blob/main/docs/api.md) |
 | Assess an existing coturn configuration | [Coturn compatibility](https://github.com/forgesworn/spry-turn/blob/main/docs/coturn-compatibility.md) |
@@ -546,14 +553,89 @@ tests; it does not replace browser WebRTC.
 ## KithMoot, Archy and Sapflow
 
 KithMoot may point its normal TURN client at an independently selected
-instance. An Archy owner may later install and operate that server;
-packaging, exposure policy and integration are not implemented here yet.
+instance. The optional [standalone pairing service](https://github.com/forgesworn/spry-turn/blob/main/docs/standalone.md) uses the
+same access library as a host integration. Archipelago packages can consume
+that library and supply their own signing-provider UI through `spry-service`.
+Installation, exposure policy and mesh integration stay with the chosen host.
 The publisher operates no default relay, directory or credential service.
 
 Sapflow or another non-WebRTC application would need a TURN-aware transport
 adapter. Standard TURN can carry arbitrary datagrams, but unmodified SRT
 or RTMP clients do not become TURN clients by changing a destination URL.
 No codecs, SRT, RTMP or HLS stack is included.
+
+---
+
+## Source: Standalone service and libraries
+
+Canonical source: [docs/standalone.md](https://github.com/forgesworn/spry-turn/blob/main/docs/standalone.md)
+
+# Standalone Spry and reusable libraries
+
+Spry is a standalone ForgeSworn product. Its libraries and service are usable
+without Archipelago. Other ForgeSworn products consume the same libraries;
+Archipelago packages that product for its node owners.
+
+| Component | Responsibility |
+|---|---|
+| `spry-turn` | Bounded packet forwarding, TURN authentication and protocol codecs; native library and standalone relay executable |
+| `spry-access` | Owner-authorised pairing, scoped grants, short-lived credentials and private state; no network runtime |
+| `spry-service` | Reusable HTTP host adapter and standalone `spry-node` executable; supplied UI assets and explicit owner configuration |
+| Archipelago package | Installation, node-supplied owner identities, host certificates, permissions and an optional dashboard signing provider |
+| Calling application | Pairing consent, room membership, media keys, credential renewal and call controls |
+
+The relay never imports the access service or Archipelago. The service uses
+the access library and supervises the separate native relay executable.
+Hosts can also embed the relay directly. Shared library configuration has no
+hard-coded KithMoot origin allowlist; each host supplies its intended calling
+application and any extra permitted origins. The standalone UI uses the
+owner's existing NIP-07 signing extension. Archipelago can supply its own
+signing-provider assets through the host adapter.
+
+Build both standalone executables:
+
+```sh
+cargo build --locked --release --workspace --features tls
+```
+
+For the pairing service, supply `SPRY_PUBLIC_URL` (its HTTPS origin),
+`SPRY_OWNER_KEYS` (comma-separated owner public keys), `SPRY_TURN_SECRET`
+(at least 32 bytes) and `SPRY_RELAY_IP` (the relay's reachable IPv4 address).
+Set `SPRY_STATE_FILE` to a private persistent file and, if needed,
+`SPRY_KITHMOOT_URL` to the intended calling application's HTTPS URL.
+`SPRY_ALLOWED_ORIGINS` explicitly adds HTTPS origins for other clients.
+
+`spry-node` listens on loopback HTTP port 3744 behind the operator's HTTPS
+reverse proxy. It finds `spry-turn` beside itself; `SPRY_RELAY_BINARY`
+overrides that location. Standard TURN listeners and the bounded peer range
+are described in the [operator guide](https://github.com/forgesworn/spry-turn/blob/main/docs/operations.md). Optional certificate
+files for the relay reside under `/data/tls`; an external host adapter can
+instead terminate TURN TLS. Setting `SPRY_TLS_GATE=true` advertises that
+host's configured TLS transport and does not start or configure a TLS proxy.
+
+No Archipelago daemon, node identity store, dashboard, container runtime or
+FIPS installation is required for this standalone path. A reachable relay
+and valid HTTPS still require operator configuration. Automatic operation
+between two home-network nodes remains unfinished and must be demonstrated
+with the VPS absent before that experience can be called delivered.
+
+Networking integrations belong behind optional adapters. An Archipelago
+adapter uses its existing mesh and host facilities; reusable improvements to
+those facilities can be proposed upstream. Other hosts can supply a different
+transport without importing Archipelago into Spry's forwarding or access
+libraries.
+
+Within Archipelago, the app manager owns package installation and lifecycle,
+the existing identity/signing layer approves owner operations, the app gate
+owns its HTTPS integration, and the networking layer owns mesh connectivity.
+Those are the integration points for the relevant library or thin adapter.
+Each library retains its own narrow purpose and independent build; installing
+the package does not transfer those host responsibilities into Spry.
+
+Git dependencies use a reviewed full commit SHA; see the
+[access library](https://github.com/forgesworn/spry-turn/blob/main/crates/spry-access/README.md) and
+[native embedding guide](https://github.com/forgesworn/spry-turn/blob/main/docs/integration.md#embed-the-native-rust-server).
+No new package registry publication is implied by these libraries.
 
 ---
 
@@ -1992,6 +2074,16 @@ Do not silently remove transport support required by existing clients.
 Canonical source: [CHANGELOG.md](https://github.com/forgesworn/spry-turn/blob/main/CHANGELOG.md)
 
 # Changelog
+
+## Unreleased
+
+- Extract owner-authorised pairing and scoped credentials into the reusable
+  `spry-access` Rust library, with explicit calling-application configuration.
+- Add `spry-service`, a reusable HTTP host adapter and standalone `spry-node`
+  executable. Archipelago integration supplies its own UI/signing assets;
+  standalone use requires no Archipelago installation.
+- Keep forwarding in the independent `spry-turn` library and executable.
+  Home-network mesh integration and physical-phone acceptance remain open.
 
 ## 0.2.1 — 23 October 2026
 

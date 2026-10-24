@@ -117,8 +117,10 @@ tests; it does not replace browser WebRTC.
 ## KithMoot, Archy and Sapflow
 
 KithMoot may point its normal TURN client at an independently selected
-instance. An Archy owner may later install and operate that server;
-packaging, exposure policy and integration are not implemented here yet.
+instance. The optional [standalone pairing service](standalone.md) uses the
+same access library as a host integration. Archipelago packages can consume
+that library and supply their own signing-provider UI through `spry-service`.
+Installation, exposure policy and mesh integration stay with the chosen host.
 The publisher operates no default relay, directory or credential service.
 
 Sapflow or another non-WebRTC application would need a TURN-aware transport

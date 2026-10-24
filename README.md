@@ -26,6 +26,11 @@ chosen TURN address and credentials. The software publisher operates no
 relay, credential service, discovery directory or calling entitlement.
 There are no hosted defaults in the code.
 
+Spry is independent of Archipelago. The reusable `spry-turn`, `spry-access`
+and `spry-service` Rust libraries live here, together with a standalone
+pairing service. Archipelago is an optional package and host integration.
+See [standalone use and library boundaries](docs/standalone.md).
+
 ## What works
 
 - STUN Binding, authenticated TURN Allocate and Refresh, CreatePermission,
@@ -43,8 +48,9 @@ There are no hosted defaults in the code.
   control request rate and per-allocation bandwidth.
 - Private, loopback, link-local and multicast targets blocked by default.
   Explicit loopback testing is restricted to a loopback-only listener.
-- No media decoders, WebRTC stack, database, async runtime, admin website,
-  analytics, access log, room membership or application admission service.
+- The forwarding library has no media decoders, WebRTC stack, database,
+  async runtime, admin website, analytics, access log or room membership.
+  The separate access and service crates provide optional owner-run pairing.
 
 The UDP ChannelData path borrows incoming payloads and reserves header space
 in its receive buffer, avoiding a payload copy on the return path. One

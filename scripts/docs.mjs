@@ -21,6 +21,7 @@ const documents = [
   ['Get started', 'docs/README.md', 'Documentation index', 'Choose installation, integration, API or operator guidance.'],
   ['Get started', 'docs/getting-started.md', 'Getting started', 'Public source checkout, local server, credentials and TLS.'],
   ['Get started', 'docs/integration.md', 'Client and host integration', 'Browser ICE, native clients, Rust embedding and WASM example.'],
+  ['Get started', 'docs/standalone.md', 'Standalone service and libraries', 'Independent service, reusable Rust libraries and optional Archipelago adapter.'],
   ['Get started', 'docs/api.md', 'Rust and WASM API', 'Cargo features, configuration, native methods and PacketArena.'],
   ['Get started', 'docs/coturn-compatibility.md', 'Coturn compatibility', 'Feature map, configuration concepts and migration gaps.'],
   ['Operate and support', 'docs/operations.md', 'Independent operation', 'Bounded relay ports, firewall/NAT plan, secret rotation, TLS and limits.'],

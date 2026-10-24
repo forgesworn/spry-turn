@@ -1,0 +1,9 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Spry</title><link rel="stylesheet" href="style.css"></head>
+<body><main><p class="eyebrow">YOUR SPRY RELAY</p><h1>Calls, through your relay.</h1>
+<p>Pair Spry with KithMoot once. KithMoot will give the people in your calls access automatically.</p>
+<button id="pair">Pair with KithMoot</button><p id="status" role="status" aria-live="polite"></p>
+<details><summary>Manage paired devices</summary><button id="load">Show paired devices</button><ul id="devices"></ul>
+<p>Removing a pairing stops new call access. Existing access can take up to five minutes to expire.</p></details>
+<p class="quiet">Your node handles relay access. Room membership and media keys stay in KithMoot.</p></main>
+<script type="module" src="app.mjs"></script></body></html>

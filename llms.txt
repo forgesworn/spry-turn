@@ -18,6 +18,7 @@ These files provide navigation and source context for readers and tools. They do
 - [Documentation index](https://github.com/forgesworn/spry-turn/blob/main/docs/README.md): Choose installation, integration, API or operator guidance.
 - [Getting started](https://github.com/forgesworn/spry-turn/blob/main/docs/getting-started.md): Public source checkout, local server, credentials and TLS.
 - [Client and host integration](https://github.com/forgesworn/spry-turn/blob/main/docs/integration.md): Browser ICE, native clients, Rust embedding and WASM example.
+- [Standalone service and libraries](https://github.com/forgesworn/spry-turn/blob/main/docs/standalone.md): Independent service, reusable Rust libraries and optional Archipelago adapter.
 - [Rust and WASM API](https://github.com/forgesworn/spry-turn/blob/main/docs/api.md): Cargo features, configuration, native methods and PacketArena.
 - [Coturn compatibility](https://github.com/forgesworn/spry-turn/blob/main/docs/coturn-compatibility.md): Feature map, configuration concepts and migration gaps.
 
