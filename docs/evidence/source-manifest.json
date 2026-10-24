@@ -1,13 +1,121 @@
 {
-  "date": "2026-10-23",
+  "date": "2026-10-24",
   "files": [
     {
       "path": "Cargo.lock",
-      "sha256": "0d18dfcd6eb6988a7aef2159ea764513eaba7b841d6dbb549d358f856d585194"
+      "sha256": "1faeda2cafcfa3902735b8de0a746a1b515b0c8665c5f822ca9915faf7c49643"
     },
     {
       "path": "Cargo.toml",
-      "sha256": "7da1b4cfe614a7228cca44a966d5f0d3fe709f701b884632b5c244ebd926c43c"
+      "sha256": "a79ec04d4eb7b4c360fc40c4560d084c92d69d2574581bc9120e4e9e264f3f5e"
+    },
+    {
+      "path": "crates/spry-access/Cargo.toml",
+      "sha256": "12b4d983f1192ff7a90664c1e495deaa3edf91dd222c8b630eb11fcc5371eaee"
+    },
+    {
+      "path": "crates/spry-access/src/lib.rs",
+      "sha256": "2ac64c45fd57aba8ca75be6b7fd88c7ca1ed8107176e10188576142b2362b672"
+    },
+    {
+      "path": "crates/spry-access/tests/authority.rs",
+      "sha256": "11b9ae711f3a565cbc46f468072c6360e0b1c43210015db0430738eedf46ee61"
+    },
+    {
+      "path": "crates/spry-link/Cargo.toml",
+      "sha256": "4d014ba8ec1e02b23f786a34692019c285aa6b391ba0d86f791f032610d732aa"
+    },
+    {
+      "path": "crates/spry-link/examples/vectors.rs",
+      "sha256": "db70336ee50572316260dca1e9045f0355e77f8602098d17eaa667a226754fdc"
+    },
+    {
+      "path": "crates/spry-link/src/control.rs",
+      "sha256": "fd26f78fbdf4f851bc10fad9dcb935b7f25448b18e36ca9cf6c7bee6b72ea561"
+    },
+    {
+      "path": "crates/spry-link/src/identity.rs",
+      "sha256": "7492ee39f4e7c2933a67d1f153584efef8b87000017ab29070b1449a08c90c49"
+    },
+    {
+      "path": "crates/spry-link/src/lib.rs",
+      "sha256": "bcde7bf685591494202652e41490fa5185613062e66acf3c04c5d732f1b0482f"
+    },
+    {
+      "path": "crates/spry-link/src/nip44.rs",
+      "sha256": "222952ed1160c98f4c96538b7c37baa07c85c47d5b4c5816eeec1201b0f781f4"
+    },
+    {
+      "path": "crates/spry-link/src/peer.rs",
+      "sha256": "8269eb2e3b675260fbcf620e7aa2163014fce70eded3648c730848532f8b5ebb"
+    },
+    {
+      "path": "crates/spry-link/src/registry.rs",
+      "sha256": "5e73370a29d9aa5e8bf27e248a83aec97357ee72a3598ef1ae4c0c0ff71febab"
+    },
+    {
+      "path": "crates/spry-link/tests/control.rs",
+      "sha256": "e57e22d399559c8d9e3e4f2ff8cbf925bfe0f20db9327919d83a39faf3e8969d"
+    },
+    {
+      "path": "crates/spry-link/tests/peer.rs",
+      "sha256": "3fff600674f6a58ba3ae517e665a8a3cd6ee7e488c850c438acbc32b5fa6f34c"
+    },
+    {
+      "path": "crates/spry-link/tests/request.rs",
+      "sha256": "f32a7aecea972fe590df97a118b569cd99c1a296ed96ba0c7783d677312b4eee"
+    },
+    {
+      "path": "crates/spry-service/Cargo.toml",
+      "sha256": "efde25bfa26c4e56d84f5bdead6cb223250834027bc11dafe56c39079fb5de8f"
+    },
+    {
+      "path": "crates/spry-service/examples/mesh-node.rs",
+      "sha256": "32fb06625dd89587ffd322ebf0f776d74d400261a907a6c1139707bd697b4c2a"
+    },
+    {
+      "path": "crates/spry-service/public/app.mjs",
+      "sha256": "dcc49f8e0bf4b20c181ab80788494d39c0826140c70e476407dd94cfa5a8e12d"
+    },
+    {
+      "path": "crates/spry-service/public/index.html",
+      "sha256": "84d9c93d44a89afca0e36da9b9e1bb9f60caa2d31f98e5cc30ff0e17c5f0a53c"
+    },
+    {
+      "path": "crates/spry-service/public/style.css",
+      "sha256": "8b3e51c5f0399e322eb26a51e147ca4bf4d7de464dda332c2e61d732856c4ceb"
+    },
+    {
+      "path": "crates/spry-service/src/lib.rs",
+      "sha256": "e1e5c821733a4ec62ec0ab42656d105e3487aab72bcd4c40dd8698af9858746a"
+    },
+    {
+      "path": "crates/spry-service/src/main.rs",
+      "sha256": "4486447199275c4c9f3ece6869fa6228ecfc88781954a8ead2d114d7d20cbb10"
+    },
+    {
+      "path": "crates/spry-service/src/mesh.rs",
+      "sha256": "c7c81c97eeb687d77c5b10860ebe81f7b5efe6ad5609f52cf3dabcb80226b839"
+    },
+    {
+      "path": "crates/spry-service/src/node.rs",
+      "sha256": "7f79c046941f624b971fc7880330aee1bbd32720fc8f5e32b6ce664433306e39"
+    },
+    {
+      "path": "crates/spry-service/src/resolver.rs",
+      "sha256": "1f9b3706ff26ef68891d8558013230c0de910bb4bd8eec667ca45d656adc6466"
+    },
+    {
+      "path": "crates/spry-service/src/signalling.rs",
+      "sha256": "4612a30a200dbc88ef684cc04c468d88ffe19aa6c6e279ba2dee46aab3488402"
+    },
+    {
+      "path": "crates/spry-service/tests/signalling.rs",
+      "sha256": "9f0f9ea96bdc9b9b4d0cc6b7e244c33d2259b1af8bb12a7f0155291228944f85"
+    },
+    {
+      "path": "crates/spry-service/tests/standalone.rs",
+      "sha256": "abe0725a8b3dc6aefef61cc0d79fae172ccf52e570a292cd8900472e1f1b3463"
     },
     {
       "path": "examples/load.rs",
@@ -31,7 +139,7 @@
     },
     {
       "path": "src/turn.rs",
-      "sha256": "db252c49818801df59795a487190b4d1a68141d18cb3c88590831ae0b9af2a3e"
+      "sha256": "2ac3fd8d60966d2b2f710736f64bca5614dde19d26779b380f17f740680168c4"
     },
     {
       "path": "src/wasm.rs",

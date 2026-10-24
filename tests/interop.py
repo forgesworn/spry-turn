@@ -206,7 +206,7 @@ class Client:
         if mode == "tls":
             context = ssl.create_default_context(cafile=str(fixture.cert))
             self.socket = context.wrap_socket(self.socket, server_hostname="localhost")
-        self.socket.connect(("127.0.0.1", fixture.tls_port if mode == "tls" else fixture.port))
+        self.socket.connect((getattr(fixture, "host", "127.0.0.1"), fixture.tls_port if mode == "tls" else fixture.port))
         label = label or "test" + secrets.token_hex(4)
         self.username = f"{expiry or int(time.time()) + 3600}:{label}".encode()
         password = base64.b64encode(hmac.digest(fixture.secret.encode(), self.username, "sha1"))
@@ -506,6 +506,27 @@ class Interop(unittest.TestCase):
         remote.sendto(b"expired", value.relay)
         value.socket.settimeout(0.1)
         with self.assertRaises(socket.timeout): value.receive()
+
+    def test_credential_deadline_caps_refresh_and_live_channel_data(self):
+        for mode in (("udp", "tcp", "tls") if TLS else ("udp", "tcp")):
+            with self.subTest(mode=mode):
+                expiry = int(time.time()) + 2
+                value = self.client(mode=mode, expiry=expiry)
+                value.allocate()
+                remote = self.peer()
+                self.assertEqual(value.peer_request(9, remote.getsockname(), 0x4000)[0], 0x109)
+                typ, fields, _ = value.request(4, [(LIFETIME, struct.pack("!I", 3600))])
+                self.assertEqual(typ, 0x104)
+                self.assertLessEqual(struct.unpack("!I", fields[LIFETIME])[0], 2)
+                value.send(b"\x40\0\0\x04live")
+                self.assertEqual(remote.recvfrom(1024)[0], b"live")
+                time.sleep(max(0, expiry - time.time()) + 0.05)
+                value.send(b"\x40\0\0\x04late")
+                remote.settimeout(0.1)
+                with self.assertRaises(socket.timeout): remote.recvfrom(1024)
+                remote.sendto(b"late", value.relay)
+                value.socket.settimeout(0.1)
+                with self.assertRaises(socket.timeout): value.receive()
 
     def test_expiry_enforced_before_sweep(self):
         c = self.client(); c.allocate(); c.request(4, [(LIFETIME, struct.pack("!I", 1))])

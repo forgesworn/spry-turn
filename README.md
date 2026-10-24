@@ -26,8 +26,8 @@ chosen TURN address and credentials. The software publisher operates no
 relay, credential service, discovery directory or calling entitlement.
 There are no hosted defaults in the code.
 
-Spry is independent of Archipelago. The reusable `spry-turn`, `spry-access`
-and `spry-service` Rust libraries live here, together with a standalone
+Spry is independent of Archipelago. The reusable `spry-turn`, `spry-access`,
+`spry-link` and `spry-service` Rust libraries live here, together with a standalone
 pairing service. Archipelago is an optional package and host integration.
 See [standalone use and library boundaries](docs/standalone.md).
 

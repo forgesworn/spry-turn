@@ -1,0 +1,62 @@
+{
+  "clientKeyRepeatedByte": 2,
+  "endpoint": "spry://1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f?relay=wss%3A%2F%2Frelay.example%2F",
+  "node": {
+    "content": "{\"address\":\"[fd12:3456::2]:3745\",\"profile\":\"spry-peer-v1\",\"v\":1}",
+    "created_at": 1700000000,
+    "id": "574fe7582d51998b8299219d4714f6a11af1ea6675fbd2660903d44508fa6107",
+    "kind": 24183,
+    "pubkey": "1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f",
+    "sig": "ed5cbdc37f983f2df6839e0d1baf12f96e608dd42d74db6c48c4d759d8fa3c3d0cc53b5ce2e94732c5ba542e5ff09317d45075e34643e0055a91ade961f96c43",
+    "tags": [
+      [
+        "expiration",
+        "1700000600"
+      ]
+    ]
+  },
+  "nodeKeyRepeatedByte": 1,
+  "now": 1700000000,
+  "request": {
+    "content": "AsqlQebGLrHATa2AlFO/uxRObwovNwd/VhYNSjIwjOrq2MGqYFJiTNTXEuzrubsU6ugLshRvCG8Mz/goOv5ayTVNPcwpxDohD4F6TT3ViTqRS6Y/lIy3srIJYYy8AJFAfqQDSuft9FcUiUcsu7xDmciiDDOIOYK/tiwwd7pizv0h8C0=",
+    "created_at": 1700000000,
+    "id": "e9844122114e06e8cd98d0e0bf49a3546a5bfe31bddc869a252200776f972ed6",
+    "kind": 24181,
+    "pubkey": "4d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d0766",
+    "sig": "b18d938c739cc829f4eee14475e804bbab5879c8cfb1d072372cc9416adc6aec2a07534521c29d21f688b4072355f206381177180ef906063be8a7147b42e637",
+    "tags": [
+      [
+        "p",
+        "1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f"
+      ],
+      [
+        "expiration",
+        "1700000030"
+      ]
+    ]
+  },
+  "response": {
+    "content": "AtxE6ATnMXcmVqzthLC3fgSA8gfOpHEPFSIZiqDEbmzFJoDhxUA8ca73fwo9jPl2ufRmhECJZx/ltPCjn4nbtd4Jv59oOUfTl+92sG8agBFlmlkFQOS6o921LILCKyPO2FtTLXWTmKExYcJy9i5pzaSL/rppbM33AQwgDd3ziRDO/Vg=",
+    "created_at": 1700000000,
+    "id": "2b5afb2ef6458a7abd175a8145f6047e87f4273f8d0b2b7ed17aaae46b1f6531",
+    "kind": 24182,
+    "pubkey": "1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f",
+    "sig": "6464f0377dd53cd2ab0ff3808f5cb938e8e54c03a07771a82bc1c26062c8428067a1856a3b8eae4af6be2016c546528f7286672bfbec5ef111e3c864ff6d3c83",
+    "tags": [
+      [
+        "p",
+        "4d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d0766"
+      ],
+      [
+        "e",
+        "e9844122114e06e8cd98d0e0bf49a3546a5bfe31bddc869a252200776f972ed6"
+      ],
+      [
+        "expiration",
+        "1700000030"
+      ]
+    ]
+  },
+  "schema": 1,
+  "synthetic": true
+}

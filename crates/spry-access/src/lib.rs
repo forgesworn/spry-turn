@@ -10,7 +10,10 @@ use base64::{
     engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
 };
 use hmac::{Hmac, Mac};
-use k256::schnorr::{Signature, VerifyingKey};
+use secp256k1::{
+    XOnlyPublicKey,
+    schnorr::{self, Signature},
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha1::Sha1;
@@ -84,6 +87,11 @@ fn text<'a>(body: &'a Value, key: &str) -> Result<&'a str> {
 
 pub struct Config {
     pub endpoint: String,
+    /// Optional routing descriptor supplied by a host transport adapter.
+    /// HTTP request signatures remain bound to `endpoint`.
+    pub transport_endpoint: Option<String>,
+    /// Optional per-instance binding for HTTP proofs on private/local hostnames.
+    pub audience: Option<String>,
     pub app: String,
     pub owners: HashSet<String>,
     pub origins: HashSet<String>,
@@ -152,6 +160,8 @@ impl Config {
         ]);
         Ok(Self {
             endpoint,
+            transport_endpoint: None,
+            audience: None,
             app: app_url.to_string(),
             owners,
             origins,
@@ -177,6 +187,8 @@ struct Saved {
     pairs: Vec<Pairing>,
     #[serde(default)]
     grants: Vec<Grant>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    transport_endpoint: Option<String>,
 }
 #[derive(Clone, Serialize, Deserialize)]
 struct Grant {
@@ -207,6 +219,41 @@ impl Authority {
             replays: HashMap::new(),
             rates: HashMap::new(),
         }
+    }
+
+    pub fn advertised_endpoint(&self) -> &str {
+        self.config
+            .transport_endpoint
+            .as_deref()
+            .unwrap_or(&self.config.endpoint)
+    }
+
+    pub fn pairing_authorises(&self, pairing: &str, key: &str) -> bool {
+        self.pairs.get(pairing).is_some_and(|pair| pair.key == key)
+    }
+
+    pub fn has_pairing(&self, pairing: &str) -> bool {
+        self.pairs.contains_key(pairing)
+    }
+
+    /// Transport configuration is an owner action. The adapter validates its URI profile.
+    pub fn set_transport_endpoint(&mut self, owner: &str, endpoint: String) -> Result<()> {
+        need(
+            self.config.owners.contains(owner),
+            403,
+            "Choose one of this relay’s owner identities.",
+        )?;
+        need(
+            !endpoint.is_empty() && endpoint.len() <= 2048,
+            400,
+            "Invalid transport address.",
+        )?;
+        let previous = self.config.transport_endpoint.replace(endpoint);
+        if let Err(error) = self.save() {
+            self.config.transport_endpoint = previous;
+            return Err(error);
+        }
+        Ok(())
     }
     fn grant_token(&self, pair: &str, scope: &str, salt: &str) -> Result<String> {
         let mut mac = Hmac::<Sha256>::new_from_slice(&self.config.secret)
@@ -242,6 +289,10 @@ impl Authority {
             .map_err(|_| Refused(503, "Pairings could not be read."))?;
         need(
             state.version == 1
+                && state
+                    .transport_endpoint
+                    .as_ref()
+                    .is_none_or(|endpoint| !endpoint.is_empty() && endpoint.len() <= 2048)
                 && state.pairs.len() <= 16
                 && state.grants.len() <= 64
                 && state
@@ -255,6 +306,7 @@ impl Authority {
             503,
             "Pairings could not be read.",
         )?;
+        self.config.transport_endpoint = state.transport_endpoint;
         self.pairs = state.pairs.into_iter().map(|p| (p.id.clone(), p)).collect();
         for mut grant in state.grants {
             if !self.pairs.contains_key(&grant.pair) {
@@ -273,6 +325,7 @@ impl Authority {
             version: 1,
             pairs: self.pairs.values().cloned().collect(),
             grants: self.grants.values().cloned().collect(),
+            transport_endpoint: self.config.transport_endpoint.clone(),
         })
         .map_err(|_| Refused(503, "Pairing could not be saved."))?;
         write_private(path, &bytes).map_err(|_| Refused(503, "Pairing could not be saved."))
@@ -342,6 +395,11 @@ impl Authority {
             one("u") == Some((self.config.endpoint.clone() + path).as_str())
                 && one("method") == Some("POST")
                 && one("payload") == Some(hash(body).as_str())
+                && self
+                    .config
+                    .audience
+                    .as_ref()
+                    .is_none_or(|audience| one("aud") == Some(audience.as_str()))
                 && one("nonce").is_some_and(is_token),
             401,
             "Approval required.",
@@ -361,12 +419,18 @@ impl Authority {
             401,
             "Approval expired. Try again.",
         )?;
-        let key = VerifyingKey::from_bytes(&unhex(&event.pubkey)?)
-            .map_err(|_| Refused(401, "Approval required."))?;
-        let sig = Signature::try_from(unhex(&event.sig)?.as_slice())
-            .map_err(|_| Refused(401, "Approval required."))?;
-        key.verify_raw(&id, &sig)
-            .map_err(|_| Refused(401, "Approval required."))?;
+        let key = XOnlyPublicKey::from_byte_array(
+            unhex(&event.pubkey)?
+                .try_into()
+                .map_err(|_| Refused(401, "Approval required."))?,
+        )
+        .map_err(|_| Refused(401, "Approval required."))?;
+        let signature = Signature::from_byte_array(
+            unhex(&event.sig)?
+                .try_into()
+                .map_err(|_| Refused(401, "Approval required."))?,
+        );
+        schnorr::verify(&signature, &id, &key).map_err(|_| Refused(401, "Approval required."))?;
         need(
             self.replays.len() < 4096,
             429,
@@ -394,7 +458,7 @@ impl Authority {
                 let code = token()?;
                 let expires = now + 300;
                 self.pending.insert(hash(&code), expires);
-                let payload = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&json!({"v":1,"endpoint":self.config.endpoint,"code":code,"expiresAt":expires})).map_err(|_| Refused(503, "Pairing could not be prepared."))?);
+                let payload = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&json!({"v":1,"endpoint":self.advertised_endpoint(),"code":code,"expiresAt":expires})).map_err(|_| Refused(503, "Pairing could not be prepared."))?);
                 Ok(json!({"url":format!("{}#spry={payload}", self.config.app),"expiresAt":expires}))
             }
             "/v1/pairings/claim" => {
@@ -417,7 +481,7 @@ impl Authority {
                     self.pairs.remove(&pair.id);
                     return Err(Refused(503, "Pairing could not be saved. Pair again."));
                 }
-                Ok(json!({"version":1,"id":pair.id,"endpoint":self.config.endpoint}))
+                Ok(json!({"version":1,"id":pair.id,"endpoint":self.advertised_endpoint()}))
             }
             "/v1/pairings/list" => {
                 need(
@@ -476,7 +540,7 @@ impl Authority {
                     }
                     let grant = &self.grants[&id];
                     return Ok(
-                        json!({"v":1,"endpoint":self.config.endpoint,"token":grant.token,"expiresAt":grant.expires}),
+                        json!({"v":1,"endpoint":self.advertised_endpoint(),"token":grant.token,"expiresAt":grant.expires}),
                     );
                 }
                 need(
@@ -487,7 +551,7 @@ impl Authority {
                 let salt = token()?;
                 let token = self.grant_token(pair, scope, &salt)?;
                 let id = hash(&token);
-                let result = json!({"v":1,"endpoint":self.config.endpoint,"token":token,"expiresAt":now + GRANT_TTL});
+                let result = json!({"v":1,"endpoint":self.advertised_endpoint(),"token":token,"expiresAt":now + GRANT_TTL});
                 self.grants.insert(
                     id.clone(),
                     Grant {
@@ -529,6 +593,7 @@ impl Authority {
                 Ok(json!({"removed":true}))
             }
             "/v1/credentials" => {
+                need(self.config.ready, 503, self.config.readiness)?;
                 let token = text(body, "grant")?;
                 need(is_token(token), 403, "Call access has expired.")?;
                 let id = hash(token);

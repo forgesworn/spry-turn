@@ -1,0 +1,33 @@
+{
+  "schema": 1,
+  "passed": true,
+  "scope": "real-fips-two-simulated-home-nats-spry-udp-tcp",
+  "binarySha256": "990bd5b1d210d028da90b74f007a096912d2a0496bdd54af9e56c7df7b134cab",
+  "fipsBinarySha256": "75f44ab2c55ce676dec735b3cbac7a1d91f68eb02aa38da76606e79ae1f05376",
+  "fipsVersion": "0.4.1",
+  "twoSimulatedNats": true,
+  "natPacketCounters": [
+    1,
+    1
+  ],
+  "externalNetworkingDisabled": true,
+  "isolatedWan": true,
+  "internetDefaultRoutesRemoved": true,
+  "publishedHostPorts": false,
+  "spryExtraCapabilities": false,
+  "meshHostCapabilities": [
+    "NET_ADMIN",
+    "NET_RAW"
+  ],
+  "explicitLocalResolver": true,
+  "signedPeerLinks": true,
+  "udpTurnBidirectional": true,
+  "tcpTurnBidirectional": true,
+  "withdrawalStopsForwarding": true,
+  "payloadBytes": 1280,
+  "rounds": 3,
+  "limits": [
+    "Local Linux namespaces and generated traffic with a separate fixture mesh anchor",
+    "No physical broadband, public anchor, installed Archipelago or browser-media proof in this receipt"
+  ]
+}

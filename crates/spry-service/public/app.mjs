@@ -1,15 +1,23 @@
 const status = document.querySelector('#status');
 const base = new URL('./', import.meta.url);
-let endpoint;
-fetch(new URL('v1/status', base), { credentials: 'omit', cache: 'no-store', signal: AbortSignal.timeout(5000) }).then(async response => {
-  const state = await response.json(); status.textContent = state.message;
-  endpoint = state.endpoint;
-  document.querySelector('#pair').disabled = state.ready !== true;
-  if (state.ready && location.hash === '#pairing') {
-    history.replaceState(null, '', location.pathname);
-    await action(document.querySelector('#pair'), pair);
-  }
-}).catch(() => { status.textContent = 'Spry is not ready yet. Refresh in a moment.'; });
+let endpoint, audience, privateRelay;
+async function refreshStatus() {
+  let ready = false;
+  try {
+    const response = await fetch(new URL('v1/status', base), { credentials: 'omit', cache: 'no-store', signal: AbortSignal.timeout(5000) });
+    if (!response.ok) throw new Error();
+    const state = await response.json(); status.textContent = state.message;
+    endpoint = state.endpoint; audience = state.audience; privateRelay = state.privateRelay === true;
+    ready = state.ready === true;
+    document.querySelector('#pair').disabled = !ready;
+    if (ready && location.hash === '#pairing') {
+      history.replaceState(null, '', location.pathname);
+      await action(document.querySelector('#pair'), pair);
+    }
+  } catch { status.textContent = 'Spry is starting. Waiting for your node…'; }
+  if (!ready) setTimeout(refreshStatus, 2000);
+}
+void refreshStatus();
 const hex = bytes => [...bytes].map(value => value.toString(16).padStart(2, '0')).join('');
 async function request(path, value = {}) {
   if (!window.nostr) throw new Error('Connect your owner signing extension to pair Spry.');
@@ -17,9 +25,9 @@ async function request(path, value = {}) {
   const body = JSON.stringify(value), url = new URL(path, endpoint).href;
   const nonce = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32)))).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '');
   const event = await window.nostr.signEvent({ kind: 27235, created_at: Math.floor(Date.now() / 1000), content: '',
-    tags: [['u', url], ['method', 'POST'], ['payload', hex(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(body))))], ['nonce', nonce]] });
+    tags: [['u', url], ['method', 'POST'], ['payload', hex(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(body))))], ['nonce', nonce], ...(audience ? [['aud', audience]] : [])] });
   const response = await fetch(new URL(path.slice(1), base), { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Nostr ${btoa(JSON.stringify(event))}` },
-    body, credentials: 'omit', redirect: 'error', referrerPolicy: 'no-referrer', cache: 'no-store', signal: AbortSignal.timeout(10000) });
+    body, credentials: 'omit', redirect: 'error', referrerPolicy: 'no-referrer', cache: 'no-store', signal: AbortSignal.timeout(20000) });
   const result = await response.json();
   if (!response.ok) throw new Error(typeof result.error === 'string' ? result.error : 'Spry could not complete that. Try again.');
   return result;
@@ -30,7 +38,13 @@ async function action(button, run) {
   finally { button.disabled = false; }
 }
 async function pair() {
-  const { url } = await request('/v1/pairings');
+  let relays;
+  if (privateRelay && typeof window.nostr?.getRelays === 'function') {
+    const selected = await window.nostr.getRelays();
+    relays = Object.entries(selected).filter(([, mode]) => mode.read && mode.write)
+      .map(([url]) => url).sort().slice(0, 4);
+  }
+  const { url } = await request('/v1/pairings', relays?.length ? { relays } : {});
   // Navigate only to the configured KithMoot app; never place the pairing code in a query/referrer.
   const target = new URL(url);
   if (target.protocol !== 'https:' || !target.hash.startsWith('#spry=')) throw new Error('The pairing link was invalid.');
