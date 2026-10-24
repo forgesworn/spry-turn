@@ -16,12 +16,12 @@ def answer(value):
 
 
 def main():
-    host = socket.gethostbyname(socket.gethostname())
+    host = os.environ.get("FIXTURE_CLIENT_IP") or socket.gethostbyname(socket.gethostname())
     secret = secrets.token_hex(32)
     process = subprocess.Popen(["/fixture/mesh-node"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
     clients = []
     try:
-        process.stdin.write(json.dumps({"client": f"{host}:3480", "peer": f"[{os.environ['FIXTURE_IP6']}]:3745", "secret": secret}) + "\n")
+        process.stdin.write(json.dumps({"client": f"{host}:3480", "peer": f"[{os.environ['FIXTURE_IP6']}]:3745", "secret": secret, "name": os.environ.get("FIXTURE_PEER_NAME"), "resolver": os.environ.get("FIXTURE_PEER_RESOLVER")}) + "\n")
         process.stdin.flush()
         answer(json.loads(process.stdout.readline()))
         fixture = SimpleNamespace(host=host, port=3480, secret=secret)

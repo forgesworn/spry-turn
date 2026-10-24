@@ -11,6 +11,7 @@ are allowed. Owner administration remains a separate host-authenticated API.
 No default relay list or public directory is included.
 
 `peer` signs short-lived cards for one IPv6 ULA TCP service on port 3745,
+optionally carries a host-resolver name bound to that signed address,
 proves both node identities against fresh connection challenges, and frames
 bounded encrypted datagrams with directional session keys and strict counters.
 `registry` applies complete scope-owned allowlists atomically, expires cards,

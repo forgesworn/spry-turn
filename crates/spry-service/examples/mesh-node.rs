@@ -24,6 +24,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let line = receive.recv().await.ok_or("Missing fixture config")?;
     let config: Value = serde_json::from_str(&line)?;
     let mesh = Mesh::start(MeshConfig {
+        peer_name: config["name"].as_str().map(str::to_owned),
+        resolver: config["resolver"]
+            .as_str()
+            .map(|address| {
+                spry_service::resolver::PeerResolver::new(address.parse().unwrap(), "fips".into())
+            })
+            .transpose()?,
         client_listen: config["client"].as_str().ok_or("client")?.parse()?,
         peer_listen: config["peer"].as_str().ok_or("peer")?.parse()?,
         secret: config["secret"]

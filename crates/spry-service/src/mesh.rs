@@ -30,6 +30,8 @@ type Established = (TcpStream, PacketSession);
 const HANDSHAKE: Duration = Duration::from_secs(3);
 
 pub struct MeshConfig {
+    pub peer_name: Option<String>,
+    pub resolver: Option<crate::resolver::PeerResolver>,
     pub client_listen: SocketAddrV4,
     pub peer_listen: SocketAddrV6,
     pub secret: Vec<u8>,
@@ -37,6 +39,7 @@ pub struct MeshConfig {
 pub struct Mesh {
     identity: Arc<Identity>,
     address: SocketAddrV6,
+    name: Option<String>,
     card: std::sync::Mutex<Option<(u64, Event)>>,
     updates: watch::Sender<Vec<PeerCard>>,
     allowed: Allowed,
@@ -67,7 +70,13 @@ impl Mesh {
     pub async fn start(config: MeshConfig) -> io::Result<Self> {
         let identity = Arc::new(Identity::derive(&config.secret).map_err(|_| failure())?);
         // A signed card validates the exact private listener and fixed port.
-        PeerCard::sign(&identity, config.peer_listen, now()).map_err(|_| failure())?;
+        PeerCard::sign_named(
+            &identity,
+            config.peer_listen,
+            config.peer_name.as_deref(),
+            now(),
+        )
+        .map_err(|_| failure())?;
         let listener = TcpListener::bind(config.peer_listen).await?;
         let alias = peer::relay_alias(&identity.public_key()).map_err(|_| failure())?;
         let mut turn = Config::local(config.secret);
@@ -128,11 +137,13 @@ impl Mesh {
             allowed: allowed.clone(),
             ports,
             connected: connected.clone(),
+            resolver: config.resolver,
         });
         let manager = tokio::spawn(manage(listener, shared, receive, stop.clone()));
         Ok(Self {
             identity,
             address: config.peer_listen,
+            name: config.peer_name,
             card: std::sync::Mutex::new(None),
             updates,
             allowed,
@@ -150,14 +161,22 @@ impl Mesh {
     }
     pub fn card(&self) -> io::Result<Event> {
         // Stable cards prevent descriptor replies from creating a publication loop.
-        let bucket = now() / 240 * 240;
+        let timestamp = now();
         let mut cached = self.card.lock().map_err(|_| failure())?;
-        if cached.as_ref().is_none_or(|(time, _)| *time != bucket) {
+        if cached
+            .as_ref()
+            .is_none_or(|(time, _)| timestamp.saturating_sub(*time) >= 240)
+        {
             *cached = Some((
-                bucket,
-                PeerCard::sign(&self.identity, self.address, bucket)
-                    .map_err(|_| failure())?
-                    .event,
+                timestamp,
+                PeerCard::sign_named(
+                    &self.identity,
+                    self.address,
+                    self.name.as_deref(),
+                    timestamp,
+                )
+                .map_err(|_| failure())?
+                .event,
             ));
         }
         cached
@@ -204,6 +223,7 @@ impl Drop for Mesh {
 }
 
 struct Worker {
+    name: Option<String>,
     address: SocketAddrV6,
     incoming: mpsc::Sender<Established>,
     task: JoinHandle<()>,
@@ -214,6 +234,7 @@ impl Drop for Worker {
     }
 }
 struct Manager {
+    resolver: Option<crate::resolver::PeerResolver>,
     identity: Arc<Identity>,
     alias: Ipv4Addr,
     allowed: Allowed,
@@ -268,7 +289,7 @@ async fn manage(
         workers.retain(|key, worker| {
             cards
                 .get(key)
-                .is_some_and(|card| card.address == worker.address)
+                .is_some_and(|card| card.address == worker.address && card.name == worker.name)
                 && !worker.task.is_finished()
         });
         for (key, card) in cards {
@@ -277,6 +298,7 @@ async fn manage(
             }
             let (send, receive) = mpsc::channel(1);
             let address = card.address;
+            let name = card.name.clone();
             let state = shared.clone();
             let task = tokio::spawn(async move {
                 let _ = peer_worker(state, card, receive).await;
@@ -284,6 +306,7 @@ async fn manage(
             workers.insert(
                 key,
                 Worker {
+                    name,
                     address,
                     incoming: send,
                     task,
@@ -443,14 +466,17 @@ async fn peer_worker(
     let initiator = shared.identity.public_key() < card.event.pubkey;
     loop {
         if !shared.allowed.read().is_ok_and(|cards| {
-            cards
-                .get(&card.event.pubkey)
-                .is_some_and(|next| next.expires_at > now() && next.address == card.address)
+            cards.get(&card.event.pubkey).is_some_and(|next| {
+                next.expires_at > now() && next.address == card.address && next.name == card.name
+            })
         }) {
             return Ok(());
         }
         let established = if initiator {
-            match timeout(Duration::from_secs(13), async {
+            match timeout(Duration::from_secs(22), async {
+                if let Some(resolver) = &shared.resolver {
+                    resolver.prepare(&card).await?;
+                }
                 let mut stream = timeout(Duration::from_secs(10), TcpStream::connect(card.address))
                     .await
                     .map_err(|_| failure())??;

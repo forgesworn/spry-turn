@@ -47,7 +47,7 @@
     },
     {
       "path": "crates/spry-link/src/peer.rs",
-      "sha256": "ba7ed5e0a1773f047650d458d95e495e25612a4c1a8689949cd0ed5f3a6f9727"
+      "sha256": "8269eb2e3b675260fbcf620e7aa2163014fce70eded3648c730848532f8b5ebb"
     },
     {
       "path": "crates/spry-link/src/registry.rs",
@@ -59,7 +59,7 @@
     },
     {
       "path": "crates/spry-link/tests/peer.rs",
-      "sha256": "6319f405437e3bfade7dd0584ecdc47c3e991f2b697a8a37c2408e8320bc1f6c"
+      "sha256": "3fff600674f6a58ba3ae517e665a8a3cd6ee7e488c850c438acbc32b5fa6f34c"
     },
     {
       "path": "crates/spry-link/tests/request.rs",
@@ -71,7 +71,7 @@
     },
     {
       "path": "crates/spry-service/examples/mesh-node.rs",
-      "sha256": "ab9f1d4c60e270bd24e743427c8602ae778d900a25badfdf16c5e3e45c56d59b"
+      "sha256": "32fb06625dd89587ffd322ebf0f776d74d400261a907a6c1139707bd697b4c2a"
     },
     {
       "path": "crates/spry-service/public/app.mjs",
@@ -87,7 +87,7 @@
     },
     {
       "path": "crates/spry-service/src/lib.rs",
-      "sha256": "9de18a7e7dd5e2b2dff17a20698564a5bf3f78347b6a640293e804873d843e62"
+      "sha256": "e1e5c821733a4ec62ec0ab42656d105e3487aab72bcd4c40dd8698af9858746a"
     },
     {
       "path": "crates/spry-service/src/main.rs",
@@ -95,11 +95,15 @@
     },
     {
       "path": "crates/spry-service/src/mesh.rs",
-      "sha256": "46863f1edfd065481f12e036df0a4a8a5ab64c1a711118cae3bcdfe2b228570a"
+      "sha256": "c7c81c97eeb687d77c5b10860ebe81f7b5efe6ad5609f52cf3dabcb80226b839"
     },
     {
       "path": "crates/spry-service/src/node.rs",
-      "sha256": "d60ae04c4cc4cacc1ee4d0a09876092c9a5a98f17e0bf4ad53c5c3d571dc8227"
+      "sha256": "7f79c046941f624b971fc7880330aee1bbd32720fc8f5e32b6ce664433306e39"
+    },
+    {
+      "path": "crates/spry-service/src/resolver.rs",
+      "sha256": "1f9b3706ff26ef68891d8558013230c0de910bb4bd8eec667ca45d656adc6466"
     },
     {
       "path": "crates/spry-service/src/signalling.rs",

@@ -231,6 +231,8 @@ pub(crate) struct PrivateSettings {
     client_ip: Option<Ipv4Addr>,
     client_host: Option<String>,
     port: u16,
+    peer_name: Option<String>,
+    resolver: Option<crate::resolver::PeerResolver>,
     secret: Vec<u8>,
     options: RelayOptions,
     preset_relays: Vec<String>,
@@ -257,6 +259,28 @@ impl PrivateSettings {
                     .all(|byte| byte.is_ascii_alphanumeric() || b"_.-".contains(&byte))
         }) {
             return Err("Invalid peer interface".into());
+        }
+        let peer_name = env::var("SPRY_PEER_NAME")
+            .ok()
+            .filter(|name| !name.is_empty());
+        let resolver = env::var("SPRY_PEER_RESOLVER")
+            .ok()
+            .map(
+                |server| -> std::result::Result<_, Box<dyn std::error::Error>> {
+                    Ok(crate::resolver::PeerResolver::new(
+                        server.parse()?,
+                        env::var("SPRY_PEER_ZONE")?,
+                    )?)
+                },
+            )
+            .transpose()?;
+        if peer_name.as_deref().is_some_and(|name| {
+            !spry_link::peer::valid_name(name)
+                || resolver
+                    .as_ref()
+                    .is_some_and(|resolver| !resolver.accepts(name))
+        }) {
+            return Err("Invalid private peer name".into());
         }
         let client_ip = env::var("SPRY_RELAY_IP")
             .ok()
@@ -341,6 +365,8 @@ impl PrivateSettings {
             client_ip,
             client_host,
             port,
+            peer_name,
+            resolver,
             secret: secret.to_vec(),
             options,
             preset_relays,
@@ -355,6 +381,9 @@ impl PrivateSettings {
         &self,
         state: Arc<ServiceState>,
     ) -> Result<Option<SignallingRuntime>> {
+        if self.resolver.is_some() && self.peer_name.is_none() {
+            return Ok(None);
+        }
         let address = self.bind.or_else(|| {
             self.interface
                 .as_ref()
@@ -368,6 +397,8 @@ impl PrivateSettings {
             return Ok(None);
         };
         let mesh = Mesh::start(MeshConfig {
+            peer_name: self.peer_name.clone(),
+            resolver: self.resolver.clone(),
             client_listen: SocketAddrV4::new(ip, self.port),
             peer_listen: address,
             secret: self.secret.clone(),

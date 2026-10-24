@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 pub mod mesh;
 mod node;
+pub mod resolver;
 pub mod signalling;
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full, Limited};

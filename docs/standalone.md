@@ -118,3 +118,14 @@ records actual pairing, relay-only 1:1/group media, reload and fresh audio/video
 progress after 330 seconds. The [packet receipt](evidence/spry-private-nodes-packets-20261024.json)
 separately records UDP/TCP forwarding and withdrawal on an isolated network
 with no external connectivity. Both name their exact fixture limits.
+
+A mesh whose routing needs an identity lookup can supply `SPRY_PEER_NAME`,
+`SPRY_PEER_RESOLVER` (a loopback DNS socket) and `SPRY_PEER_ZONE`. The optional
+adapter queries only that zone, binds the DNS response to its question and
+transaction, and requires the returned AAAA address to equal the signed ULA.
+It never substitutes an arbitrary DNS destination. Archipelago supplies the
+seeded public mesh name and its existing FIPS resolver; Spry imports no mesh
+SDK. The [FIPS/NAT packet receipt](evidence/spry-fips-two-nats-20261024.json)
+checks this adapter with two simulated home NATs, an isolated WAN and a
+separate fixture mesh anchor. Spry containers retain no extra capabilities;
+TUN and forwarding permissions belong to the fixture's host/network layer.

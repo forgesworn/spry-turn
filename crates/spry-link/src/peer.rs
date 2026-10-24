@@ -30,18 +30,49 @@ pub fn relay_port(port: u16) -> bool {
     (FIRST_RELAY..=LAST_RELAY).contains(&port)
 }
 
+/// A bounded DNS name, without a URL, port, IP literal or empty labels.
+pub fn valid_name(name: &str) -> bool {
+    name.len() <= 128
+        && name.contains('.')
+        && name.split('.').all(|label| {
+            !label.is_empty()
+                && label.len() <= 63
+                && !label.starts_with('-')
+                && !label.ends_with('-')
+                && label
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+        })
+}
+
 #[derive(Clone, Debug)]
 pub struct PeerCard {
     pub event: Event,
     pub address: SocketAddrV6,
+    pub name: Option<String>,
     pub alias: Ipv4Addr,
     pub expires_at: u64,
 }
 impl PeerCard {
     pub fn sign(identity: &Identity, address: SocketAddrV6, now: u64) -> Result<Self> {
-        let content =
-            serde_json::json!({"v":1,"profile":"spry-peer-v1","address":address.to_string()})
-                .to_string();
+        Self::sign_named(identity, address, None, now)
+    }
+    /// Optional host-resolver hint; resolution never replaces the signed ULA.
+    pub fn sign_named(
+        identity: &Identity,
+        address: SocketAddrV6,
+        name: Option<&str>,
+        now: u64,
+    ) -> Result<Self> {
+        let mut value =
+            serde_json::json!({"v":1,"profile":"spry-peer-v1","address":address.to_string()});
+        if let Some(name) = name {
+            if !valid_name(name) {
+                return Err(Refused::Destination);
+            }
+            value["name"] = name.into();
+        }
+        let content = value.to_string();
         let event = identity.sign(
             CARD_KIND,
             vec![vec![
@@ -76,6 +107,16 @@ impl PeerCard {
         if content["v"] != 1 || content["profile"] != "spry-peer-v1" {
             return Err(Refused::Encoding);
         }
+        let name = match content.get("name") {
+            Some(value) => Some(
+                value
+                    .as_str()
+                    .filter(|name| valid_name(name))
+                    .ok_or(Refused::Destination)?
+                    .to_owned(),
+            ),
+            None => None,
+        };
         let address: SocketAddr = content["address"]
             .as_str()
             .ok_or(Refused::Destination)?
@@ -95,6 +136,7 @@ impl PeerCard {
         Ok(Self {
             event,
             address,
+            name,
             alias,
             expires_at,
         })

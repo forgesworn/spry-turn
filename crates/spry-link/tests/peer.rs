@@ -195,3 +195,27 @@ fn an_in_flight_update_cannot_restore_withdrawn_peer_routes() {
         .unwrap();
     assert_eq!(registry.active(103).len(), 1);
 }
+
+#[test]
+fn optional_host_names_are_signed_bounded_hints_without_changing_the_private_target() {
+    let identity = Identity::from_secret(&[1; 32]).unwrap();
+    let card = PeerCard::sign_named(
+        &identity,
+        "[fd12::2]:3745".parse().unwrap(),
+        Some("node.private"),
+        100,
+    )
+    .unwrap();
+    assert_eq!(card.name.as_deref(), Some("node.private"));
+    assert_eq!(card.address, "[fd12::2]:3745".parse().unwrap());
+    for name in [
+        "https://node.private",
+        "node.private:22",
+        "node..private",
+        "node/private",
+        "-node.private",
+        "node.private.",
+    ] {
+        assert!(PeerCard::sign_named(&identity, card.address, Some(name), 100).is_err());
+    }
+}
