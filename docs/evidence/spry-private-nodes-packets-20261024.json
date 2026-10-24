@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "scope": "isolated-linux-peer-bridge-udp-tcp",
+  "passed": true,
+  "twoNetworkNamespaces": true,
+  "externalNetworkingDisabled": true,
+  "publishedHostPorts": false,
+  "extraContainerCapabilities": false,
+  "containerMemoryLimitBytes": 134217728,
+  "authenticatedPeerLinks": true,
+  "udpTurnBidirectional": true,
+  "tcpTurnBidirectional": true,
+  "withdrawalStopsForwarding": true,
+  "payloadBytes": 1280,
+  "rounds": 3,
+  "binarySha256": "1fbdc7e1b0204576f45e62df03c6dfb0f99c1bbc2d9e23f34d936c2203843947",
+  "fixtureImage": "python@sha256:a0f57064cbdcd6285fa45f51237ab0b35ea8ebaed06a1f5973e89e19dfb86704",
+  "limits": [
+    "Generated traffic on a local IPv6 Docker network",
+    "No FIPS daemon, Internet NAT, browser pairing or physical-phone proof"
+  ]
+}

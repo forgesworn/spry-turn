@@ -112,3 +112,9 @@ separate Linux containers, using generated audio/video and relay-only ICE.
 Its receipt records the precise network and browser limits. Neither local
 test substitutes for physical phones, the installed Archipelago bundle or
 independent home broadband/NAT acceptance.
+
+The [three-node browser receipt](evidence/spry-private-nodes-browser-20261024.json)
+records actual pairing, relay-only 1:1/group media, reload and fresh audio/video
+progress after 330 seconds. The [packet receipt](evidence/spry-private-nodes-packets-20261024.json)
+separately records UDP/TCP forwarding and withdrawal on an isolated network
+with no external connectivity. Both name their exact fixture limits.
