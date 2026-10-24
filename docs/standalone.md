@@ -129,3 +129,31 @@ SDK. The [FIPS/NAT packet receipt](evidence/spry-fips-two-nats-20261024.json)
 checks this adapter with two simulated home NATs, an isolated WAN and a
 separate fixture mesh anchor. Spry containers retain no extra capabilities;
 TUN and forwarding permissions belong to the fixture's host/network layer.
+
+Reproduce that packet check with Docker and a Linux `mesh-node` example
+matching the Docker engine's CPU architecture. Fetch the released FIPS
+0.4.1 archive and verify it before extraction:
+
+```sh
+mkdir -p .local/fips-fixture
+gh release download v0.4.1 --repo jmcorgan/fips \
+  --pattern checksums-linux.txt --pattern fips-0.4.1-linux-aarch64.tar.gz \
+  --dir .local/fips-fixture
+(cd .local/fips-fixture && \
+  grep '  fips-0.4.1-linux-aarch64.tar.gz$' checksums-linux.txt | sha256sum -c - && \
+  tar -xzf fips-0.4.1-linux-aarch64.tar.gz)
+docker build -f tests/fixtures/fips/Dockerfile -t spry-fips-fixture:0.4.1 tests/fixtures/fips
+cargo build --locked --target aarch64-unknown-linux-gnu \
+  --example mesh-node -p spry-service
+python3 tests/fips-mesh.py \
+  --binary target/aarch64-unknown-linux-gnu/debug/examples/mesh-node \
+  --fips-dir .local/fips-fixture --output .local/fips-two-nats.json
+```
+
+On x86-64 Linux use the `linux-x86_64` archive and
+`x86_64-unknown-linux-gnu` Rust target instead. Cross-compiling requires a
+Linux linker and sysroot (for example an installed `cargo-zigbuild`); on
+macOS replace `cargo build` above with `cargo zigbuild`. Keep the existing
+worktree's target directory. The fixture removes its containers, networks
+and binary snapshot on exit. Remove downloaded binaries, archives and the
+task-owned fixture image after retaining the required receipt privately.
