@@ -13,6 +13,11 @@ keywords = ["turn", "stun", "webrtc", "relay", "wasm"]
 categories = ["network-programming", "command-line-utilities", "wasm"]
 publish = false
 
+[workspace]
+members = ["crates/spry-access", "crates/spry-service"]
+exclude = ["experiments/linux-batch", "fuzz"]
+resolver = "3"
+
 [features]
 default = ["runtime", "turn", "connected-udp"]
 runtime = ["dep:mio", "dep:getrandom"]

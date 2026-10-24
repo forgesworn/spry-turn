@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Extract owner-authorised pairing and scoped credentials into the reusable
+  `spry-access` Rust library, with explicit calling-application configuration.
+- Add `spry-service`, a reusable HTTP host adapter and standalone `spry-node`
+  executable. Archipelago integration supplies its own UI/signing assets;
+  standalone use requires no Archipelago installation.
+- Keep forwarding in the independent `spry-turn` library and executable.
+  Home-network mesh integration and physical-phone acceptance remain open.
+
 ## 0.2.1 — 23 October 2026
 
 Public MIT prerelease. Stream readiness registrations now change only when

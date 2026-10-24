@@ -9,6 +9,7 @@ performance and explicit compatibility gaps. The source and GitHub prereleases a
 | Task | Guide |
 |---|---|
 | Build and run locally | [Getting started](getting-started.md) |
+| Run the standalone service or reuse its libraries | [Standalone and library boundaries](standalone.md) |
 | Connect WebRTC, native clients or an embedded host | [Integration](integration.md) |
 | Find Rust types, Cargo features and WASM methods | [API reference](api.md) |
 | Assess an existing coturn configuration | [Coturn compatibility](coturn-compatibility.md) |
