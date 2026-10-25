@@ -21,6 +21,8 @@
 - Issue public logins for an hour rather than ten minutes. The relay ends an
   allocation when its login expires, so a call on one public login lasts at
   most that long; clients fetch a fresh login and restart ICE before then.
+- Tighten advert verification: TURN URL ports must be 3478, 5349 or 443, or
+  omitted, and `expiration` must be 1 to 16 ASCII digits.
 
 ## 0.2.1 — 23 October 2026
 
