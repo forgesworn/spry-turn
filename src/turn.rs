@@ -446,9 +446,8 @@ mod policy_tests {
             let mut server = Server::bind(config).unwrap();
             let mut client = std::net::TcpStream::connect(server.local_addr().unwrap()).unwrap();
             client.set_nonblocking(true).unwrap();
-            socket2::SockRef::from(&client)
-                .set_recv_buffer_size(1024)
-                .unwrap();
+            // Leave the receive window at its OS default. The non-reading
+            // client and small server send buffer provide real backpressure.
             accept_stream(&mut server);
             let token = *server.connections.keys().next().unwrap();
             let key = Client::Stream(token);
@@ -554,11 +553,10 @@ mod policy_tests {
             server.send_client(key, b"ctrl");
             expected += 4;
             assert!(server.connections.contains_key(&token));
-            // Release the fixture's tiny receive window before checking
-            // writable progress; Linux zero-window probes can otherwise pace
-            // this deliberately throttled drain beyond the test deadline.
-            socket2::SockRef::from(&client)
-                .set_recv_buffer_size(1_048_576)
+            // Saturation is proven above. Restore send capacity so recovery
+            // tests writable progress rather than OS delayed-ACK pacing.
+            socket2::SockRef::from(&server.connections[&token].socket)
+                .set_send_buffer_size(1_048_576)
                 .unwrap();
             let deadline = Instant::now() + Duration::from_secs(5);
             let mut received = Vec::new();

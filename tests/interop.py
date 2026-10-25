@@ -487,7 +487,9 @@ class Interop(unittest.TestCase):
 
                 oversized = packet(1, [(0xC001, b"z" * 65_508)])
                 self.assertGreater(len(oversized), 65_536)
-                c.socket.sendall(oversized)
+                # The length prefix is already excessive: reject it before
+                # reading the body, which need not fit a closing TLS socket.
+                c.socket.sendall(oversized[:4])
                 try:
                     self.assertEqual(c.socket.recv(1), b"")
                 except ConnectionResetError:
