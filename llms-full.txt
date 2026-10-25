@@ -1039,6 +1039,72 @@ v1 refuses to start with `SPRY_PUBLIC=true` in that profile, with a clear
 error, rather than half-working. The other `SPRY_PUBLIC_*` settings are
 ignored in that profile.
 
+### Separate standard profiles on one host
+
+The standard profile resolves these transport settings once at startup,
+whether public mode is on or off:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `SPRY_HTTP_PORT` | `3744` | Loopback HTTP API port behind the operator's HTTPS proxy |
+| `SPRY_TURN_PORT` | `3478` | UDP and TCP TURN listener port |
+| `SPRY_TLS_PORT` | `5349` | Direct TLS listener and advertised TLS port |
+| `SPRY_RELAY_PORTS` | `49160:49191` | Inclusive UDP allocation port range |
+| `SPRY_BYTES_PER_SECOND` | `1000000` | Per-allocation aggregate payload budget, in bytes per second, across both directions |
+
+TURN and TLS ports must be decimal integers from 1 to 65535, must differ,
+and must lie outside the ordered, non-zero relay range. The bandwidth must
+be a decimal integer from 1 to 67108864; zero, overflow, signs and spaces
+are refused with the setting's name. The private-node profile keeps its
+existing settings and limits; it does not read the new standard-only
+`SPRY_TLS_PORT`, `SPRY_RELAY_PORTS` or `SPRY_BYTES_PER_SECOND` settings.
+
+For example, an operator can keep an existing paired instance and give a
+separate public, unlisted standard instance its own ports and state:
+
+```sh
+SPRY_PUBLIC=true
+SPRY_PUBLIC_URL=https://relay.example:3746
+SPRY_HTTP_PORT=3746
+SPRY_TURN_PORT=3479
+SPRY_TLS_PORT=5350
+SPRY_RELAY_PORTS=49200:49231
+SPRY_BYTES_PER_SECOND=8388608
+SPRY_TLS_GATE=true
+```
+
+These settings complement the required owner keys, fresh TURN secret,
+reachable relay address and separate persistent state file described in
+[standalone setup](https://github.com/forgesworn/spry-turn/blob/main/docs/standalone.md). Do not set a private peer bind or
+interface on the public instance. Keep all API, listener and allocation
+ports distinct from the other service, including its private peer port.
+The two instances must have separate secrets and state files.
+
+`SPRY_TLS_GATE=true` advertises TLS; the operator must provide a trusted
+TLS gate at the selected TLS port forwarding to this instance's TCP TURN
+port. With both existing `/data/tls/fullchain.pem` and
+`/data/tls/privkey.pem` present, Spry instead starts its own TLS listener
+on the selected TLS port. Configure the host's proxy, certificates,
+firewall and any catalogue port mapping separately; setting an environment
+variable does not open or route a host port.
+
+The child relay's arguments, issued TURN URLs and UDP Binding readiness
+probe use the same settings. An unavailable configured TURN port keeps
+this instance unready; another instance listening elsewhere cannot make
+it ready. Readiness checks the live child and a valid Binding response,
+not the external TLS gate or public network route.
+
+The rate is per allocation, with one second of burst capacity, rather than
+a global server cap. The existing bounds remain 32 allocations, 8 per
+username and 32 client connections; size host resources separately. An
+8 MiB/s aggregate allocation budget can carry two directions sharing that
+budget, but it is not a measured throughput promise.
+
+Custom ports are for explicitly configured clients. They do not broaden
+the signed advert rules: discovery still requires an HTTPS endpoint with
+no port, and TURN ports from the existing allowlist in client rule 4.
+Keep `SPRY_PUBLIC_RELAYS` unset for the custom-port example above.
+
 ## Public credential endpoint
 
 `POST /v1/public/credentials`, body exactly `{"v":1}` (at most 256 bytes),
@@ -1174,6 +1240,23 @@ implementation. It opens no sockets, so the resolution part of rule 4
 remains the client's job when it connects.
 
 ## Fixtures
+
+The standalone service tests start the real relay executable from this
+source tree. Build it before running workspace tests:
+
+```sh
+cargo build --locked --release --features tls --bin spry-turn
+SPRY_TEST_RELAY_BINARY=target/release/spry-turn cargo test --locked --workspace --all-features
+```
+
+`SPRY_TEST_RELAY_BINARY` is relative to the workspace root unless absolute;
+without it, tests use `target/release/spry-turn` (with the platform's
+executable suffix). A missing binary fails with the build command. The
+tests use generated ports and synthetic secrets, exercise two distinct
+profiles and their own readiness, and verify issued credentials against
+real authenticated allocations. They do not qualify a public deployment
+or an operator's TLS gate. CI builds the same source's TLS relay before
+these tests and reuses that build for interop.
 
 `crates/spry-link/examples/public-advert.rs` writes signed fixtures from a
 fixed test key to `docs/fixtures/public-advert-v1.json`: a valid open advert,
@@ -2535,8 +2618,8 @@ destinations. See [maintaining documentation](https://github.com/forgesworn/spry
 ## Native checks
 
 ```sh
-npm run check
 cargo build --locked --release --features tls
+SPRY_TEST_RELAY_BINARY=target/release/spry-turn npm run check
 python3 tests/interop.py --tls
 python3 tests/stress.py --tls --seconds 180 --output .local/stress.json
 npm ci --ignore-scripts
@@ -2546,6 +2629,11 @@ python3 tests/browser.py --tls
 
 `npm run check` runs documentation validation, Rust formatting, clippy with
 warnings denied, all-feature tests and both minimal library test sets.
+Build the release relay first: the service integration tests start that real
+executable on generated loopback ports, obtain public credentials and verify
+authenticated allocations. `SPRY_TEST_RELAY_BINARY` may select another build
+from the same source tree; it is resolved relative to the workspace root.
+An absent executable fails clearly rather than skipping the protocol checks.
 The stress runner caps normal control traffic below admission limits and
 tests a separate overload burst, expiry, churn and slow-client recovery.
 Its seeded loss/jitter proxy is local qualification. A short soak and
