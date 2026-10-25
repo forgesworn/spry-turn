@@ -24,7 +24,10 @@ The first target is a server running independently on a normal computer.
 Later, an Archy owner can install it and configure KithMoot to use their
 chosen TURN address and credentials. The software publisher operates no
 relay, credential service, discovery directory or calling entitlement.
-There are no hosted defaults in the code.
+There are no hosted defaults in the code. An independent operator can opt
+in to [public mode](docs/public-mode.md), opening their own relay to anyone
+and optionally advertising it on Nostr relays they choose; it is off by
+default.
 
 Spry is independent of Archipelago. The reusable `spry-turn`, `spry-access`,
 `spry-link` and `spry-service` Rust libraries live here, together with a standalone

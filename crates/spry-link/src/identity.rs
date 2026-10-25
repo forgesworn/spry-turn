@@ -43,6 +43,20 @@ impl Identity {
         content: String,
         now: u64,
     ) -> Result<Event> {
+        let mut auxiliary = [0_u8; 32];
+        getrandom::fill(&mut auxiliary).map_err(|_| Refused::Key)?;
+        self.sign_with_aux(kind, tags, content, now, &auxiliary)
+    }
+    /// BIP-340 signing with caller-supplied auxiliary bytes, for reproducible
+    /// synthetic fixtures. Live signing uses [`Identity::sign`].
+    pub fn sign_with_aux(
+        &self,
+        kind: u16,
+        tags: Vec<Vec<String>>,
+        content: String,
+        now: u64,
+        auxiliary: &[u8; 32],
+    ) -> Result<Event> {
         let mut event = Event {
             id: String::new(),
             pubkey: self.public_key(),
@@ -54,10 +68,8 @@ impl Identity {
         };
         event.validate_shape()?;
         let digest = event.digest()?;
-        let mut auxiliary = [0_u8; 32];
-        getrandom::fill(&mut auxiliary).map_err(|_| Refused::Key)?;
         event.id = hex(&digest);
-        event.sig = hex(&schnorr::sign_with_aux_rand(&digest, &self.0, &auxiliary).to_byte_array());
+        event.sig = hex(&schnorr::sign_with_aux_rand(&digest, &self.0, auxiliary).to_byte_array());
         Ok(event)
     }
 }

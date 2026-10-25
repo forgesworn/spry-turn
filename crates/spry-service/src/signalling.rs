@@ -298,6 +298,96 @@ async fn session(
     }
 }
 
+/// Publishes one event to one relay and waits, bounded, for its acceptance.
+/// Answers at most two NIP-42 challenges with the same transport identity.
+pub(crate) async fn publish(
+    relay: &str,
+    options: &RelayOptions,
+    identity: &Identity,
+    event: &Event,
+) -> io::Result<()> {
+    let mut socket = timeout(Duration::from_secs(10), connect(relay, options))
+        .await
+        .map_err(|_| refused())??;
+    let message = json!(["EVENT", event]).to_string();
+    send_message(&mut socket, Message::Text(message.clone().into())).await?;
+    let mut authentication = 0;
+    let mut auth_pending: Option<String> = None;
+    let result = timeout(Duration::from_secs(10), async {
+        for _ in 0..64 {
+            let Some(Ok(reply)) = socket.next().await else {
+                return Err(refused());
+            };
+            let Message::Text(text) = reply else {
+                if matches!(reply, Message::Close(_)) {
+                    return Err(refused());
+                }
+                continue;
+            };
+            if text.len() > MAX_EVENT + 512 {
+                return Err(refused());
+            }
+            let Ok(value) = serde_json::from_str::<Value>(&text) else {
+                continue;
+            };
+            match value[0].as_str() {
+                Some("AUTH") => {
+                    authentication += 1;
+                    let Some(challenge) = value[1]
+                        .as_str()
+                        .filter(|challenge| challenge.len() <= 256 && authentication <= 2)
+                    else {
+                        return Err(refused());
+                    };
+                    let auth = identity
+                        .sign(
+                            22242,
+                            vec![
+                                vec!["relay".into(), relay.into()],
+                                vec!["challenge".into(), challenge.into()],
+                            ],
+                            String::new(),
+                            now(),
+                        )
+                        .map_err(|_| refused())?;
+                    auth_pending = Some(auth.id.clone());
+                    send_message(
+                        &mut socket,
+                        Message::Text(json!(["AUTH", auth]).to_string().into()),
+                    )
+                    .await?;
+                }
+                Some("OK")
+                    if auth_pending.is_some() && auth_pending.as_deref() == value[1].as_str() =>
+                {
+                    if value[2] != true {
+                        return Err(refused());
+                    }
+                    auth_pending = None;
+                    send_message(&mut socket, Message::Text(message.clone().into())).await?;
+                }
+                Some("OK") if value[1] == event.id.as_str() => {
+                    if value[2] == true {
+                        return Ok(());
+                    }
+                    // A relay that wants authentication first says so, then challenges.
+                    if !value[3]
+                        .as_str()
+                        .is_some_and(|reason| reason.starts_with("auth-required:"))
+                    {
+                        return Err(refused());
+                    }
+                }
+                _ => {}
+            }
+        }
+        Err(refused())
+    })
+    .await
+    .map_err(|_| refused())?;
+    let _ = timeout(Duration::from_secs(1), socket.close(None)).await;
+    result
+}
 fn public_address(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(ip) => super::public_v4(ip),

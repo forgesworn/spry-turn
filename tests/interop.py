@@ -445,6 +445,58 @@ class Interop(unittest.TestCase):
         c.socket.sendall(data + data)
         self.assertEqual(parse(c.receive())[0], 0x101); self.assertEqual(parse(c.receive())[0], 0x101)
 
+    def test_stream_batch_larger_than_input_limit(self):
+        for mode in ["tcp"] + (["tls"] if TLS else []):
+            with self.subTest(mode=mode):
+                c = self.client(mode=mode)
+                transactions = [bytes([value]) * 12 for value in range(1, 5)]
+                frames = [packet(1, [(0xC001, b"z" * 60_000)], tid=tid)
+                          for tid in transactions]
+                batch = b"".join(frames)
+                self.assertGreater(len(batch), 131_072)
+                self.assertTrue(all(len(frame) <= 65_536 for frame in frames))
+                c.socket.sendall(batch)
+                for tid in transactions:
+                    typ, _, transaction = parse(c.receive())
+                    self.assertEqual(typ, 0x101)
+                    self.assertEqual(transaction, tid)
+                self.assertEqual(c.request(1, signed=False)[0], 0x101)
+
+    def test_stream_maximum_frame_partial_input_and_oversized_isolation(self):
+        for mode in ["tcp"] + (["tls"] if TLS else []):
+            with self.subTest(mode=mode):
+                c = self.client(mode=mode)
+                tid = bytes([7]) * 12
+                frame = packet(1, [(0xC001, b"z" * 65_504)], tid=tid)
+                self.assertEqual(len(frame), 65_536)
+                # TLS wire bytes plus plaintext exceed one read-work quantum.
+                # A complete frame must resume without another client write.
+                c.socket.sendall(frame)
+                typ, _, transaction = parse(c.receive())
+                self.assertEqual((typ, transaction), (0x101, tid))
+                c.socket.sendall(frame[:-1])
+                c.socket.settimeout(0.05)
+                try:
+                    with self.assertRaises(socket.timeout):
+                        c.socket.recv(1)
+                finally:
+                    c.socket.settimeout(2)
+                c.socket.sendall(frame[-1:])
+                typ, _, transaction = parse(c.receive())
+                self.assertEqual((typ, transaction), (0x101, tid))
+
+                oversized = packet(1, [(0xC001, b"z" * 65_508)])
+                self.assertGreater(len(oversized), 65_536)
+                # The length prefix is already excessive: reject it before
+                # reading the body, which need not fit a closing TLS socket.
+                c.socket.sendall(oversized[:4])
+                try:
+                    self.assertEqual(c.socket.recv(1), b"")
+                except ConnectionResetError:
+                    pass
+                healthy = self.client(mode=mode)
+                self.assertEqual(healthy.request(1, signed=False)[0], 0x101)
+
     def test_invalid_stream_lengths_close_only_the_offending_client(self):
         modes = ["tcp"] + (["tls"] if TLS else [])
         for mode in modes:

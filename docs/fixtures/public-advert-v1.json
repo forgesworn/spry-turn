@@ -1,0 +1,548 @@
+{
+  "cases": [
+    {
+      "events": [
+        {
+          "content": "{\"credentials\":\"https://relay.example/v1/public/credentials\",\"urls\":[\"turn:relay.example:3478?transport=udp\",\"turn:relay.example:3478?transport=tcp\",\"turns:relay.example:5349?transport=tcp\"],\"note\":\"Synthetic operator note\"}",
+          "created_at": 1792999940,
+          "id": "62754f23a6102b3542544b808f349ad058661b40493faa52fecdecd53d5774d6",
+          "kind": 31478,
+          "pubkey": "62c0a046dacce86ddd0343c6d3c7c79c2208ba0d9c9cf24a6d046d21d21f90f7",
+          "sig": "37e6c05b5efd00ece702aab32069f53fde80a99ae4a179c33aa1bdec081046000438ac02ec32c0a4cd47366caeb2ff76de2cfe9fa7daac04449da8d4a06ccf98",
+          "tags": [
+            [
+              "d",
+              "spry-turn"
+            ],
+            [
+              "v",
+              "1"
+            ],
+            [
+              "status",
+              "open"
+            ],
+            [
+              "auth",
+              "public"
+            ],
+            [
+              "expiration",
+              "1793007140"
+            ],
+            [
+              "g",
+              "GB"
+            ]
+          ]
+        }
+      ],
+      "expect": [
+        "open"
+      ],
+      "name": "valid open advert"
+    },
+    {
+      "events": [
+        {
+          "content": "{}",
+          "created_at": 1793000000,
+          "id": "c678b255739eead4d3205549cd997de1ab6cdd7c8c123ab10d896e618e6c70a7",
+          "kind": 31478,
+          "pubkey": "62c0a046dacce86ddd0343c6d3c7c79c2208ba0d9c9cf24a6d046d21d21f90f7",
+          "sig": "5e7add996dab85fcc2ccb352cec7ef67e9757c9aa5af4dd11d2a1e0269474e726d069320284bafd3d5e3bcb6d18af49352ce84f6448ae11cd476087835e9e211",
+          "tags": [
+            [
+              "d",
+              "spry-turn"
+            ],
+            [
+              "v",
+              "1"
+            ],
+            [
+              "status",
+              "withdrawn"
+            ],
+            [
+              "auth",
+              "public"
+            ],
+            [
+              "expiration",
+              "1793007200"
+            ]
+          ]
+        }
+      ],
+      "expect": [
+        "withdrawn"
+      ],
+      "name": "valid withdrawal"
+    },
+    {
+      "events": [
+        {
+          "content": "{\"credentials\":\"https://relay.example/v1/public/credentials\",\"urls\":[\"turn:relay.example:3478?transport=udp\",\"turn:relay.example:3478?transport=tcp\",\"turns:relay.example:5349?transport=tcp\"],\"note\":\"Synthetic operator note\"}",
+          "created_at": 1792999940,
+          "id": "62754f23a6102b3542544b808f349ad058661b40493faa52fecdecd53d5774d6",
+          "kind": 31478,
+          "pubkey": "62c0a046dacce86ddd0343c6d3c7c79c2208ba0d9c9cf24a6d046d21d21f90f7",
+          "sig": "00e6c05b5efd00ece702aab32069f53fde80a99ae4a179c33aa1bdec081046000438ac02ec32c0a4cd47366caeb2ff76de2cfe9fa7daac04449da8d4a06ccf98",
+          "tags": [
+            [
+              "d",
+              "spry-turn"
+            ],
+            [
+              "v",
+              "1"
+            ],
+            [
+              "status",
+              "open"
+            ],
+            [
+              "auth",
+              "public"
+            ],
+            [
+              "expiration",
+              "1793007140"
+            ],
+            [
+              "g",
+              "GB"
+            ]
+          ]
+        }
+      ],
+      "expect": [
+        "Authentication"
+      ],
+      "name": "bad signature"
+    },
+    {
+      "events": [
+        {
+          "content": "{\"credentials\":\"https://relay.example/v1/public/credentials\",\"urls\":[\"turn:relay.example:3478?transport=udp\",\"turn:relay.example:3478?transport=tcp\",\"turns:relay.example:5349?transport=tcp\"],\"note\":\"Synthetic operator note\"}",
+          "created_at": 1793000000,
+          "id": "606f05b3f2e8fc00eeef31032aab997190d7750f69600dfecd4b5f1bff4f9600",
+          "kind": 31478,
+          "pubkey": "62c0a046dacce86ddd0343c6d3c7c79c2208ba0d9c9cf24a6d046d21d21f90f7",
+          "sig": "77b94ec6461eda24912377519913ccd2987dc6b2e0a61f94ee7c0e47f0d5ffaea31946798a61dc70b5db4ae0946784925e441af65db32c61694454a2bd8ba238",
+          "tags": [
+            [
+              "d",
+              "spry-turn"
+            ],
+            [
+              "v",
+              "1"
+            ],
+            [
+              "status",
+              "open"
+            ],
+            [
+              "auth",
+              "public"
+            ]
+          ]
+        }
+      ],
+      "expect": [
+        "Expired"
+      ],
+      "name": "missing expiration"
+    },
+    {
+      "events": [
+        {
+          "content": "{\"credentials\":\"https://relay.example/v1/public/credentials\",\"urls\":[\"turn:relay.example:3478?transport=udp\",\"turn:relay.example:3478?transport=tcp\",\"turns:relay.example:5349?transport=tcp\"],\"note\":\"Synthetic operator note\"}",
+          "created_at": 1793000000,
+          "id": "ef219b588052a13c10bc8775bc21bf12a8327952f3f032b1139f47fd5f6ee0a0",
+          "kind": 31478,
+          "pubkey": "62c0a046dacce86ddd0343c6d3c7c79c2208ba0d9c9cf24a6d046d21d21f90f7",
+          "sig": "c447b763e13125a6a51d1366238a8495744298f8147d4db1e3f9422dc0cc47b283b147565abfe89b1bdabfc0c4f0ce81588fdbfcda73d59a72c9703bb8acce42",
+          "tags": [
+            [
+              "d",
+              "spry-turn"
+            ],
+            [
+              "v",
+              "1"
+            ],
+            [
+              "status",
+              "open"
+            ],
+            [
+              "auth",
+              "public"
+            ],
+            [
+              "expiration",
+              "1793007201"
+            ]
+          ]
+        }
+      ],
+      "expect": [
+        "Expired"
+      ],
+      "name": "expiration more than two hours ahead"
+    },
+    {
+      "events": [
+        {
+          "content": "{\"credentials\":\"https://relay.example/v1/public/credentials\",\"urls\":[\"turn:relay.example:3478?transport=udp\",\"turn:relay.example:3478?transport=tcp\",\"turns:relay.example:5349?transport=tcp\"],\"note\":\"Synthetic operator note\"}",
+          "created_at": 1793000601,
+          "id": "c09c668fcfbf378b33b6a9d2f72867a19a49eac5aae8f8c0811cab3205892dd9",
+          "kind": 31478,
+          "pubkey": "62c0a046dacce86ddd0343c6d3c7c79c2208ba0d9c9cf24a6d046d21d21f90f7",
+          "sig": "da4edfb4e0c1bf91e434d03ade3d66d0c58956be002a184302bedb286fa5c33ef61bd293175edf44eada07716c5adff8bfcd38c39dade5e8bf47f694ebb3d648",
+          "tags": [
+            [
+              "d",
+              "spry-turn"
+            ],
+            [
+              "v",
+              "1"
+            ],
+            [
+              "status",
+              "open"
+            ],
+            [
+              "auth",
+              "public"
+            ],
+            [
+              "expiration",
+              "1793007801"
+            ],
+            [
+              "g",
+              "GB"
+            ]
+          ]
+        }
+      ],
+      "expect": [
+        "Expired"
+      ],
+      "name": "created_at more than ten minutes ahead"
+    },
+    {
+      "events": [
+        {
+          "content": "{\"credentials\":\"https://relay.example/v1/public/credentials\",\"urls\":[\"turn:relay.example:3478?transport=udp\",\"turn:relay.example:3478?transport=tcp\",\"turns:relay.example:5349?transport=tcp\"],\"note\":\"Synthetic operator note\"}",
+          "created_at": 1793000000,
+          "id": "4916ee936daf566be232728d2f1a19e5a82a6a41dbc1c7500e7c08646cd5903f",
+          "kind": 31478,
+          "pubkey": "62c0a046dacce86ddd0343c6d3c7c79c2208ba0d9c9cf24a6d046d21d21f90f7",
+          "sig": "6c3f609c8920f8d2053b26bd3ae21774b7bcb9a632a7ae53d3c7ddbac4ac37cdfee680843c35f3d8d70320106ed0964fe16c7276bc4fd9306d68687146889171",
+          "tags": [
+            [
+              "d",
+              "spry-turn"
+            ],
+            [
+              "v",
+              "1"
+            ],
+            [
+              "status",
+              "open"
+            ],
+            [
+              "auth",
+              "public"
+            ],
+            [
+              "expiration",
+              "+1793000060"
+            ]
+          ]
+        }
+      ],
+      "expect": [
+        "Expired"
+      ],
+      "name": "expiration with a sign"
+    },
+    {
+      "events": [
+        {
+          "content": "{\"credentials\":\"https://192.0.2.1/v1/public/credentials\",\"urls\":[\"turn:192.0.2.1:3478?transport=udp\"],\"note\":\"Synthetic operator note\"}",
+          "created_at": 1793000000,
+          "id": "694bed80db63144b8101d0baf293d11d1dcf70255972a06e86337fdec8046100",
+          "kind": 31478,
+          "pubkey": "62c0a046dacce86ddd0343c6d3c7c79c2208ba0d9c9cf24a6d046d21d21f90f7",
+          "sig": "53cc38d3c0a2c05dc05300a5005242637e00d4d9a0b4a7124aba039819053f5043e0fe733a345717d96a064e59a2070e228a7730cd12ddff26ec5be3c8f5391f",
+          "tags": [
+            [
+              "d",
+              "spry-turn"
+            ],
+            [
+              "v",
+              "1"
+            ],
+            [
+              "status",
+              "open"
+            ],
+            [
+              "auth",
+              "public"
+            ],
+            [
+              "expiration",
+              "1793007200"
+            ]
+          ]
+        }
+      ],
+      "expect": [
+        "Destination"
+      ],
+      "name": "IP-literal credential endpoint"
+    },
+    {
+      "events": [
+        {
+          "content": "{\"credentials\":\"https://relay.example/v1/public/credentials\",\"urls\":[\"turn:relay.example:3478?transport=udp\",\"turn:other.example:3478?transport=tcp\",\"turns:relay.example:5349?transport=tcp\"],\"note\":\"Synthetic operator note\"}",
+          "created_at": 1793000000,
+          "id": "021d976a15352a2f9c7f43f5f67d5a6c2b88cae37a960583eacebfa010e549f6",
+          "kind": 31478,
+          "pubkey": "62c0a046dacce86ddd0343c6d3c7c79c2208ba0d9c9cf24a6d046d21d21f90f7",
+          "sig": "1235f8da189344b91cbda1780927f58f7c65aaacc3172b38b557f9f02c5f480a9c1b7f7b71395bbd4c42629d6658c2c98f01950d3ed23588009eb2af708eb9a1",
+          "tags": [
+            [
+              "d",
+              "spry-turn"
+            ],
+            [
+              "v",
+              "1"
+            ],
+            [
+              "status",
+              "open"
+            ],
+            [
+              "auth",
+              "public"
+            ],
+            [
+              "expiration",
+              "1793007200"
+            ]
+          ]
+        }
+      ],
+      "expect": [
+        "Destination"
+      ],
+      "name": "TURN host differs from the endpoint"
+    },
+    {
+      "events": [
+        {
+          "content": "{\"credentials\":\"https://relay.example/v1/public/credentials\",\"urls\":[\"turn:relay.example:3478?transport=udp\",\"turn:relay.example:22?transport=tcp\",\"turns:relay.example:5349?transport=tcp\"],\"note\":\"Synthetic operator note\"}",
+          "created_at": 1793000000,
+          "id": "bf591160e84900b6558ed344d22f95567cad24a73232b3e4e5a5bf83a999a09a",
+          "kind": 31478,
+          "pubkey": "62c0a046dacce86ddd0343c6d3c7c79c2208ba0d9c9cf24a6d046d21d21f90f7",
+          "sig": "97c2db3ff44cda9437ca91101323a360ed0abe63238a21e12f6d41d4c9dc651abf76f74b3a9cfa19abea926dbc352a60c42a66ff0a61cb5ce7184d60d78d747f",
+          "tags": [
+            [
+              "d",
+              "spry-turn"
+            ],
+            [
+              "v",
+              "1"
+            ],
+            [
+              "status",
+              "open"
+            ],
+            [
+              "auth",
+              "public"
+            ],
+            [
+              "expiration",
+              "1793007200"
+            ]
+          ]
+        }
+      ],
+      "expect": [
+        "Destination"
+      ],
+      "name": "TURN port outside 3478, 5349 and 443"
+    },
+    {
+      "events": [
+        {
+          "content": "{}",
+          "created_at": 1793000000,
+          "id": "c678b255739eead4d3205549cd997de1ab6cdd7c8c123ab10d896e618e6c70a7",
+          "kind": 31478,
+          "pubkey": "62c0a046dacce86ddd0343c6d3c7c79c2208ba0d9c9cf24a6d046d21d21f90f7",
+          "sig": "5e7add996dab85fcc2ccb352cec7ef67e9757c9aa5af4dd11d2a1e0269474e726d069320284bafd3d5e3bcb6d18af49352ce84f6448ae11cd476087835e9e211",
+          "tags": [
+            [
+              "d",
+              "spry-turn"
+            ],
+            [
+              "v",
+              "1"
+            ],
+            [
+              "status",
+              "withdrawn"
+            ],
+            [
+              "auth",
+              "public"
+            ],
+            [
+              "expiration",
+              "1793007200"
+            ]
+          ]
+        },
+        {
+          "content": "{\"credentials\":\"https://relay.example/v1/public/credentials\",\"urls\":[\"turn:relay.example:3478?transport=udp\",\"turn:relay.example:3478?transport=tcp\",\"turns:relay.example:5349?transport=tcp\"],\"note\":\"Synthetic operator note\"}",
+          "created_at": 1792999940,
+          "id": "62754f23a6102b3542544b808f349ad058661b40493faa52fecdecd53d5774d6",
+          "kind": 31478,
+          "pubkey": "62c0a046dacce86ddd0343c6d3c7c79c2208ba0d9c9cf24a6d046d21d21f90f7",
+          "sig": "37e6c05b5efd00ece702aab32069f53fde80a99ae4a179c33aa1bdec081046000438ac02ec32c0a4cd47366caeb2ff76de2cfe9fa7daac04449da8d4a06ccf98",
+          "tags": [
+            [
+              "d",
+              "spry-turn"
+            ],
+            [
+              "v",
+              "1"
+            ],
+            [
+              "status",
+              "open"
+            ],
+            [
+              "auth",
+              "public"
+            ],
+            [
+              "expiration",
+              "1793007140"
+            ],
+            [
+              "g",
+              "GB"
+            ]
+          ]
+        }
+      ],
+      "expect": [
+        "withdrawn",
+        "Replay"
+      ],
+      "name": "older open after newer withdrawn"
+    },
+    {
+      "events": [
+        {
+          "content": "{\"credentials\":\"https://relay.example/v1/public/credentials\",\"urls\":[\"turn:relay.example:3478?transport=udp\",\"turn:relay.example:3478?transport=tcp\",\"turns:relay.example:5349?transport=tcp\"],\"note\":\"Synthetic operator note\"}",
+          "created_at": 1792999940,
+          "id": "62754f23a6102b3542544b808f349ad058661b40493faa52fecdecd53d5774d6",
+          "kind": 31478,
+          "pubkey": "62c0a046dacce86ddd0343c6d3c7c79c2208ba0d9c9cf24a6d046d21d21f90f7",
+          "sig": "37e6c05b5efd00ece702aab32069f53fde80a99ae4a179c33aa1bdec081046000438ac02ec32c0a4cd47366caeb2ff76de2cfe9fa7daac04449da8d4a06ccf98",
+          "tags": [
+            [
+              "d",
+              "spry-turn"
+            ],
+            [
+              "v",
+              "1"
+            ],
+            [
+              "status",
+              "open"
+            ],
+            [
+              "auth",
+              "public"
+            ],
+            [
+              "expiration",
+              "1793007140"
+            ],
+            [
+              "g",
+              "GB"
+            ]
+          ]
+        },
+        {
+          "content": "{\"credentials\":\"https://relay.example/v1/public/credentials\",\"urls\":[\"turn:relay.example:3478?transport=udp\",\"turn:relay.example:3478?transport=tcp\",\"turns:relay.example:5349?transport=tcp\"],\"note\":\"Synthetic operator note\"}",
+          "created_at": 1792999940,
+          "id": "62754f23a6102b3542544b808f349ad058661b40493faa52fecdecd53d5774d6",
+          "kind": 31478,
+          "pubkey": "62c0a046dacce86ddd0343c6d3c7c79c2208ba0d9c9cf24a6d046d21d21f90f7",
+          "sig": "37e6c05b5efd00ece702aab32069f53fde80a99ae4a179c33aa1bdec081046000438ac02ec32c0a4cd47366caeb2ff76de2cfe9fa7daac04449da8d4a06ccf98",
+          "tags": [
+            [
+              "d",
+              "spry-turn"
+            ],
+            [
+              "v",
+              "1"
+            ],
+            [
+              "status",
+              "open"
+            ],
+            [
+              "auth",
+              "public"
+            ],
+            [
+              "expiration",
+              "1793007140"
+            ],
+            [
+              "g",
+              "GB"
+            ]
+          ]
+        }
+      ],
+      "expect": [
+        "open",
+        "Replay"
+      ],
+      "name": "the same advert twice"
+    }
+  ],
+  "nodeKey": "62c0a046dacce86ddd0343c6d3c7c79c2208ba0d9c9cf24a6d046d21d21f90f7",
+  "nodeKeyRepeatedByte": 5,
+  "now": 1793000000,
+  "profile": "spry-public-advert-v1",
+  "schema": 1,
+  "synthetic": true
+}

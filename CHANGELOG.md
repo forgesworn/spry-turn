@@ -9,6 +9,20 @@
   standalone use requires no Archipelago installation.
 - Keep forwarding in the independent `spry-turn` library and executable.
   Home-network mesh integration and physical-phone acceptance remain open.
+- Add opt-in [public mode](docs/public-mode.md) for the standard profile:
+  anonymous, separately rate-limited TURN credentials and a kind 31478
+  Nostr advert published only to operator-named relays, with a shared
+  verifier and synthetic fixtures. Off by default, with no default relays.
+- Rate-limit API requests before authentication per forwarded caller, not
+  per reverse proxy, and keep owners and paired apps a place in the
+  authenticated limiter, so strangers cannot lock them out.
+- Withdraw the public advert when the relay stops being ready, and reopen it
+  when ready again, instead of leaving it up for up to two hours.
+- Issue public logins for an hour rather than ten minutes. The relay ends an
+  allocation when its login expires, so a call on one public login lasts at
+  most that long; clients fetch a fresh login and restart ICE before then.
+- Tighten advert verification: TURN URL ports must be 3478, 5349 or 443, or
+  omitted, and `expiration` must be 1 to 16 ASCII digits.
 
 ## 0.2.1 — 23 October 2026
 

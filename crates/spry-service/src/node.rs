@@ -49,7 +49,7 @@ impl ServiceState {
         let mut authority = self
             .lock()
             .map_err(|_| Refused(503, "Spry is temporarily unavailable."))?;
-        authority.rate(&format!("key:{key}"), now)?;
+        authority.key_rate(key, now)?;
         let private = self.private()?;
         if path == "/v1/peers" {
             let private = private.ok_or(Refused(404, "Not found."))?;
@@ -306,53 +306,7 @@ impl PrivateSettings {
         if port < 1024 {
             return Err("Invalid client port".into());
         }
-        let policy = if env::var("SPRY_LOCAL_TEST").as_deref() == Ok("true") {
-            RelayPolicy::LocalFixture
-        } else {
-            RelayPolicy::Public
-        };
-        let socks_proxy = env::var("SPRY_SOCKS_PROXY")
-            .ok()
-            .filter(|value| !value.is_empty())
-            .map(|value| value.parse())
-            .transpose()?;
-        let tls = env::var("SPRY_CONTROL_CA_FILE")
-            .ok()
-            .map(
-                |path| -> std::result::Result<_, Box<dyn std::error::Error>> {
-                    use rustls::pki_types::{CertificateDer, pem::PemObject};
-                    let bytes = std::fs::read(path)?;
-                    if bytes.len() > 262_144 {
-                        return Err("Control CA file is too large".into());
-                    }
-                    let mut roots = rustls::RootCertStore::empty();
-                    roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-                    let mut count = 0;
-                    for certificate in CertificateDer::pem_slice_iter(&bytes) {
-                        roots.add(certificate?)?;
-                        count += 1;
-                        if count > 16 {
-                            return Err("Too many control CA certificates".into());
-                        }
-                    }
-                    if count == 0 {
-                        return Err("No control CA certificate".into());
-                    }
-                    let config = rustls::ClientConfig::builder_with_provider(Arc::new(
-                        rustls::crypto::ring::default_provider(),
-                    ))
-                    .with_safe_default_protocol_versions()?
-                    .with_root_certificates(roots)
-                    .with_no_client_auth();
-                    Ok(Arc::new(config))
-                },
-            )
-            .transpose()?;
-        let options = RelayOptions {
-            policy,
-            socks_proxy,
-            tls,
-        };
+        let options = relay_options_from_environment()?;
         let preset_relays = env::var("SPRY_CONTROL_RELAYS")
             .ok()
             .filter(|value| !value.is_empty())
@@ -461,6 +415,58 @@ impl PrivateSettings {
         }
         Ok(Some(runtime))
     }
+}
+/// Outbound Nostr relay rules shared by private control and public adverts:
+/// certificate validation, the optional SOCKS proxy and public-address checks.
+pub(crate) fn relay_options_from_environment()
+-> std::result::Result<RelayOptions, Box<dyn std::error::Error>> {
+    let policy = if env::var("SPRY_LOCAL_TEST").as_deref() == Ok("true") {
+        RelayPolicy::LocalFixture
+    } else {
+        RelayPolicy::Public
+    };
+    let socks_proxy = env::var("SPRY_SOCKS_PROXY")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .map(|value| value.parse())
+        .transpose()?;
+    let tls = env::var("SPRY_CONTROL_CA_FILE")
+        .ok()
+        .map(
+            |path| -> std::result::Result<_, Box<dyn std::error::Error>> {
+                use rustls::pki_types::{CertificateDer, pem::PemObject};
+                let bytes = std::fs::read(path)?;
+                if bytes.len() > 262_144 {
+                    return Err("Control CA file is too large".into());
+                }
+                let mut roots = rustls::RootCertStore::empty();
+                roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+                let mut count = 0;
+                for certificate in CertificateDer::pem_slice_iter(&bytes) {
+                    roots.add(certificate?)?;
+                    count += 1;
+                    if count > 16 {
+                        return Err("Too many control CA certificates".into());
+                    }
+                }
+                if count == 0 {
+                    return Err("No control CA certificate".into());
+                }
+                let config = rustls::ClientConfig::builder_with_provider(Arc::new(
+                    rustls::crypto::ring::default_provider(),
+                ))
+                .with_safe_default_protocol_versions()?
+                .with_root_certificates(roots)
+                .with_no_client_auth();
+                Ok(Arc::new(config))
+            },
+        )
+        .transpose()?;
+    Ok(RelayOptions {
+        policy,
+        socks_proxy,
+        tls,
+    })
 }
 fn interface_address(name: &str) -> Option<Ipv6Addr> {
     let contents = std::fs::read_to_string("/proc/net/if_inet6").ok()?;

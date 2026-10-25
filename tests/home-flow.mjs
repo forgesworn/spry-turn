@@ -13,6 +13,8 @@ const args = Object.fromEntries(process.argv.slice(2).reduce((pairs, value, i, v
 const root = resolve(args['--kithmoot']), binary = resolve(args['--node-binary']), output = resolve(args['--output']);
 const nodeCount = Number(args['--nodes'] ?? 2), standingSeconds = Number(args['--standing-seconds'] ?? 0);
 assert(nodeCount === 2 || nodeCount === 3); assert(standingSeconds >= 0 && standingSeconds <= 420);
+const offlineCreator = args['--offline-creator'] === 'true';
+assert(!offlineCreator || nodeCount === 3, 'Taking the creator offline requires three nodes');
 const fixture = dirname(fileURLToPath(import.meta.url));
 const require = createRequire(join(root, 'package.json'));
 const { chromium } = require('@playwright/test');
@@ -200,19 +202,45 @@ try {
     mark('three-node group call passed');
   }
   await b.reload(); await joined(b, link, 'Generated B'); await media(b);
-  const finalValid = value => valid(value) && (nodeCount === 2 || value.pairs.length >= 2 && value.videos >= 3);
+  const finalValid = value => valid(value) && (active.length === 2 || value.pairs.length >= 2 && value.videos >= 3);
   const reloaded = await Promise.all(active.map(page => wait(() => evidence(page), finalValid, 'Reloaded two-node media missing', 90000)));
   mark('reloaded client restored its own relay routes');
+  let withoutCreator;
+  if (offlineCreator) {
+    await contexts[0].close();
+    const creatorNode = label + '-node0';
+    docker('stop', '--time', '2', creatorNode);
+    assert.equal(JSON.parse(docker('inspect', creatorNode))[0].State.Running, false);
+    active.shift();
+    // End the existing call, then reload both remaining clients. Their next
+    // call must establish fresh connections without the creator's browser,
+    // relay credentials or node being available.
+    for (const page of active) {
+      await page.locator('#leaveCall:visible, #callDockLeave:visible, #callChatBarLeave:visible').first().click();
+      await wait(() => page.locator('#callToggle').getAttribute('data-live'), value => value !== 'true', 'Previous call did not end');
+    }
+    for (let index = 0; index < active.length; index++) {
+      await active[index].reload();
+      await joined(active[index], link, 'Generated ' + (index === 0 ? 'B' : 'C'));
+    }
+    for (const page of active) await media(page);
+    withoutCreator = await Promise.all(active.map(page => wait(() => evidence(page), finalValid, 'Fresh call without the creator missing', 90000)));
+    mark('fresh two-node call passed with creator browser and Spry node stopped');
+  }
   for (let elapsed = 0; elapsed < standingSeconds; elapsed += 15) await new Promise(resolve => setTimeout(resolve, Math.min(15, standingSeconds - elapsed) * 1000));
   const afterDeadline = await Promise.all(active.map(evidence));
   await new Promise(resolve => setTimeout(resolve, 3000));
   const standing = await Promise.all(active.map((page, index) => wait(() => evidence(page), value => finalValid(value) &&
     value.frames > afterDeadline[index].frames && value.audioBytes > afterDeadline[index].audioBytes && value.audioEnergy > afterDeadline[index].audioEnergy,
     'Fresh media stopped after the credential deadline', 30000)));
-  await writeFile(output, JSON.stringify({ schema: 1, passed: true, scope: 'two-standalone-node-pairing-and-kithmoot-media',
+  await writeFile(output, JSON.stringify({ schema: 1, passed: true,
+    scope: offlineCreator ? 'standalone-nodes-fresh-call-and-renewal-without-creator' : 'two-standalone-node-pairing-and-kithmoot-media',
     binarySha256, twoNetworkNamespaces: true, externalNetworkingDisabled: false,
     pairedThroughActualUi: true, injectedIceServers: false, externalVpsPresent: false, encryptedNostrControl: true, customCaValidatedByServices: true,
-    relayOnly: true, nodeCount, standingSeconds, freshMediaAdvancesAfterStanding: true, two, group, reloaded, afterDeadline, standing, limits: ['Local Docker IPv6 bridge permits egress; signalling is pinned to the generated fixture relay. No FIPS daemon or Internet NAT', 'Generated Chromium audio/video, effects off; browser local-network checks disabled', 'Owner HTTPS UI mapped to local HTTP fixtures; no physical phone or node installation proof'] }, null, 2) + '\n');
+    relayOnly: true, nodeCount, standingSeconds, freshMediaAdvancesAfterStanding: true,
+    creatorBrowserClosed: offlineCreator, creatorNodeStopped: offlineCreator, freshCallWithoutCreator: offlineCreator,
+    remainingNodes: active.length, two, group, reloaded, withoutCreator, afterDeadline, standing,
+    limits: ['Local Docker IPv6 bridge permits egress; signalling is pinned to the generated fixture relay. No FIPS daemon or Internet NAT', 'Generated Chromium audio/video, effects off; browser local-network checks disabled', 'Owner HTTPS UI mapped to local HTTP fixtures; no physical phone or node installation proof'] }, null, 2) + '\n');
   mark('receipt saved');
 } catch (error) {
   await writeFile(output + '.failure.txt', error.stack ?? String(error), { mode: 0o600 });

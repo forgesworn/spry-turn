@@ -33,9 +33,16 @@ For the pairing service, supply `SPRY_PUBLIC_URL` (its HTTPS origin),
 Set `SPRY_STATE_FILE` to a private persistent file and, if needed,
 `SPRY_KITHMOOT_URL` to the intended calling application's HTTPS URL.
 `SPRY_ALLOWED_ORIGINS` explicitly adds HTTPS origins for other clients.
+An operator who wants to serve anyone can turn on [public mode](public-mode.md)
+in this standard profile; it is off by default and has no default relays.
 
 `spry-node` listens on loopback HTTP port 3744 behind the operator's HTTPS
-reverse proxy. It finds `spry-turn` beside itself; `SPRY_RELAY_BINARY`
+reverse proxy. That proxy must append or set `X-Forwarded-For`: requests
+are rate-limited per caller before authentication, keyed on the right-most
+entry (IPv6 grouped by /64), and without the header every caller shares the
+proxy's one allowance. Authenticated requests also have a per-key limit, in
+which owners and paired apps always keep a place. `spry-node` finds
+`spry-turn` beside itself; `SPRY_RELAY_BINARY`
 overrides that location. Standard TURN listeners and the bounded peer range
 are described in the [operator guide](operations.md). Optional certificate
 files for the relay reside under `/data/tls`; an external host adapter can
@@ -119,6 +126,16 @@ progress after 330 seconds. The [packet receipt](evidence/spry-private-nodes-pac
 separately records UDP/TCP forwarding and withdrawal on an isolated network
 with no external connectivity. Both name their exact fixture limits.
 
+The [creator-offline browser receipt](evidence/spry-creator-offline-browser-20261024.json)
+adds a fresh call after the room creator's browser closes and their actual
+Spry container stops. Both remaining clients reload and start relay-only
+audio/video, then continue receiving fresh media after 330 seconds. Run
+`tests/home-flow.mjs` with `--kithmoot <checkout> --node-binary <Linux spry-node>
+--output .local/creator-offline.json --nodes 3 --standing-seconds 330
+--offline-creator true` to reproduce it. The generated signalling relay stays
+available independently of the creator. This checks application behaviour
+and credential renewal; the receipt retains the same browser/network limits.
+
 A mesh whose routing needs an identity lookup can supply `SPRY_PEER_NAME`,
 `SPRY_PEER_RESOLVER` (a loopback DNS socket) and `SPRY_PEER_ZONE`. The optional
 adapter queries only that zone, binds the DNS response to its question and
@@ -129,3 +146,31 @@ SDK. The [FIPS/NAT packet receipt](evidence/spry-fips-two-nats-20261024.json)
 checks this adapter with two simulated home NATs, an isolated WAN and a
 separate fixture mesh anchor. Spry containers retain no extra capabilities;
 TUN and forwarding permissions belong to the fixture's host/network layer.
+
+Reproduce that packet check with Docker and a Linux `mesh-node` example
+matching the Docker engine's CPU architecture. Fetch the released FIPS
+0.4.1 archive and verify it before extraction:
+
+```sh
+mkdir -p .local/fips-fixture
+gh release download v0.4.1 --repo jmcorgan/fips \
+  --pattern checksums-linux.txt --pattern fips-0.4.1-linux-aarch64.tar.gz \
+  --dir .local/fips-fixture
+(cd .local/fips-fixture && \
+  grep '  fips-0.4.1-linux-aarch64.tar.gz$' checksums-linux.txt | sha256sum -c - && \
+  tar -xzf fips-0.4.1-linux-aarch64.tar.gz --strip-components=1)
+docker build -f tests/fixtures/fips/Dockerfile -t spry-fips-fixture:0.4.1 tests/fixtures/fips
+cargo build --locked --target aarch64-unknown-linux-gnu \
+  --example mesh-node -p spry-service
+python3 tests/fips-mesh.py \
+  --binary target/aarch64-unknown-linux-gnu/debug/examples/mesh-node \
+  --fips-dir .local/fips-fixture --output .local/fips-two-nats.json
+```
+
+On x86-64 Linux use the `linux-x86_64` archive and
+`x86_64-unknown-linux-gnu` Rust target instead. Cross-compiling requires a
+Linux linker and sysroot (for example an installed `cargo-zigbuild`); on
+macOS replace `cargo build` above with `cargo zigbuild`. Keep the existing
+worktree's target directory. The fixture removes its containers, networks
+and binary snapshot on exit. Remove downloaded binaries, archives and the
+task-owned fixture image after retaining the required receipt privately.

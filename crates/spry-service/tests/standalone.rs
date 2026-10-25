@@ -79,6 +79,8 @@ fn standalone_host_uses_owner_signatures_without_an_archipelago_installation() {
     assert!(status.contains("\"ready\":false"));
     assert!(request(address, "GET", "/nostr-provider.js", None).starts_with("HTTP/1.1 404"));
     assert!(request(address, "POST", "/v1/pairings/list", None).starts_with("HTTP/1.1 401"));
+    // Public mode is off unless the operator turns it on.
+    assert!(request(address, "POST", "/v1/public/credentials", None).starts_with("HTTP/1.1 404"));
 
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -109,4 +111,60 @@ fn standalone_host_uses_owner_signatures_without_an_archipelago_installation() {
     assert!(allowed.starts_with("HTTP/1.1 200"), "{allowed}");
     assert!(allowed.contains("\"pairings\":[]"));
     assert!(request(address, "POST", "/v1/pairings/list", Some(&auth)).starts_with("HTTP/1.1 401"));
+}
+
+fn refused_setup(extra: &[(&str, &str)]) -> String {
+    let signing = Keypair::from_secret_key(&SecretKey::from_secret_bytes([1; 32]).unwrap());
+    let reserved = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = reserved.local_addr().unwrap().port();
+    drop(reserved);
+    let mut command = Command::new(env!("CARGO_BIN_EXE_spry-node"));
+    command
+        .env_clear()
+        .env("SPRY_PUBLIC_URL", "https://relay.example")
+        .env("SPRY_OWNER_URL", "https://owner.example")
+        .env("SPRY_KITHMOOT_URL", "https://calls.example/j/")
+        .env(
+            "SPRY_OWNER_KEYS",
+            hex(&signing.x_only_public_key().0.to_byte_array()),
+        )
+        .env(
+            "SPRY_TURN_SECRET",
+            "synthetic-test-secret-not-for-deployment",
+        )
+        .env("SPRY_HTTP_PORT", port.to_string())
+        .env("SPRY_RELAY_IP", "192.0.2.1")
+        .env("SPRY_STATE_FILE", "uncreated-public-fixture/pairings.json");
+    for (name, value) in extra {
+        command.env(name, value);
+    }
+    let output = command.stdin(Stdio::null()).output().unwrap();
+    assert!(!output.status.success());
+    String::from_utf8(output.stderr).unwrap()
+}
+
+#[test]
+fn public_mode_refuses_the_private_node_profile_and_bad_settings_clearly() {
+    let private = refused_setup(&[
+        ("SPRY_PUBLIC", "true"),
+        ("SPRY_PEER_BIND", "[fd12:3456::2]:3745"),
+    ]);
+    assert!(
+        private.contains("SPRY_PUBLIC=true needs the standard profile"),
+        "{private}"
+    );
+    let region = refused_setup(&[("SPRY_PUBLIC", "true"), ("SPRY_PUBLIC_REGION", "gb")]);
+    assert!(region.contains("SPRY_PUBLIC_REGION"), "{region}");
+    let relays = refused_setup(&[
+        ("SPRY_PUBLIC", "true"),
+        ("SPRY_PUBLIC_RELAYS", r#"["ws://relay.example/"]"#),
+    ]);
+    assert!(relays.contains("SPRY_PUBLIC_RELAYS"), "{relays}");
+    assert!(!relays.contains("relay.example"), "{relays}");
+    let ported = refused_setup(&[
+        ("SPRY_PUBLIC_URL", "https://relay.example:3744"),
+        ("SPRY_PUBLIC", "true"),
+        ("SPRY_PUBLIC_RELAYS", r#"["wss://nostr.example/"]"#),
+    ]);
+    assert!(ported.contains("without a port"), "{ported}");
 }
