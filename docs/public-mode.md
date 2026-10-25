@@ -131,13 +131,19 @@ Lifecycle:
 
 - Publish when the relay first reports ready, then every 30 minutes, each
   time with a fresh `created_at` and `expiration`.
+- If the relay stops being ready while the service runs, for example
+  because its process died, publish a newer `withdrawn` advert within a few
+  seconds, waiting at most 5 seconds for relays. When it is ready again,
+  publish a fresh `open` advert and resume the 30-minute cycle.
 - On graceful shutdown, publish a newer `withdrawn` advert before stopping,
-  waiting at most 5 seconds. Its `created_at` is always later than the last
-  open advert's, even within the same second.
+  waiting at most 5 seconds. Every advert's `created_at` is later than the
+  one before, even within the same second.
 - When public mode is turned off, the next start publishes a `withdrawn`
   advert if `SPRY_PUBLIC_RELAYS` is still set. Spry keeps no record of
-  earlier adverts, so with the relays also removed, or after an abrupt
-  stop, the last advert expires within two hours.
+  earlier adverts, so with the relays also removed, or if the whole service
+  stops abruptly, the last advert expires within two hours.
+- Withdrawals are best effort: a relay that misses one keeps the last open
+  advert until it expires, while the endpoint answers 503.
 - Publish only to `SPRY_PUBLIC_RELAYS`, using the existing control-relay
   connection rules (TLS validation, SOCKS option, public-address checks). A
   relay that refuses or fails is retried on the next cycle; failures are not

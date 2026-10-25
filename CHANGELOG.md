@@ -13,6 +13,11 @@
   anonymous, separately rate-limited TURN credentials and a kind 31478
   Nostr advert published only to operator-named relays, with a shared
   verifier and synthetic fixtures. Off by default, with no default relays.
+- Rate-limit API requests before authentication per forwarded caller, not
+  per reverse proxy, and keep owners and paired apps a place in the
+  authenticated limiter, so strangers cannot lock them out.
+- Withdraw the public advert when the relay stops being ready, and reopen it
+  when ready again, instead of leaving it up for up to two hours.
 
 ## 0.2.1 — 23 October 2026
 
