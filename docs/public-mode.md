@@ -37,6 +37,19 @@ those.
 | `SPRY_PUBLIC_NOTE` | Optional operator text, at most 140 bytes, shown to people choosing a relay |
 
 There is no default relay list, region or note. Spry never fills these in.
+
+If you have no relays of your own in mind, these widely read public relays
+accepted connections on 25 October 2026. They are run by other people, are
+not checked or endorsed by the Spry project, and are only an example to
+choose from; Spry does not use them unless you set them:
+
+```sh
+SPRY_PUBLIC_RELAYS='["wss://relay.damus.io","wss://relay.primal.net","wss://nostr-pub.wellorder.net","wss://relay.nostr.info"]'
+```
+
+Relays that charge for writing, such as `wss://nostr.wine`, will not take
+the advert unless you are a member.
+
 `SPRY_PUBLIC_RELAYS` follows the same rules as `SPRY_CONTROL_RELAYS`: one to
 four distinct `wss://` URLs on DNS hostnames. Spry refuses to start, naming
 the setting, when a value is invalid. To publish an advert, `SPRY_PUBLIC_URL`
