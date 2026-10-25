@@ -18,6 +18,9 @@
   authenticated limiter, so strangers cannot lock them out.
 - Withdraw the public advert when the relay stops being ready, and reopen it
   when ready again, instead of leaving it up for up to two hours.
+- Issue public logins for an hour rather than ten minutes. The relay ends an
+  allocation when its login expires, so a call on one public login lasts at
+  most that long; clients fetch a fresh login and restart ICE before then.
 
 ## 0.2.1 — 23 October 2026
 

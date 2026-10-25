@@ -81,8 +81,11 @@ Response 200:
  "expiresAt":1793000000}
 ```
 
-- Lifetime 600 seconds. A client renews at two thirds of the remaining
-  lifetime.
+- Lifetime 3600 seconds. The relay ends an allocation when its login
+  expires and refuses to refresh it after that, so a login bounds how long
+  a call can use it. A client whose call may outlast the login fetches a
+  fresh one before `expiresAt` and restarts ICE with it; a call that ends
+  sooner needs nothing more.
 - The username label is fresh random bytes for each issue. It is not derived
   from the caller's address, origin, any key or any earlier issue, so two
   credentials cannot be linked by their usernames.

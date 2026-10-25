@@ -30,7 +30,9 @@ pub const MAX_BODY: usize = 8192;
 pub const GRANT_TTL: u64 = 30 * 24 * 60 * 60;
 /// Anonymous TURN credentials for an operator who opts in to public mode.
 pub const PUBLIC_PATH: &str = "/v1/public/credentials";
-pub const PUBLIC_TTL: u64 = 600;
+/// One hour. The relay ends an allocation when its login expires and refuses
+/// to refresh it after that, so this bounds a call on one public login.
+pub const PUBLIC_TTL: u64 = 3600;
 pub const PUBLIC_PER_MINUTE: u16 = 32;
 pub const PUBLIC_PER_SOURCE: u16 = 6;
 pub const PUBLIC_SOURCES: usize = 256;

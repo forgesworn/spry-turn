@@ -1057,8 +1057,11 @@ Response 200:
  "expiresAt":1793000000}
 ```
 
-- Lifetime 600 seconds. A client renews at two thirds of the remaining
-  lifetime.
+- Lifetime 3600 seconds. The relay ends an allocation when its login
+  expires and refuses to refresh it after that, so a login bounds how long
+  a call can use it. A client whose call may outlast the login fetches a
+  fresh one before `expiresAt` and restarts ICE with it; a call that ends
+  sooner needs nothing more.
 - The username label is fresh random bytes for each issue. It is not derived
   from the caller's address, origin, any key or any earlier issue, so two
   credentials cannot be linked by their usernames.
@@ -2414,6 +2417,9 @@ Canonical source: [CHANGELOG.md](https://github.com/forgesworn/spry-turn/blob/ma
   authenticated limiter, so strangers cannot lock them out.
 - Withdraw the public advert when the relay stops being ready, and reopen it
   when ready again, instead of leaving it up for up to two hours.
+- Issue public logins for an hour rather than ten minutes. The relay ends an
+  allocation when its login expires, so a call on one public login lasts at
+  most that long; clients fetch a fresh login and restart ICE before then.
 
 ## 0.2.1 — 23 October 2026
 

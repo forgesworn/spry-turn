@@ -468,13 +468,13 @@ fn public_credentials_are_off_by_default_and_unlinkable_when_on() {
         first.as_object().unwrap().keys().collect::<Vec<_>>(),
         ["credential", "expiresAt", "urls", "username"]
     );
-    assert_eq!(first["expiresAt"], NOW + 600);
+    assert_eq!(first["expiresAt"], NOW + 3600);
     assert_eq!(first["urls"], json!(authority.config.urls));
     let mut labels = std::collections::HashSet::new();
     for issued in [&first, &second] {
         let username = issued["username"].as_str().unwrap();
         let label = username
-            .strip_prefix(&format!("{}:pub-", NOW + 600))
+            .strip_prefix(&format!("{}:pub-", NOW + 3600))
             .unwrap();
         assert!(label.len() == 24 && label.bytes().all(|b| b.is_ascii_hexdigit()));
         assert!(labels.insert(label.to_owned()));
