@@ -169,6 +169,11 @@ own change gate applies before it builds this.
    event. A newer `withdrawn` advert removes the relay; an older `open` one
    cannot restore it. A watermark may be forgotten two hours after its
    `created_at`, since anything older has expired by then.
+   A client that keeps watermarks across restarts may store, with each,
+   the id of the event that set it, and after restoring accept that one
+   identical event once without moving the watermark, so a chosen relay
+   works before the operator next republishes. Anything older, and any
+   other event with the same `created_at`, is still refused.
 4. The credential endpoint must be exactly
    `https://<DNS hostname>/v1/public/credentials` in canonical form: no
    userinfo, port (not even `:443`), query, fragment or other path. Refuse
