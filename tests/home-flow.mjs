@@ -174,6 +174,7 @@ try {
     await page.goto(endpoints[index] + '/');
     await wait(() => page.locator('#pair').isEnabled(), Boolean, 'Pair button not ready');
     await page.getByRole('button', { name: 'Pair with KithMoot', exact: true }).click();
+    await page.getByRole('link', { name: 'Pair in this browser instead', exact: true }).click();
     await page.getByRole('button', { name: 'Pair Spry', exact: true }).click({ timeout: 30000 });
     await wait(() => page.locator('#spryPairingStatus').textContent(), text => text.includes('Paired with your Spry node'), 'Pairing not saved');
     assert.equal(new URL(page.url()).hash, '');
