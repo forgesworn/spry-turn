@@ -8,7 +8,7 @@ use mio::{
     Events, Interest, Poll, Token,
     net::{TcpListener, TcpStream, UdpSocket},
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 #[cfg(feature = "tls")]
 use std::sync::Arc;
 use std::{
@@ -24,7 +24,13 @@ const TLS: Token = Token(2);
 const MAX_PACKET: usize = 65_536;
 const HEADROOM: usize = 64;
 const MAX_QUEUE: usize = 131_072;
+// Keep ordinary control replies admissible when relayed UDP fills the queue.
+// Control traffic retains the full queue cap and its existing close policy.
+const STREAM_CONTROL_RESERVE: usize = 1024;
 const MAX_PEERS: usize = 32;
+const STREAM_READS_PER_TURN: usize = 16;
+const STREAM_BYTES_PER_TURN: usize = MAX_QUEUE;
+const STREAM_FRAMES_PER_TURN: usize = 64;
 
 fn local_bridge_address(ip: IpAddr) -> bool {
     matches!(ip, IpAddr::V4(v) if v.octets()[0] == 127 && (64..=127).contains(&v.octets()[1]))
@@ -59,6 +65,554 @@ pub struct Config {
 #[cfg(test)]
 mod policy_tests {
     use super::*;
+
+    fn drive_until(server: &mut Server, ready: impl Fn(&Server) -> bool) {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !ready(server) && Instant::now() < deadline {
+            server.poll_once(Duration::from_millis(10)).unwrap();
+        }
+        assert!(ready(server), "stream did not progress before the deadline");
+    }
+
+    fn accept_stream(server: &mut Server) {
+        let connections = server.connections.len();
+        drive_until(server, |server| server.connections.len() > connections);
+    }
+
+    fn wait_for_queued(server: &Server, token: Token, bytes: usize) {
+        let mut queued = vec![0; bytes];
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let mut received = 0;
+        while received < bytes && Instant::now() < deadline {
+            match server.connections[&token].socket.peek(&mut queued) {
+                Ok(n) => received = n,
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => (),
+                Err(error) => panic!("peek failed: {error}"),
+            }
+            std::thread::yield_now();
+        }
+        assert_eq!(received, bytes, "the valid burst is fully queued");
+    }
+
+    fn binding_response(client: &mut std::net::TcpStream, transaction: [u8; 12]) {
+        let mut header = [0; 20];
+        client.read_exact(&mut header).unwrap();
+        let len = usize::from(u16::from_be_bytes([header[2], header[3]]));
+        let mut bytes = vec![0; 20 + len];
+        bytes[..20].copy_from_slice(&header);
+        client.read_exact(&mut bytes[20..]).unwrap();
+        let response = Message::parse(&bytes).unwrap();
+        assert_eq!((response.method, response.class), (BINDING, 2));
+        assert_eq!(response.transaction, transaction);
+    }
+
+    #[test]
+    #[cfg(all(feature = "connected-udp", unix))]
+    fn stream_processes_valid_batch_larger_than_input_limit() {
+        let mut config = Config::local(vec![1; 32]);
+        config.listen.set_port(0);
+        let mut server = Server::bind(config).unwrap();
+        let mut client = std::net::TcpStream::connect(server.local_addr().unwrap()).unwrap();
+        client.set_nodelay(true).unwrap();
+        client
+            .set_write_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        accept_stream(&mut server);
+        let token = *server.connections.keys().next().unwrap();
+        socket2::SockRef::from(&server.connections[&token].socket)
+            .set_recv_buffer_size(1_048_576)
+            .unwrap();
+        socket2::SockRef::from(&client)
+            .set_send_buffer_size(1_048_576)
+            .unwrap();
+
+        let padding = vec![0x5a; 60_000];
+        let mut batch = Vec::new();
+        for value in 1..=4 {
+            let mut request = Builder::new(BINDING, 0, [value; 12]);
+            request.attr(0xc001, &padding); // Comprehension-optional padding.
+            let frame = request.finish(None);
+            assert!(frame.len() <= MAX_PACKET);
+            assert!(Message::parse(&frame).is_some());
+            batch.extend_from_slice(&frame);
+        }
+        assert!(batch.len() > MAX_QUEUE);
+        client.write_all(&batch).unwrap();
+        wait_for_queued(&server, token, batch.len());
+
+        server.stream(token, &mut [0; MAX_PACKET + HEADROOM]);
+        assert!(
+            server.connections.contains_key(&token),
+            "{} valid queued bytes must be parsed without closing at the {}-byte input cap",
+            batch.len(),
+            MAX_QUEUE
+        );
+        assert!(server.connections[&token].queued);
+        assert!(server.connections[&token].input.len() <= MAX_QUEUE);
+        // No second OS edge: the budget continuation must drain the rest.
+        server
+            .poll
+            .registry()
+            .deregister(&mut server.connections.get_mut(&token).unwrap().socket)
+            .unwrap();
+        drive_until(&mut server, |server| server.pending_streams.is_empty());
+        assert!(server.connections[&token].input.is_empty());
+        for value in 1..=4 {
+            binding_response(&mut client, [value; 12]);
+        }
+    }
+
+    #[test]
+    fn stream_retains_partial_frames_and_cleans_up_only_closed_connections() {
+        let mut config = Config::local(vec![1; 32]);
+        config.listen.set_port(0);
+        let mut server = Server::bind(config).unwrap();
+        let mut client = std::net::TcpStream::connect(server.local_addr().unwrap()).unwrap();
+        client.set_nodelay(true).unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        accept_stream(&mut server);
+        let token = *server.connections.keys().next().unwrap();
+        let requests: Vec<_> = (1..=4)
+            .map(|value| Builder::new(BINDING, 0, [value; 12]).finish(None))
+            .collect();
+
+        // A complete request and the next partial header share one read turn.
+        let mut first = requests[0].clone();
+        first.extend_from_slice(&requests[1][..9]);
+        client.write_all(&first).unwrap();
+        drive_until(&mut server, |server| {
+            server.connections[&token].input == requests[1][..9]
+        });
+        binding_response(&mut client, [1; 12]);
+
+        // Complete that header and coalesce another whole request behind it.
+        let mut next = requests[1][9..].to_vec();
+        next.extend_from_slice(&requests[2]);
+        client.write_all(&next).unwrap();
+        drive_until(&mut server, |server| {
+            server.connections[&token].input.is_empty()
+        });
+        binding_response(&mut client, [2; 12]);
+        binding_response(&mut client, [3; 12]);
+
+        let mut healthy = std::net::TcpStream::connect(server.local_addr().unwrap()).unwrap();
+        healthy
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        accept_stream(&mut server);
+        let healthy_token = *server
+            .connections
+            .keys()
+            .find(|other| **other != token)
+            .unwrap();
+        client.write_all(&[0x80, 0, 0, 0]).unwrap();
+        drive_until(&mut server, |server| {
+            !server.connections.contains_key(&token)
+        });
+        assert_eq!(client.read(&mut [0]).unwrap(), 0);
+        assert!(server.connections.contains_key(&healthy_token));
+
+        healthy.write_all(&requests[3]).unwrap();
+        drive_until(&mut server, |server| {
+            server.connections[&healthy_token].last_active
+                > server.connections[&healthy_token].created
+        });
+        binding_response(&mut healthy, [4; 12]);
+        drop(healthy);
+        drive_until(&mut server, |server| server.connections.is_empty());
+    }
+
+    #[test]
+    fn stream_processes_complete_frames_before_eof() {
+        let mut config = Config::local(vec![1; 32]);
+        config.listen.set_port(0);
+        let mut server = Server::bind(config).unwrap();
+        let mut client = std::net::TcpStream::connect(server.local_addr().unwrap()).unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        accept_stream(&mut server);
+        let mut batch = Builder::new(BINDING, 0, [1; 12]).finish(None);
+        batch.extend_from_slice(&Builder::new(BINDING, 0, [2; 12]).finish(None));
+        // The incomplete final header is discarded at EOF, after complete frames.
+        batch.extend_from_slice(&[0, 1, 0]);
+        client.write_all(&batch).unwrap();
+        client.shutdown(std::net::Shutdown::Write).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !server.connections.is_empty() && Instant::now() < deadline {
+            server.poll_once(Duration::from_millis(10)).unwrap();
+        }
+        assert!(server.connections.is_empty());
+        binding_response(&mut client, [1; 12]);
+        binding_response(&mut client, [2; 12]);
+        assert_eq!(client.read(&mut [0]).unwrap(), 0);
+    }
+
+    #[test]
+    fn stream_frame_budget_resumes_buffered_frames_without_new_readiness() {
+        let mut config = Config::local(vec![1; 32]);
+        config.listen.set_port(0);
+        let mut server = Server::bind(config).unwrap();
+        let mut client = std::net::TcpStream::connect(server.local_addr().unwrap()).unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        accept_stream(&mut server);
+        let token = *server.connections.keys().next().unwrap();
+        let mut batch = Vec::new();
+        for value in 0..=STREAM_FRAMES_PER_TURN {
+            batch.extend_from_slice(&Builder::new(BINDING, 0, [value as u8; 12]).finish(None));
+        }
+        client.write_all(&batch).unwrap();
+        wait_for_queued(&server, token, batch.len());
+        server.stream(token, &mut [0; MAX_PACKET + HEADROOM]);
+        let conn = &server.connections[&token];
+        assert!(conn.queued);
+        assert!(conn.input_offset != 0 && conn.input_offset < conn.input.len());
+        assert_eq!(
+            conn.input.len(),
+            batch.len(),
+            "consumed prefix stays in place"
+        );
+        assert_eq!(server.pending_streams.len(), 1);
+
+        server
+            .poll
+            .registry()
+            .deregister(&mut server.connections.get_mut(&token).unwrap().socket)
+            .unwrap();
+        // Consume any old listener event as well. Only the deferred work can
+        // wake the next turn, which must parse input before another read.
+        let mut old_events = Events::with_capacity(16);
+        server
+            .poll
+            .poll(&mut old_events, Some(Duration::ZERO))
+            .unwrap();
+        let started = Instant::now();
+        server.poll_once(Duration::from_secs(5)).unwrap();
+        assert!(started.elapsed() < Duration::from_secs(1));
+        assert!(server.pending_streams.is_empty());
+        assert!(server.connections[&token].input.is_empty());
+        for value in 0..=STREAM_FRAMES_PER_TURN {
+            binding_response(&mut client, [value as u8; 12]);
+        }
+    }
+
+    #[test]
+    fn deferred_streams_deduplicate_and_remove_closed_or_stale_tokens() {
+        let mut config = Config::local(vec![1; 32]);
+        config.listen.set_port(0);
+        config.max_connections = 1;
+        let mut server = Server::bind(config).unwrap();
+        for _ in 0..16 {
+            let client = std::net::TcpStream::connect(server.local_addr().unwrap()).unwrap();
+            drive_until(&mut server, |server| !server.connections.is_empty());
+            let token = *server.connections.keys().next().unwrap();
+            for _ in 0..4 {
+                server.queue_stream(token);
+            }
+            assert_eq!(server.pending_streams.len(), 1);
+            server.close(token);
+            assert!(server.pending_streams.is_empty());
+            server.queue_stream(token);
+            assert!(server.pending_streams.is_empty());
+            // A stale token is harmless even if already dequeued elsewhere.
+            server.pending_streams.push_back(token);
+            server.poll_once(Duration::from_secs(1)).unwrap();
+            assert!(server.pending_streams.is_empty());
+            drop(client);
+        }
+    }
+
+    #[test]
+    fn hot_stream_yields_to_other_clients_and_expiry_sweeps() {
+        let mut config = Config::local(vec![1; 32]);
+        config.listen.set_port(0);
+        let mut server = Server::bind(config).unwrap();
+        let mut hot = std::net::TcpStream::connect(server.local_addr().unwrap()).unwrap();
+        hot.set_nodelay(true).unwrap();
+        accept_stream(&mut server);
+        let hot_token = *server.connections.keys().next().unwrap();
+        let indication = Builder::new(BINDING, 1, [1; 12]).finish(None);
+        let backlog = indication.repeat(STREAM_FRAMES_PER_TURN * 16);
+        hot.write_all(&backlog).unwrap();
+        wait_for_queued(&server, hot_token, backlog.len());
+
+        let mut healthy = std::net::TcpStream::connect(server.local_addr().unwrap()).unwrap();
+        healthy
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        accept_stream(&mut server);
+        let healthy_token = *server
+            .connections
+            .keys()
+            .max_by_key(|token| token.0)
+            .unwrap();
+        let expired = std::net::TcpStream::connect(server.local_addr().unwrap()).unwrap();
+        accept_stream(&mut server);
+        let expired_token = *server
+            .connections
+            .keys()
+            .max_by_key(|token| token.0)
+            .unwrap();
+        server.connections.get_mut(&expired_token).unwrap().created =
+            Instant::now() - Duration::from_secs(16);
+        server.sweep_at = Instant::now();
+        let sweep_before = server.sweep_at;
+
+        let request = Builder::new(BINDING, 0, [254; 12]).finish(None);
+        healthy.write_all(&request).unwrap();
+        wait_for_queued(&server, healthy_token, request.len());
+        // Force both clients through the same bounded ready snapshot.
+        server.queue_stream(hot_token);
+        server.queue_stream(healthy_token);
+        server.poll_once(Duration::from_secs(5)).unwrap();
+        binding_response(&mut healthy, [254; 12]);
+        assert!(
+            server.connections[&hot_token].queued,
+            "hot work remains for the next turn"
+        );
+        assert!(server.pending_streams.len() <= server.config.max_connections);
+        assert!(
+            server
+                .connections
+                .values()
+                .all(|conn| conn.input.len() <= MAX_QUEUE)
+        );
+        assert!(!server.connections.contains_key(&expired_token));
+        assert!(server.sweep_at > sweep_before);
+        drop(expired);
+    }
+
+    #[test]
+    #[cfg(feature = "tls")]
+    fn tls_control_reads_consume_budget_without_plaintext_or_false_eof() {
+        #[derive(Debug)]
+        struct NoCertificate;
+        impl rustls::server::ResolvesServerCert for NoCertificate {
+            fn resolve(
+                &self,
+                _: rustls::server::ClientHello<'_>,
+            ) -> Option<Arc<rustls::sign::CertifiedKey>> {
+                None
+            }
+        }
+
+        let mut config = Config::local(vec![1; 32]);
+        config.listen.set_port(0);
+        let mut server = Server::bind(config).unwrap();
+        let mut client = std::net::TcpStream::connect(server.local_addr().unwrap()).unwrap();
+        accept_stream(&mut server);
+        let token = *server.connections.keys().next().unwrap();
+        let tls = rustls::ServerConfig::builder()
+            .with_no_client_auth()
+            .with_cert_resolver(Arc::new(NoCertificate));
+        server.connections.get_mut(&token).unwrap().tls =
+            Some(rustls::ServerConnection::new(Arc::new(tls)).unwrap());
+        // A TLS handshake-record fragment produces no application plaintext.
+        client.write_all(&[22]).unwrap();
+        wait_for_queued(&server, token, 1);
+        let mut budget = StreamBudget {
+            reads: 2,
+            bytes: 16,
+            frames: STREAM_FRAMES_PER_TURN,
+        };
+        let conn = server.connections.get_mut(&token).unwrap();
+        assert!(matches!(
+            conn.read(&mut [0; 32], &mut budget).unwrap(),
+            StreamRead::Yielded
+        ));
+        assert_eq!((budget.reads, budget.bytes), (0, 15));
+        assert!(conn.input.is_empty());
+        budget.reads = 2;
+        budget.bytes = 0;
+        assert!(matches!(
+            conn.read(&mut [0; 32], &mut budget).unwrap(),
+            StreamRead::Yielded
+        ));
+    }
+
+    #[test]
+    #[cfg(all(feature = "connected-udp", unix))]
+    fn relay_overload_preserves_stream_and_resumes_both_framing_paths() {
+        for channel in [None, Some(0x4000_u16)] {
+            let mut config = Config::local(vec![1; 32]);
+            config.listen.set_port(0);
+            let mut server = Server::bind(config).unwrap();
+            let mut client = std::net::TcpStream::connect(server.local_addr().unwrap()).unwrap();
+            client.set_nonblocking(true).unwrap();
+            socket2::SockRef::from(&client)
+                .set_recv_buffer_size(1024)
+                .unwrap();
+            accept_stream(&mut server);
+            let token = *server.connections.keys().next().unwrap();
+            let key = Client::Stream(token);
+            socket2::SockRef::from(&server.connections[&token].socket)
+                .set_send_buffer_size(1024)
+                .unwrap();
+            let peer = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+            let peer_address = peer.local_addr().unwrap();
+            let relay_socket = UdpSocket::bind("127.0.0.1:0".parse().unwrap()).unwrap();
+            let address = relay_socket.local_addr().unwrap();
+            let relay_token = server.relays.reserve(key);
+            let expires = Instant::now() + Duration::from_secs(60);
+            // Generated authorised state isolates overload from the separately
+            // tested authentication path; both actual UDP framing branches run.
+            server.allocations.insert(
+                key,
+                Allocation {
+                    socket: relay_socket,
+                    client_socket: None,
+                    token: relay_token,
+                    address,
+                    username: "overload-fixture".into(),
+                    transaction: [1; 12],
+                    expires,
+                    permissions: vec![Permission {
+                        ip: peer_address.ip(),
+                        expires,
+                    }],
+                    channels: channel
+                        .map(|number| Channel {
+                            number,
+                            peer: peer_address,
+                            expires,
+                        })
+                        .into_iter()
+                        .collect(),
+                    bandwidth: Bucket::new(64 * 1024 * 1024, 128 * 1024 * 1024, Instant::now()),
+                },
+            );
+
+            let block = vec![0x5a; 32_768];
+            let mut expected = 0;
+            for _ in 0..1024 {
+                server.send_client(key, &block);
+                expected += block.len();
+                let conn = server
+                    .connections
+                    .get(&token)
+                    .expect("bounded fill stays connected");
+                if conn.written < conn.output.len() {
+                    break;
+                }
+            }
+            let conn = server.connections.get_mut(&token).unwrap();
+            let pending = conn.output.len() - conn.written;
+            assert!(pending != 0, "socket is genuinely backpressured");
+            let fill = MAX_QUEUE - STREAM_CONTROL_RESERVE - pending;
+            conn.queue(&vec![0x5a; fill]).unwrap();
+            expected += fill;
+            let queued = conn.output.clone();
+            let written = conn.written;
+
+            let payload = vec![0x7e; 2048];
+            peer.send_to(&payload, address).unwrap();
+            let mut scratch = vec![0; MAX_PACKET + HEADROOM];
+            let wait_for_peer = |server: &Server| {
+                let queued_by = Instant::now() + Duration::from_secs(2);
+                let mut peek = [0; 2048];
+                loop {
+                    match server.allocations[&key].socket.peek_from(&mut peek) {
+                        Ok((n, from)) => {
+                            assert_eq!((n, from), (payload.len(), peer_address));
+                            break;
+                        }
+                        Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                            assert!(Instant::now() < queued_by, "peer datagram did not arrive");
+                            std::thread::yield_now();
+                        }
+                        Err(e) => panic!("peer peek failed: {e}"),
+                    }
+                }
+            };
+            wait_for_peer(&server);
+            server.receive_peer(relay_token, &mut scratch);
+            assert!(
+                server.connections.contains_key(&token),
+                "UDP overload must retain control stream"
+            );
+            assert!(server.allocations.contains_key(&key));
+            let conn = &server.connections[&token];
+            assert_eq!(
+                (&conn.output, conn.written),
+                (&queued, written),
+                "drop cannot truncate or partly queue a frame"
+            );
+            assert_eq!(server.stats.dropped_packets, 1);
+            assert_eq!(
+                (server.stats.forwarded_packets, server.stats.forwarded_bytes),
+                (0, 0)
+            );
+
+            // Ordinary control traffic still has space within the same cap.
+            server.send_client(key, b"ctrl");
+            expected += 4;
+            assert!(server.connections.contains_key(&token));
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let mut received = Vec::new();
+            while received.len() < expected && Instant::now() < deadline {
+                match client.read(&mut scratch) {
+                    Ok(0) => panic!("control stream closed while draining"),
+                    Ok(n) => received.extend_from_slice(&scratch[..n]),
+                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => (),
+                    Err(e) => panic!("drain failed: {e}"),
+                }
+                server.poll_once(Duration::from_millis(1)).unwrap();
+            }
+            assert_eq!(received.len(), expected);
+            assert!(received[..expected - 4].iter().all(|byte| *byte == 0x5a));
+            assert_eq!(&received[expected - 4..], b"ctrl");
+            assert!(server.connections[&token].output.is_empty());
+
+            peer.send_to(&payload, address).unwrap();
+            wait_for_peer(&server);
+            server.receive_peer(relay_token, &mut scratch);
+            assert_eq!(server.stats.dropped_packets, 1);
+            assert_eq!(
+                (server.stats.forwarded_packets, server.stats.forwarded_bytes),
+                (1, payload.len() as u64)
+            );
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let mut bytes = Vec::new();
+            loop {
+                match client.read(&mut scratch) {
+                    Ok(0) => panic!("resumed stream closed"),
+                    Ok(n) => bytes.extend_from_slice(&scratch[..n]),
+                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => (),
+                    Err(e) => panic!("resumed read failed: {e}"),
+                }
+                server.poll_once(Duration::from_millis(1)).unwrap();
+                if wire::frame_len(&bytes).is_some_and(|len| len == bytes.len()) {
+                    break;
+                }
+                assert!(Instant::now() < deadline, "resumed frame did not drain");
+            }
+            if let Some(number) = channel {
+                assert_eq!(wire::channel(&bytes), Some((number, payload.as_slice())));
+            } else {
+                let indication = Message::parse(&bytes).unwrap();
+                assert_eq!((indication.method, indication.class), (DATA_METHOD, 1));
+                assert_eq!(indication.attr(DATA), Some(payload.as_slice()));
+            }
+            // Control overload still uses the original full-cap close policy.
+            server
+                .connections
+                .get_mut(&token)
+                .unwrap()
+                .queue(&vec![0; MAX_QUEUE])
+                .unwrap();
+            server.send_client(key, b"x");
+            assert!(!server.connections.contains_key(&token));
+            assert!(!server.allocations.contains_key(&key));
+            assert_eq!(server.stats.dropped_packets, 1);
+        }
+    }
 
     #[test]
     #[cfg(all(feature = "connected-udp", unix))]
@@ -359,13 +913,46 @@ struct Allocation {
     bandwidth: Bucket,
 }
 
+enum StreamRead {
+    Data,
+    Pending,
+    Closed,
+    Yielded,
+}
+
+struct StreamBudget {
+    reads: usize,
+    bytes: usize,
+    frames: usize,
+}
+
+impl StreamBudget {
+    fn new() -> Self {
+        Self {
+            reads: STREAM_READS_PER_TURN,
+            bytes: STREAM_BYTES_PER_TURN,
+            frames: STREAM_FRAMES_PER_TURN,
+        }
+    }
+
+    fn take_read(&mut self) -> bool {
+        if self.reads == 0 || self.bytes == 0 {
+            return false;
+        }
+        self.reads -= 1;
+        true
+    }
+}
+
 struct Connection {
     socket: TcpStream,
     peer: SocketAddr,
     input: Vec<u8>,
+    input_offset: usize,
     output: Vec<u8>,
     written: usize,
     writable_interest: bool,
+    queued: bool,
     last_active: Instant,
     created: Instant,
     #[cfg(feature = "tls")]
@@ -406,53 +993,79 @@ impl Connection {
         Ok(())
     }
 
-    fn read(&mut self, scratch: &mut [u8]) -> io::Result<bool> {
+    fn read(&mut self, scratch: &mut [u8], budget: &mut StreamBudget) -> io::Result<StreamRead> {
+        // Leave the consumed prefix in place on a frame-budget yield; compact
+        // only when another read needs space, avoiding a copy per frame.
+        if self.input_offset == self.input.len() {
+            self.input.clear();
+        } else if self.input_offset != 0 {
+            self.input.drain(..self.input_offset);
+        }
+        self.input_offset = 0;
         loop {
+            if !budget.take_read() {
+                return Ok(StreamRead::Yielded);
+            }
+            let capacity = MAX_QUEUE
+                .saturating_sub(self.input.len())
+                .min(scratch.len())
+                .min(budget.bytes);
+            if capacity == 0 {
+                return Err(io::Error::other("stream input limit"));
+            }
+            let scratch = &mut scratch[..capacity];
             #[cfg(feature = "tls")]
-            let read = if let Some(tls) = &mut self.tls {
-                match tls.read_tls(&mut self.socket) {
-                    Ok(0) => return Ok(false),
-                    Ok(_) => {
-                        tls.process_new_packets().map_err(io::Error::other)?;
+            if let Some(tls) = &mut self.tls {
+                // A prior TLS read can leave decoded records behind a yield.
+                // Drain them before waiting for another socket readiness edge.
+                match tls.reader().read(scratch) {
+                    Ok(0) => return Ok(StreamRead::Closed),
+                    Ok(n) => {
+                        self.input.extend_from_slice(&scratch[..n]);
+                        budget.bytes -= n;
+                        self.last_active = Instant::now();
+                        return Ok(StreamRead::Data);
                     }
-                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
+                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => (),
+                    Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
                     Err(e) => return Err(e),
                 }
-                loop {
-                    match tls.reader().read(scratch) {
-                        Ok(0) => break,
-                        Ok(n) => {
-                            if self.input.len() + n > MAX_QUEUE {
-                                return Err(io::Error::other("stream input limit"));
-                            }
-                            self.input.extend_from_slice(&scratch[..n]);
-                        }
-                        Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
-                        Err(e) => return Err(e),
-                    }
+                if !budget.take_read() {
+                    return Ok(StreamRead::Yielded);
                 }
-                self.last_active = Instant::now();
+                // Charge encrypted/control work too. A nonzero capacity keeps
+                // this bounded reader from turning an exhausted budget into EOF.
+                let mut socket = (&mut self.socket).take(capacity as u64);
+                match tls.read_tls(&mut socket) {
+                    Ok(0) => return Ok(StreamRead::Closed),
+                    Ok(n) => {
+                        budget.bytes -= n;
+                        tls.process_new_packets().map_err(io::Error::other)?;
+                        self.last_active = Instant::now();
+                    }
+                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                        return Ok(StreamRead::Pending);
+                    }
+                    Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                    Err(e) => return Err(e),
+                }
                 continue;
-            } else {
-                self.socket.read(scratch)
-            };
-            #[cfg(not(feature = "tls"))]
-            let read = self.socket.read(scratch);
-            match read {
-                Ok(0) => return Ok(false),
+            }
+            match self.socket.read(scratch) {
+                Ok(0) => return Ok(StreamRead::Closed),
                 Ok(n) => {
-                    if self.input.len() + n > MAX_QUEUE {
-                        return Err(io::Error::other("stream input limit"));
-                    }
                     self.input.extend_from_slice(&scratch[..n]);
+                    budget.bytes -= n;
                     self.last_active = Instant::now();
+                    return Ok(StreamRead::Data);
                 }
-                Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    return Ok(StreamRead::Pending);
+                }
                 Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
                 Err(e) => return Err(e),
             }
         }
-        Ok(true)
     }
 
     fn flush(&mut self) -> io::Result<bool> {
@@ -512,6 +1125,7 @@ pub struct Server {
     relay_ports: HashSet<u16>,
     next_relay_port: u16,
     connections: HashMap<Token, Connection>,
+    pending_streams: VecDeque<Token>,
     next_token: usize,
     nonces: auth::Nonces,
     requests: Bucket,
@@ -710,6 +1324,7 @@ impl Server {
             relay_ports: HashSet::new(),
             next_relay_port,
             connections: HashMap::new(),
+            pending_streams: VecDeque::new(),
             next_token: 3,
             nonces: auth::Nonces::new()
                 .map_err(|_| io::Error::other("OS randomness unavailable"))?,
@@ -789,7 +1404,11 @@ impl Server {
 
     pub fn poll_once(&mut self, timeout: Duration) -> io::Result<()> {
         let mut events = std::mem::replace(&mut self.events, Events::with_capacity(0));
-        let wait = timeout.min(self.sweep_at.saturating_duration_since(Instant::now()));
+        let wait = if self.pending_streams.is_empty() {
+            timeout.min(self.sweep_at.saturating_duration_since(Instant::now()))
+        } else {
+            Duration::ZERO
+        };
         if let Err(e) = self.poll.poll(&mut events, Some(wait)) {
             self.events = events;
             return if e.kind() == io::ErrorKind::Interrupted {
@@ -818,8 +1437,20 @@ impl Server {
                 #[cfg(feature = "connected-udp")]
                 self.receive_client_socket(token, &mut input);
             } else {
-                self.stream(token, &mut input);
+                self.queue_stream(token);
             }
+        }
+        // A yielded stream waits until the next poll, so each ready client and
+        // expiry sweep gets a turn even when one stream stays continuously hot.
+        let ready_streams = self.pending_streams.len();
+        for _ in 0..ready_streams {
+            let Some(token) = self.pending_streams.pop_front() else {
+                break;
+            };
+            if let Some(conn) = self.connections.get_mut(&token) {
+                conn.queued = false;
+            }
+            self.stream(token, &mut input);
         }
         self.input = input;
         self.events = events;
@@ -830,6 +1461,12 @@ impl Server {
     }
 
     fn send_client(&mut self, client: Client, bytes: &[u8]) {
+        self.send_client_packet(client, bytes, false);
+    }
+
+    /// Returns whether the whole packet was accepted. UDP relay overload drops
+    /// the new packet; it must not truncate queued stream frames or allocations.
+    fn send_client_packet(&mut self, client: Client, bytes: &[u8], relay_payload: bool) -> bool {
         match client {
             Client::Datagram(peer) => {
                 #[cfg(feature = "connected-udp")]
@@ -846,24 +1483,47 @@ impl Server {
                 let result = self.listener.send_to(bytes, peer);
                 if result.is_err() {
                     self.stats.dropped_packets += 1;
+                    false
+                } else {
+                    true
                 }
             }
             Client::Stream(token) => {
                 let Some(conn) = self.connections.get_mut(&token) else {
-                    return;
+                    if relay_payload {
+                        self.stats.dropped_packets += 1;
+                    }
+                    return false;
                 };
+                let pending = conn.output.len() - conn.written;
+                if relay_payload
+                    && bytes.len() > (MAX_QUEUE - STREAM_CONTROL_RESERVE).saturating_sub(pending)
+                {
+                    self.stats.dropped_packets += 1;
+                    return false;
+                }
                 let result = conn.queue(bytes).and_then(|()| conn.flush());
-                match result {
+                let accepted = match result {
                     Ok(pending) => {
                         if conn
                             .update_interest(self.poll.registry(), token, pending)
                             .is_err()
                         {
                             self.close(token);
+                            false
+                        } else {
+                            true
                         }
                     }
-                    Err(_) => self.close(token),
+                    Err(_) => {
+                        self.close(token);
+                        false
+                    }
+                };
+                if !accepted && relay_payload {
+                    self.stats.dropped_packets += 1;
                 }
+                accepted
             }
         }
     }
@@ -925,9 +1585,11 @@ impl Server {
                     socket,
                     peer,
                     input: Vec::with_capacity(4096),
+                    input_offset: 0,
                     output: Vec::with_capacity(4096),
                     written: 0,
                     writable_interest: false,
+                    queued: false,
                     last_active: now,
                     created: now,
                     #[cfg(feature = "tls")]
@@ -937,45 +1599,71 @@ impl Server {
         }
     }
 
-    fn stream(&mut self, token: Token, scratch: &mut [u8]) {
-        let Some(mut conn) = self.connections.remove(&token) else {
+    fn queue_stream(&mut self, token: Token) {
+        let Some(conn) = self.connections.get_mut(&token) else {
             return;
         };
-        if !matches!(conn.read(scratch), Ok(true)) {
-            self.connections.insert(token, conn);
-            self.close(token);
-            return;
+        if !conn.queued {
+            conn.queued = true;
+            self.pending_streams.push_back(token);
         }
-        let peer = conn.peer;
-        let mut bytes = std::mem::take(&mut conn.input);
-        self.connections.insert(token, conn);
-        let mut used = 0;
-        let mut invalid = false;
-        while let Some(len) = wire::frame_len(&bytes[used..]) {
-            if len == 0 || len > MAX_PACKET {
-                invalid = true;
-                break;
+    }
+
+    fn stream(&mut self, token: Token, scratch: &mut [u8]) {
+        let mut budget = StreamBudget::new();
+        let mut yielded = false;
+        loop {
+            let Some(conn) = self.connections.get_mut(&token) else {
+                return;
+            };
+            let peer = conn.peer;
+            let bytes = std::mem::take(&mut conn.input);
+            let mut used = conn.input_offset;
+            let mut invalid = false;
+            while budget.frames != 0 {
+                let Some(len) = wire::frame_len(&bytes[used..]) else {
+                    break;
+                };
+                if len == 0 || len > MAX_PACKET {
+                    invalid = true;
+                    break;
+                }
+                if bytes.len() - used < len {
+                    break;
+                }
+                self.receive(Client::Stream(token), peer, &bytes[used..used + len]);
+                used += len;
+                budget.frames -= 1;
+                if !self.connections.contains_key(&token) {
+                    return;
+                }
             }
-            if bytes.len() - used < len {
-                break;
-            }
-            self.receive(Client::Stream(token), peer, &bytes[used..used + len]);
-            used += len;
-            if !self.connections.contains_key(&token) {
+            if invalid {
+                self.close(token);
                 return;
             }
-        }
-        if invalid {
-            self.close(token);
-            return;
-        }
-        if used == bytes.len() {
-            bytes.clear();
-        } else if used != 0 {
-            bytes.drain(..used);
+            if let Some(conn) = self.connections.get_mut(&token) {
+                conn.input = bytes;
+                conn.input_offset = used;
+                if budget.frames == 0 {
+                    yielded = true;
+                    break;
+                }
+                match conn.read(scratch, &mut budget) {
+                    Ok(StreamRead::Data) => (),
+                    Ok(StreamRead::Pending) => break,
+                    Ok(StreamRead::Yielded) => {
+                        yielded = true;
+                        break;
+                    }
+                    Ok(StreamRead::Closed) | Err(_) => {
+                        self.close(token);
+                        return;
+                    }
+                }
+            }
         }
         if let Some(conn) = self.connections.get_mut(&token) {
-            conn.input = bytes;
             match conn.flush() {
                 Ok(pending) => {
                     if conn
@@ -988,10 +1676,16 @@ impl Server {
                 Err(_) => self.close(token),
             }
         }
+        if yielded {
+            self.queue_stream(token);
+        }
     }
 
     fn close(&mut self, token: Token) {
         if let Some(mut conn) = self.connections.remove(&token) {
+            if conn.queued {
+                self.pending_streams.retain(|queued| *queued != token);
+            }
             let _ = self.poll.registry().deregister(&mut conn.socket);
         }
         self.remove_allocation(Client::Stream(token));
@@ -1671,7 +2365,9 @@ impl Server {
                     HEADROOM + n
                 };
                 input[HEADROOM + n..end].fill(0);
-                self.send_client(client, &input[begin..end]);
+                if !self.send_client_packet(client, &input[begin..end], true) {
+                    continue;
+                }
             } else {
                 // Data indications also use the reserved prefix of this buffer.
                 if n > 65_440 {
@@ -1697,7 +2393,9 @@ impl Server {
                 output[data_start - 4..data_start - 2].copy_from_slice(&DATA.to_be_bytes());
                 output[data_start - 2..data_start].copy_from_slice(&(n as u16).to_be_bytes());
                 output[data_start + n..len].fill(0);
-                self.send_client(client, &output[..len]);
+                if !self.send_client_packet(client, &output[..len], true) {
+                    continue;
+                }
             }
             self.stats.forwarded_packets += 1;
             self.stats.forwarded_bytes += n as u64;
