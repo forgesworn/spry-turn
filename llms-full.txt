@@ -1278,6 +1278,21 @@ request rate in code. It has no per-room or application membership policy.
 The allocation limit does not reserve memory or raise the process's file
 descriptor limit. Authentication and stream setup also consume resources.
 
+TCP/TLS input is parsed between reads: a burst of valid frames can exceed
+the 128 KiB input limit in total without requiring a larger queue. Each
+stream gets at most 64 frames, 16 read attempts and 128 KiB of read work per
+poll turn; TLS counts both encrypted input and decoded plaintext. Unfinished
+work resumes on the next poll without waiting for a new readiness edge.
+The 64 KiB frame limit and 128 KiB output queue limit still apply. These
+bounds prevent one busy stream from monopolising stream dispatch; they are
+not a bandwidth or end-to-end latency guarantee.
+
+Relayed UDP payloads reserve 1 KiB within the stream output cap for ordinary
+control replies. If a complete ChannelData frame or Data indication cannot
+fit, the new datagram is dropped and counted without closing the allocation
+or altering queued frames. Forwarded counters exclude those dropped bytes.
+Control traffic that exceeds the full output cap still closes the stream.
+
 On a concrete IPv4 listener the default optimisation uses one client-facing
 connected UDP socket plus one peer-facing relay socket per UDP allocation.
 Budget at least those descriptors, listeners, stream connections and host
