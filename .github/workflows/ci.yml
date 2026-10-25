@@ -42,6 +42,7 @@ jobs:
       - run: python3 tests/stress.py --binary target/release/spry-turn --seconds 15 --tls --output .local/ci-stress.json
       - run: npm ci --ignore-scripts
       - run: npx playwright install --with-deps chromium
+      - run: node tests/pairing-handoff.mjs
       - run: python3 tests/browser.py --tls --relay-ports 49160:49191
   fuzz:
     runs-on: ubuntu-latest

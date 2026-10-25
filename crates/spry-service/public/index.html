@@ -3,6 +3,15 @@
 <body><main><p class="eyebrow">YOUR SPRY RELAY</p><h1>Calls, through your relay.</h1>
 <p>Pair Spry with KithMoot once. KithMoot will give the people in your calls access automatically.</p>
 <button id="pair">Pair with KithMoot</button><p id="status" role="status" aria-live="polite"></p>
+<section id="handoff" hidden aria-label="Pair KithMoot">
+<p>Open the KithMoot app where you are already signed in.</p>
+<p><a id="open-app" class="button">Open KithMoot app</a></p>
+<label for="pairing-link">Pairing link</label>
+<input id="pairing-link" type="text" readonly autocomplete="off" spellcheck="false">
+<button id="copy-link" type="button">Copy pairing link</button>
+<p class="quiet">Or paste the link in KithMoot → Settings → Connections → Spry. The link is private, works once and expires shortly.</p>
+<p><a id="open-browser" rel="noreferrer">Pair in this browser instead</a></p>
+</section>
 <details><summary>Manage paired devices</summary><button id="load">Show paired devices</button><ul id="devices"></ul>
 <p>Removing a pairing stops new call access. Existing access can take up to five minutes to expire.</p></details>
 <p class="quiet">Your node handles relay access. Room membership and media keys stay in KithMoot.</p></main>
