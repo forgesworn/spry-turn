@@ -24,6 +24,7 @@ These files provide navigation and source context for readers and tools. They do
 
 ## Operate and support
 
+- [Public mode](https://github.com/forgesworn/spry-turn/blob/main/docs/public-mode.md): Opt-in anonymous credentials, the kind 31478 advert and the client rules; off by default.
 - [Independent operation](https://github.com/forgesworn/spry-turn/blob/main/docs/operations.md): Bounded relay ports, firewall/NAT plan, secret rotation, TLS and limits.
 - [Security](https://github.com/forgesworn/spry-turn/blob/main/SECURITY.md): Reporting channel and transport/credential boundaries.
 - [Support and donations](https://github.com/forgesworn/spry-turn/blob/main/SUPPORT.md): Bug reports and established ForgeSworn funding destinations.

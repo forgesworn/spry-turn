@@ -24,6 +24,7 @@ const documents = [
   ['Get started', 'docs/standalone.md', 'Standalone service and libraries', 'Independent service, reusable Rust libraries and optional Archipelago adapter.'],
   ['Get started', 'docs/api.md', 'Rust and WASM API', 'Cargo features, configuration, native methods and PacketArena.'],
   ['Get started', 'docs/coturn-compatibility.md', 'Coturn compatibility', 'Feature map, configuration concepts and migration gaps.'],
+  ['Operate and support', 'docs/public-mode.md', 'Public mode', 'Opt-in anonymous credentials, the kind 31478 advert and the client rules; off by default.'],
   ['Operate and support', 'docs/operations.md', 'Independent operation', 'Bounded relay ports, firewall/NAT plan, secret rotation, TLS and limits.'],
   ['Operate and support', 'SECURITY.md', 'Security', 'Reporting channel and transport/credential boundaries.'],
   ['Operate and support', 'SUPPORT.md', 'Support and donations', 'Bug reports and established ForgeSworn funding destinations.'],

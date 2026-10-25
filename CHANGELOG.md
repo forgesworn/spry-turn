@@ -9,6 +9,10 @@
   standalone use requires no Archipelago installation.
 - Keep forwarding in the independent `spry-turn` library and executable.
   Home-network mesh integration and physical-phone acceptance remain open.
+- Add opt-in [public mode](docs/public-mode.md) for the standard profile:
+  anonymous, separately rate-limited TURN credentials and a kind 31478
+  Nostr advert published only to operator-named relays, with a shared
+  verifier and synthetic fixtures. Off by default, with no default relays.
 
 ## 0.2.1 — 23 October 2026
 
