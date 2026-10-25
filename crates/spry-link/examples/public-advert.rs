@@ -72,6 +72,13 @@ fn main() {
         }
     }
     let far = sign(&node, tags, content, NOW);
+    let (mut tags, content) = advert::open_parts(&offer(), None, NOW).unwrap();
+    for tag in &mut tags {
+        if tag[0] == "expiration" {
+            tag[1] = format!("+{}", NOW + 60);
+        }
+    }
+    let signed_expiration = sign(&node, tags, content, NOW);
     let future = open_at(&node, NOW + advert::MAX_FUTURE + 1);
     let mut literal = offer();
     literal.credentials = "https://192.0.2.1/v1/public/credentials".into();
@@ -80,6 +87,9 @@ fn main() {
     let mut mismatched = offer();
     mismatched.urls[1] = "turn:other.example:3478?transport=tcp".into();
     let mismatched = raw_open(&node, &mismatched, NOW);
+    let mut other_port = offer();
+    other_port.urls[1] = "turn:relay.example:22?transport=tcp".into();
+    let other_port = raw_open(&node, &other_port, NOW);
 
     let cases = vec![
         case("valid open advert", vec![open.clone()]),
@@ -88,8 +98,10 @@ fn main() {
         case("missing expiration", vec![unexpiring]),
         case("expiration more than two hours ahead", vec![far]),
         case("created_at more than ten minutes ahead", vec![future]),
+        case("expiration with a sign", vec![signed_expiration]),
         case("IP-literal credential endpoint", vec![literal]),
         case("TURN host differs from the endpoint", vec![mismatched]),
+        case("TURN port outside 3478, 5349 and 443", vec![other_port]),
         case(
             "older open after newer withdrawn",
             vec![withdrawn, open.clone()],

@@ -21,6 +21,12 @@ pub const MAX_FUTURE: u64 = 10 * 60;
 pub const MAX_NOTE: usize = 140;
 pub const MAX_URLS: usize = 4;
 const MAX_URL: usize = 256;
+/// TURN ports a client will contact: the TURN and TURN-over-TLS defaults,
+/// and 443. Omitted means the scheme's default. Anything else could aim
+/// clients at an unrelated service on the same host.
+pub const TURN_PORTS: [&str; 3] = ["3478", "5349", "443"];
+/// Longest `expiration` value: digits only, enough for any real time.
+const MAX_EXPIRATION_DIGITS: usize = 16;
 /// Hard ceiling on transport keys one [`AdvertBook`] tracks.
 pub const MAX_TRACKED: usize = 1024;
 
@@ -120,11 +126,8 @@ fn turn_host(uri: &str) -> Result<&str> {
     }
     let host = match address.rsplit_once(':') {
         Some((host, port)) => {
-            if port.is_empty()
-                || port.len() > 5
-                || !port.bytes().all(|byte| byte.is_ascii_digit())
-                || port.parse::<u16>().map_or(true, |port| port == 0)
-            {
+            // Exact spellings only, so no leading zeros or signs.
+            if !TURN_PORTS.contains(&port) {
                 return Err(Refused::Destination);
             }
             host
@@ -219,11 +222,14 @@ pub fn verify(event: &Event, now: u64) -> Result<Advert> {
     {
         return Err(Refused::Destination);
     }
-    let expires_at: u64 = event
-        .tag("expiration")
-        .map_err(|_| Refused::Expired)?
-        .parse()
-        .map_err(|_| Refused::Expired)?;
+    let expiration = event.tag("expiration").map_err(|_| Refused::Expired)?;
+    // `u64::from_str` would also accept a leading `+`.
+    if !(1..=MAX_EXPIRATION_DIGITS).contains(&expiration.len())
+        || !expiration.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return Err(Refused::Expired);
+    }
+    let expires_at: u64 = expiration.parse().map_err(|_| Refused::Expired)?;
     if event.created_at > now.saturating_add(MAX_FUTURE)
         || expires_at <= now
         || expires_at > event.created_at.saturating_add(MAX_LIFETIME)
@@ -356,6 +362,11 @@ mod tests {
             "turn:other.example:3478?transport=udp",
             "turns:relay.example:5349?transport=udp",
             "turn:relay.example:0",
+            "turn:relay.example:22?transport=tcp",
+            "turn:relay.example:8080?transport=udp",
+            "turn:relay.example:03478?transport=udp",
+            "turn:relay.example:+3478?transport=udp",
+            "turn:relay.example:?transport=udp",
             "turn:relay.example:3478?transport=udp&x=1",
             "stun:relay.example:3478",
             "turn:user@relay.example:3478",
@@ -363,6 +374,15 @@ mod tests {
             let mut offer = offer();
             offer.urls = vec![uri.into()];
             assert!(offer.validate().is_err(), "{uri}");
+        }
+        for uri in [
+            "turn:relay.example?transport=udp",
+            "turns:relay.example:443?transport=tcp",
+            "turn:relay.example:5349",
+        ] {
+            let mut offer = offer();
+            offer.urls = vec![uri.into()];
+            assert!(offer.validate().is_ok(), "{uri}");
         }
         let mut long = offer();
         long.note = Some("x".repeat(MAX_NOTE + 1));

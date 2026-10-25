@@ -239,6 +239,44 @@
     {
       "events": [
         {
+          "content": "{\"credentials\":\"https://relay.example/v1/public/credentials\",\"urls\":[\"turn:relay.example:3478?transport=udp\",\"turn:relay.example:3478?transport=tcp\",\"turns:relay.example:5349?transport=tcp\"],\"note\":\"Synthetic operator note\"}",
+          "created_at": 1793000000,
+          "id": "4916ee936daf566be232728d2f1a19e5a82a6a41dbc1c7500e7c08646cd5903f",
+          "kind": 31478,
+          "pubkey": "62c0a046dacce86ddd0343c6d3c7c79c2208ba0d9c9cf24a6d046d21d21f90f7",
+          "sig": "6c3f609c8920f8d2053b26bd3ae21774b7bcb9a632a7ae53d3c7ddbac4ac37cdfee680843c35f3d8d70320106ed0964fe16c7276bc4fd9306d68687146889171",
+          "tags": [
+            [
+              "d",
+              "spry-turn"
+            ],
+            [
+              "v",
+              "1"
+            ],
+            [
+              "status",
+              "open"
+            ],
+            [
+              "auth",
+              "public"
+            ],
+            [
+              "expiration",
+              "+1793000060"
+            ]
+          ]
+        }
+      ],
+      "expect": [
+        "Expired"
+      ],
+      "name": "expiration with a sign"
+    },
+    {
+      "events": [
+        {
           "content": "{\"credentials\":\"https://192.0.2.1/v1/public/credentials\",\"urls\":[\"turn:192.0.2.1:3478?transport=udp\"],\"note\":\"Synthetic operator note\"}",
           "created_at": 1793000000,
           "id": "694bed80db63144b8101d0baf293d11d1dcf70255972a06e86337fdec8046100",
@@ -311,6 +349,44 @@
         "Destination"
       ],
       "name": "TURN host differs from the endpoint"
+    },
+    {
+      "events": [
+        {
+          "content": "{\"credentials\":\"https://relay.example/v1/public/credentials\",\"urls\":[\"turn:relay.example:3478?transport=udp\",\"turn:relay.example:22?transport=tcp\",\"turns:relay.example:5349?transport=tcp\"],\"note\":\"Synthetic operator note\"}",
+          "created_at": 1793000000,
+          "id": "bf591160e84900b6558ed344d22f95567cad24a73232b3e4e5a5bf83a999a09a",
+          "kind": 31478,
+          "pubkey": "62c0a046dacce86ddd0343c6d3c7c79c2208ba0d9c9cf24a6d046d21d21f90f7",
+          "sig": "97c2db3ff44cda9437ca91101323a360ed0abe63238a21e12f6d41d4c9dc651abf76f74b3a9cfa19abea926dbc352a60c42a66ff0a61cb5ce7184d60d78d747f",
+          "tags": [
+            [
+              "d",
+              "spry-turn"
+            ],
+            [
+              "v",
+              "1"
+            ],
+            [
+              "status",
+              "open"
+            ],
+            [
+              "auth",
+              "public"
+            ],
+            [
+              "expiration",
+              "1793007200"
+            ]
+          ]
+        }
+      ],
+      "expect": [
+        "Destination"
+      ],
+      "name": "TURN port outside 3478, 5349 and 443"
     },
     {
       "events": [

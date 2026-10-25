@@ -468,13 +468,13 @@ fn public_credentials_are_off_by_default_and_unlinkable_when_on() {
         first.as_object().unwrap().keys().collect::<Vec<_>>(),
         ["credential", "expiresAt", "urls", "username"]
     );
-    assert_eq!(first["expiresAt"], NOW + 600);
+    assert_eq!(first["expiresAt"], NOW + 3600);
     assert_eq!(first["urls"], json!(authority.config.urls));
     let mut labels = std::collections::HashSet::new();
     for issued in [&first, &second] {
         let username = issued["username"].as_str().unwrap();
         let label = username
-            .strip_prefix(&format!("{}:pub-", NOW + 600))
+            .strip_prefix(&format!("{}:pub-", NOW + 3600))
             .unwrap();
         assert!(label.len() == 24 && label.bytes().all(|b| b.is_ascii_hexdigit()));
         assert!(labels.insert(label.to_owned()));
@@ -526,4 +526,34 @@ fn public_limits_are_separate_bounded_and_swept() {
         }
     }
     authority.public_rate("2001:db8::1", NOW + 61).unwrap();
+}
+
+#[test]
+fn owners_and_paired_apps_keep_their_place_however_many_strangers_arrive() {
+    let mut a = fixture();
+    pair(&mut a);
+    // Unauthenticated sources and strangers' keys fill their own tables.
+    for source in 0..256 {
+        a.rate(&format!("198.51.100.{source}"), NOW).unwrap();
+    }
+    assert_eq!(a.rate("203.0.113.1", NOW).unwrap_err().0, 429);
+    for stranger in 0..256 {
+        a.key_rate(&hash(format!("stranger-{stranger}")), NOW)
+            .unwrap();
+    }
+    assert_eq!(
+        a.key_rate(&hash("one-more-stranger"), NOW).unwrap_err().0,
+        429
+    );
+    // The owner and the paired app still have room, with the usual cap.
+    a.key_rate(&public(2), NOW).unwrap();
+    for _ in 0..120 {
+        a.key_rate(&public(1), NOW).unwrap();
+    }
+    let capped = a.key_rate(&public(1), NOW).unwrap_err();
+    assert_eq!(
+        (capped.0, capped.1),
+        (429, "Too many requests. Try again shortly.")
+    );
+    a.key_rate(&public(1), NOW + 61).unwrap();
 }

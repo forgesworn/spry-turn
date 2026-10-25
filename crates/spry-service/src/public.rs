@@ -23,6 +23,8 @@ use tokio::{task::JoinSet, time::timeout};
 pub const REPUBLISH: Duration = Duration::from_secs(30 * 60);
 pub const WITHDRAW_WAIT: Duration = Duration::from_secs(5);
 const PUBLISH_WAIT: Duration = Duration::from_secs(20);
+/// How often the publisher checks readiness.
+const POLL: Duration = Duration::from_secs(1);
 
 /// A configuration refusal that is safe to print: it names a setting, never
 /// its value.
@@ -176,6 +178,8 @@ pub struct Publisher {
 impl Publisher {
     /// Publishes an open advert once the source is ready, then every
     /// [`REPUBLISH`], each time with a fresh `created_at` and `expiration`.
+    /// If the source stops being ready, it publishes a newer withdrawal
+    /// within [`WITHDRAW_WAIT`], then a fresh open advert once ready again.
     pub fn start(
         identity: Arc<Identity>,
         relays: Vec<String>,
@@ -192,20 +196,39 @@ impl Publisher {
                 last.clone(),
             );
             async move {
+                // When the open advert out there was published, if one is.
+                let mut advertised: Option<tokio::time::Instant> = None;
                 loop {
                     let Some(offer) = source.offer() else {
-                        tokio::time::sleep(Duration::from_secs(1)).await;
+                        if advertised.take().is_some() {
+                            let created_at =
+                                next_created_at(crate::now(), last.load(Ordering::Acquire));
+                            last.store(created_at, Ordering::Release);
+                            withdraw(
+                                identity.clone(),
+                                &relays,
+                                &options,
+                                created_at,
+                                WITHDRAW_WAIT,
+                            )
+                            .await;
+                        }
+                        tokio::time::sleep(POLL).await;
                         continue;
                     };
+                    if advertised.is_some_and(|at| at.elapsed() < REPUBLISH) {
+                        tokio::time::sleep(POLL).await;
+                        continue;
+                    }
                     let created_at = next_created_at(crate::now(), last.load(Ordering::Acquire));
                     // Recorded before sending, so a withdrawal is always newer.
                     last.store(created_at, Ordering::Release);
+                    advertised = Some(tokio::time::Instant::now());
                     if let Ok(event) =
                         advert::open(&identity, &offer, region.as_deref(), created_at)
                     {
                         publish_all(&relays, &options, &identity, &event).await;
                     }
-                    tokio::time::sleep(REPUBLISH).await;
                 }
             }
         });

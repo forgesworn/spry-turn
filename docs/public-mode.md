@@ -81,8 +81,11 @@ Response 200:
  "expiresAt":1793000000}
 ```
 
-- Lifetime 600 seconds. A client renews at two thirds of the remaining
-  lifetime.
+- Lifetime 3600 seconds. The relay ends an allocation when its login
+  expires and refuses to refresh it after that, so a login bounds how long
+  a call can use it. A client whose call may outlast the login fetches a
+  fresh one before `expiresAt` and restarts ICE with it; a call that ends
+  sooner needs nothing more.
 - The username label is fresh random bytes for each issue. It is not derived
   from the caller's address, origin, any key or any earlier issue, so two
   credentials cannot be linked by their usernames.
@@ -131,13 +134,19 @@ Lifecycle:
 
 - Publish when the relay first reports ready, then every 30 minutes, each
   time with a fresh `created_at` and `expiration`.
+- If the relay stops being ready while the service runs, for example
+  because its process died, publish a newer `withdrawn` advert within a few
+  seconds, waiting at most 5 seconds for relays. When it is ready again,
+  publish a fresh `open` advert and resume the 30-minute cycle.
 - On graceful shutdown, publish a newer `withdrawn` advert before stopping,
-  waiting at most 5 seconds. Its `created_at` is always later than the last
-  open advert's, even within the same second.
+  waiting at most 5 seconds. Every advert's `created_at` is later than the
+  one before, even within the same second.
 - When public mode is turned off, the next start publishes a `withdrawn`
   advert if `SPRY_PUBLIC_RELAYS` is still set. Spry keeps no record of
-  earlier adverts, so with the relays also removed, or after an abrupt
-  stop, the last advert expires within two hours.
+  earlier adverts, so with the relays also removed, or if the whole service
+  stops abruptly, the last advert expires within two hours.
+- Withdrawals are best effort: a relay that misses one keeps the last open
+  advert until it expires, while the endpoint answers 503.
 - Publish only to `SPRY_PUBLIC_RELAYS`, using the existing control-relay
   connection rules (TLS validation, SOCKS option, public-address checks). A
   relay that refuses or fails is retried on the next cycle; failures are not
@@ -152,8 +161,9 @@ own change gate applies before it builds this.
    No publisher default discovery relay, directory or index.
 2. Verify the event id and signature, kind, `d`, `v` = `1` and `auth`.
    Refuse events over 4 KiB, `created_at` more than 10 minutes in the
-   future, a missing `expiration`, or an `expiration` in the past or more
-   than two hours after `created_at`.
+   future, a missing `expiration`, an `expiration` that is not 1 to 16
+   ASCII digits (no sign, space or other character), or an `expiration` in
+   the past or more than two hours after `created_at`.
 3. Keep, per transport key, the newest `created_at` seen (a replay
    watermark). Ignore anything not newer, including a repeat of the same
    event. A newer `withdrawn` advert removes the relay; an older `open` one
@@ -164,8 +174,9 @@ own change gate applies before it builds this.
    userinfo, port (not even `:443`), query, fragment or other path. Refuse
    IP literals and names that resolve to private, loopback, link-local or
    reserved addresses. Every TURN URL (`turn:` over UDP or TCP, `turns:`
-   over TCP, at most four) must use the same hostname. Do not follow
-   redirects.
+   over TCP, at most four) must use the same hostname, and a port of
+   exactly `3478`, `5349` or `443`, or none for the scheme's default. Do
+   not follow redirects.
 5. Consider at most 64 adverts and contact at most 3 credential endpoints
    for one call. Never probe every advertised endpoint.
 6. Choose and rank locally. Send no choice, latency, failure or usage report
@@ -186,9 +197,9 @@ remains the client's job when it connects.
 `crates/spry-link/examples/public-advert.rs` writes signed fixtures from a
 fixed test key to `docs/fixtures/public-advert-v1.json`: a valid open advert,
 a valid withdrawal, and invalid cases (bad signature, missing expiration,
-expiration too far ahead, future `created_at`, IP-literal endpoint,
-mismatched TURN host, older open after newer withdrawn, the same advert
-twice). Each case lists events to give, in order, to a fresh watermark at
+expiration too far ahead, future `created_at`, an `expiration` with a sign,
+IP-literal endpoint, mismatched TURN host, a TURN port outside the allowed
+three, older open after newer withdrawn, the same advert twice). Each case lists events to give, in order, to a fresh watermark at
 the file's `now`, with the expected verdict for each: `open`, `withdrawn`
 or the refusal's name. Signing uses fixed auxiliary bytes, so regenerating
 gives the same file. Clients test against that file.

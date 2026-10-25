@@ -48,6 +48,11 @@ fn committed_public_advert_fixture_gives_the_expected_verdicts() {
     assert_eq!(find("created_at more than ten minutes ahead"), ["Expired"]);
     assert_eq!(find("IP-literal credential endpoint"), ["Destination"]);
     assert_eq!(find("TURN host differs from the endpoint"), ["Destination"]);
+    assert_eq!(find("expiration with a sign"), ["Expired"]);
+    assert_eq!(
+        find("TURN port outside 3478, 5349 and 443"),
+        ["Destination"]
+    );
     assert_eq!(
         find("older open after newer withdrawn"),
         ["withdrawn", "Replay"]

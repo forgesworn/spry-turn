@@ -156,3 +156,58 @@ async fn an_unreachable_relay_does_not_hold_shutdown_past_the_bound() {
     assert!(publisher.shutdown(Duration::from_secs(2)).await.is_some());
     assert!(started.elapsed() < Duration::from_secs(4));
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn losing_readiness_withdraws_the_advert_and_regaining_it_reopens() {
+    let (relay, mut received) = fixture_relay().await;
+    let node = Arc::new(Identity::from_secret(&[8; 32]).unwrap());
+    let ready = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let source = {
+        let ready = ready.clone();
+        move || ready.load(std::sync::atomic::Ordering::Acquire).then(offer)
+    };
+    let publisher = Publisher::start(
+        node.clone(),
+        vec![relay],
+        None,
+        RelayOptions {
+            policy: RelayPolicy::LocalFixture,
+            ..RelayOptions::default()
+        },
+        Arc::new(source),
+    );
+    let mut next = async || {
+        timeout(Duration::from_secs(10), received.recv())
+            .await
+            .unwrap()
+            .unwrap()
+    };
+    let first = next().await;
+    // The relay stops, as when its process dies while the service runs.
+    ready.store(false, std::sync::atomic::Ordering::Release);
+    let withdrawn = next().await;
+    ready.store(true, std::sync::atomic::Ordering::Release);
+    let reopened = next().await;
+    assert!(first.created_at < withdrawn.created_at);
+    assert!(withdrawn.created_at < reopened.created_at);
+
+    let now = reopened.created_at;
+    let mut book = AdvertBook::new(MAX_TRACKED);
+    assert_eq!(
+        book.accept(&first, now).unwrap().status,
+        Status::Open(offer())
+    );
+    assert_eq!(
+        book.accept(&withdrawn, now).unwrap().status,
+        Status::Withdrawn
+    );
+    assert_eq!(book.open(now).count(), 0);
+    assert_eq!(
+        book.accept(&reopened, now).unwrap().status,
+        Status::Open(offer())
+    );
+    assert_eq!(book.open(now).count(), 1);
+    // A repeat of the withdrawal cannot hide the newer open advert.
+    assert!(book.accept(&withdrawn, now).is_err());
+    publisher.shutdown(WITHDRAW_WAIT).await;
+}
