@@ -554,6 +554,12 @@ mod policy_tests {
             server.send_client(key, b"ctrl");
             expected += 4;
             assert!(server.connections.contains_key(&token));
+            // Release the fixture's tiny receive window before checking
+            // writable progress; Linux zero-window probes can otherwise pace
+            // this deliberately throttled drain beyond the test deadline.
+            socket2::SockRef::from(&client)
+                .set_recv_buffer_size(1_048_576)
+                .unwrap();
             let deadline = Instant::now() + Duration::from_secs(5);
             let mut received = Vec::new();
             while received.len() < expected && Instant::now() < deadline {
