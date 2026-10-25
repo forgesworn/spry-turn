@@ -28,6 +28,12 @@ use url::Url;
 
 pub const MAX_BODY: usize = 8192;
 pub const GRANT_TTL: u64 = 30 * 24 * 60 * 60;
+/// Anonymous TURN credentials for an operator who opts in to public mode.
+pub const PUBLIC_PATH: &str = "/v1/public/credentials";
+pub const PUBLIC_TTL: u64 = 600;
+pub const PUBLIC_PER_MINUTE: u16 = 32;
+pub const PUBLIC_PER_SOURCE: u16 = 6;
+pub const PUBLIC_SOURCES: usize = 256;
 pub type Result<T> = std::result::Result<T, Refused>;
 #[derive(Debug)]
 pub struct Refused(pub u16, pub &'static str);
@@ -100,6 +106,8 @@ pub struct Config {
     secret: Vec<u8>,
     pub ready: bool,
     pub readiness: &'static str,
+    /// Public mode. Off unless the host explicitly turns it on.
+    pub public: bool,
 }
 impl Config {
     pub fn new(
@@ -170,6 +178,7 @@ impl Config {
             secret: secret.to_vec(),
             ready: false,
             readiness: "Your node needs public access before Spry can connect calls.",
+            public: false,
         })
     }
 }
@@ -208,6 +217,10 @@ pub struct Authority {
     grants: HashMap<String, Grant>,
     replays: HashMap<String, u64>,
     rates: HashMap<String, (u64, u16)>,
+    // Kept apart from `rates`, so anonymous callers cannot exhaust the
+    // limiter that paired apps and owners rely on.
+    public_rates: HashMap<String, (u64, u16)>,
+    public_window: (u64, u16),
 }
 impl Authority {
     pub fn new(config: Config) -> Self {
@@ -218,6 +231,8 @@ impl Authority {
             grants: HashMap::new(),
             replays: HashMap::new(),
             rates: HashMap::new(),
+            public_rates: HashMap::new(),
+            public_window: (0, 0),
         }
     }
 
@@ -339,6 +354,10 @@ impl Authority {
         }
         self.replays.retain(|_, until| *until >= now);
         self.rates.retain(|_, (until, _)| *until > now);
+        self.public_rates.retain(|_, (until, _)| *until > now);
+        if self.public_window.0 <= now {
+            self.public_window = (0, 0);
+        }
     }
     pub fn rate(&mut self, address: &str, now: u64) -> Result<()> {
         self.sweep(now);
@@ -351,6 +370,59 @@ impl Authority {
         let entry = self.rates.entry(id).or_insert((now + 60, 0));
         entry.1 = entry.1.saturating_add(1);
         need(entry.1 <= 120, 429, "Too many requests. Try again shortly.")
+    }
+    /// Counts one anonymous request against the public limits. The source is
+    /// only held hashed, in memory, for at most a minute.
+    pub fn public_rate(&mut self, source: &str, now: u64) -> Result<()> {
+        need(self.config.public, 404, "Not found.")?;
+        self.sweep(now);
+        let id = hash(format!("public:{source}"));
+        need(
+            self.public_rates.contains_key(&id) || self.public_rates.len() < PUBLIC_SOURCES,
+            429,
+            "Spry is busy. Try again shortly.",
+        )?;
+        if self.public_window.0 == 0 {
+            self.public_window = (now + 60, 0);
+        }
+        need(
+            self.public_window.1 < PUBLIC_PER_MINUTE,
+            429,
+            "Spry is busy. Try again shortly.",
+        )?;
+        let entry = self.public_rates.entry(id).or_insert((now + 60, 0));
+        need(
+            entry.1 < PUBLIC_PER_SOURCE,
+            429,
+            "Spry is busy. Try again shortly.",
+        )?;
+        entry.1 += 1;
+        self.public_window.1 += 1;
+        Ok(())
+    }
+    /// Issues TURN credentials to anyone. The label is fresh randomness for
+    /// each issue, unrelated to the caller, so issues cannot be linked by it.
+    /// It grants relaying only: no pairing, grant, room or peer authority.
+    pub fn public_credentials(&mut self, body: &Value, now: u64) -> Result<Value> {
+        need(self.config.public, 404, "Not found.")?;
+        need(
+            body.as_object()
+                .is_some_and(|body| body.len() == 1 && body.get("v") == Some(&json!(1))),
+            400,
+            "Invalid request.",
+        )?;
+        need(self.config.ready, 503, self.config.readiness)?;
+        let mut label = [0_u8; 12];
+        getrandom::fill(&mut label)
+            .map_err(|_| Refused(503, "Spry is temporarily unavailable."))?;
+        let expires = now + PUBLIC_TTL;
+        let username = format!("{expires}:pub-{}", hex(&label));
+        let mut mac = Hmac::<Sha1>::new_from_slice(&self.config.secret)
+            .map_err(|_| Refused(503, "Spry is temporarily unavailable."))?;
+        mac.update(username.as_bytes());
+        Ok(
+            json!({"urls":self.config.urls,"username":username,"credential":STANDARD.encode(mac.finalize().into_bytes()),"expiresAt":expires}),
+        )
     }
     pub fn authenticate(
         &mut self,

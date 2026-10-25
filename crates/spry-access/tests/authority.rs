@@ -441,3 +441,89 @@ fn private_http_proofs_cannot_be_replayed_to_a_node_with_the_same_local_hostname
         .is_err()
     );
 }
+
+#[test]
+fn public_credentials_are_off_by_default_and_unlinkable_when_on() {
+    use hmac::{Hmac, Mac};
+    let mut authority = fixture();
+    assert!(!authority.config.public);
+    let body = json!({"v":1});
+    assert_eq!(authority.public_rate("192.0.2.10", NOW).unwrap_err().0, 404);
+    assert_eq!(authority.public_credentials(&body, NOW).unwrap_err().0, 404);
+    authority.config.public = true;
+    for wrong in [
+        json!({}),
+        json!({"v":2}),
+        json!({"v":1,"grant":"x"}),
+        json!([1]),
+    ] {
+        assert_eq!(
+            authority.public_credentials(&wrong, NOW).unwrap_err().0,
+            400
+        );
+    }
+    let first = authority.public_credentials(&body, NOW).unwrap();
+    let second = authority.public_credentials(&body, NOW).unwrap();
+    assert_eq!(
+        first.as_object().unwrap().keys().collect::<Vec<_>>(),
+        ["credential", "expiresAt", "urls", "username"]
+    );
+    assert_eq!(first["expiresAt"], NOW + 600);
+    assert_eq!(first["urls"], json!(authority.config.urls));
+    let mut labels = std::collections::HashSet::new();
+    for issued in [&first, &second] {
+        let username = issued["username"].as_str().unwrap();
+        let label = username
+            .strip_prefix(&format!("{}:pub-", NOW + 600))
+            .unwrap();
+        assert!(label.len() == 24 && label.bytes().all(|b| b.is_ascii_hexdigit()));
+        assert!(labels.insert(label.to_owned()));
+        let mut mac =
+            Hmac::<sha1::Sha1>::new_from_slice(b"synthetic-test-secret-not-for-deployment")
+                .unwrap();
+        mac.update(username.as_bytes());
+        assert_eq!(
+            issued["credential"],
+            STANDARD.encode(mac.finalize().into_bytes())
+        );
+    }
+    authority.config.ready = false;
+    let refused = authority.public_credentials(&body, NOW).unwrap_err();
+    assert_eq!((refused.0, refused.1), (503, authority.config.readiness));
+}
+
+#[test]
+fn public_limits_are_separate_bounded_and_swept() {
+    let mut authority = fixture();
+    authority.config.public = true;
+    for _ in 0..6 {
+        authority.public_rate("192.0.2.10", NOW).unwrap();
+    }
+    assert_eq!(authority.public_rate("192.0.2.10", NOW).unwrap_err().0, 429);
+    // The owner's limiter is untouched by anonymous use.
+    authority.rate("192.0.2.10", NOW).unwrap();
+    for source in 0..26 {
+        authority
+            .public_rate(&format!("198.51.100.{source}"), NOW)
+            .unwrap();
+    }
+    assert_eq!(
+        authority.public_rate("203.0.113.1", NOW).unwrap_err().0,
+        429
+    );
+    // A fresh minute admits callers again.
+    authority.public_rate("192.0.2.10", NOW + 60).unwrap();
+
+    let mut authority = fixture();
+    authority.config.public = true;
+    for source in 0..256 {
+        let address = format!("2001:db8::{source:x}");
+        if source < 32 {
+            authority.public_rate(&address, NOW).unwrap();
+        } else {
+            // The global limit holds whatever the spread of sources.
+            assert_eq!(authority.public_rate(&address, NOW).unwrap_err().0, 429);
+        }
+    }
+    authority.public_rate("2001:db8::1", NOW + 61).unwrap();
+}

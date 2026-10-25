@@ -33,6 +33,8 @@ For the pairing service, supply `SPRY_PUBLIC_URL` (its HTTPS origin),
 Set `SPRY_STATE_FILE` to a private persistent file and, if needed,
 `SPRY_KITHMOOT_URL` to the intended calling application's HTTPS URL.
 `SPRY_ALLOWED_ORIGINS` explicitly adds HTTPS origins for other clients.
+An operator who wants to serve anyone can turn on [public mode](public-mode.md)
+in this standard profile; it is off by default and has no default relays.
 
 `spry-node` listens on loopback HTTP port 3744 behind the operator's HTTPS
 reverse proxy. It finds `spry-turn` beside itself; `SPRY_RELAY_BINARY`

@@ -1,6 +1,7 @@
 //! Bounded, host-independent Spry link messages. No sockets or runtime.
 #![forbid(unsafe_code)]
 
+pub mod advert;
 pub mod control;
 pub mod identity;
 pub mod nip44;
