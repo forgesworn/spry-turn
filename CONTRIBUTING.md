@@ -24,8 +24,8 @@ destinations. See [maintaining documentation](docs/maintaining-docs.md).
 ## Native checks
 
 ```sh
-npm run check
 cargo build --locked --release --features tls
+SPRY_TEST_RELAY_BINARY=target/release/spry-turn npm run check
 python3 tests/interop.py --tls
 python3 tests/stress.py --tls --seconds 180 --output .local/stress.json
 npm ci --ignore-scripts
@@ -35,6 +35,11 @@ python3 tests/browser.py --tls
 
 `npm run check` runs documentation validation, Rust formatting, clippy with
 warnings denied, all-feature tests and both minimal library test sets.
+Build the release relay first: the service integration tests start that real
+executable on generated loopback ports, obtain public credentials and verify
+authenticated allocations. `SPRY_TEST_RELAY_BINARY` may select another build
+from the same source tree; it is resolved relative to the workspace root.
+An absent executable fails clearly rather than skipping the protocol checks.
 The stress runner caps normal control traffic below admission limits and
 tests a separate overload burst, expiry, churn and slow-client recovery.
 Its seeded loss/jitter proxy is local qualification. A short soak and

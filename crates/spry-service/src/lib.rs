@@ -4,6 +4,7 @@ mod node;
 pub mod public;
 pub mod resolver;
 pub mod signalling;
+mod standard;
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full, Limited};
 use hyper::{Request, Response, StatusCode, body::Incoming, service::service_fn};
@@ -357,7 +358,7 @@ fn node_address() -> Option<Ipv4Addr> {
     }
     None
 }
-async fn start_relay(state: &State) -> Option<Child> {
+async fn start_relay(state: &State, settings: &standard::Settings) -> Option<Child> {
     let address = node_address()?;
     let local_test = address.is_loopback() && env::var("SPRY_LOCAL_TEST").as_deref() == Ok("true");
     let public = env::var("SPRY_PUBLIC_IP").ok();
@@ -379,23 +380,7 @@ async fn start_relay(state: &State) -> Option<Child> {
             .into_owned()
     });
     let mut command = Command::new(binary);
-    command.args([
-        "serve",
-        "--listen",
-        &format!("{address}:3478"),
-        "--relay-ip",
-        &address.to_string(),
-        "--relay-ports",
-        "49160:49191",
-        "--max-allocations",
-        "32",
-        "--max-per-user",
-        "8",
-        "--max-connections",
-        "32",
-        "--bytes-per-second",
-        "1000000",
-    ]);
+    settings.configure_command(&mut command, address);
     if let Some(public) = public {
         if !public.parse().ok().is_some_and(public_v4) {
             return None;
@@ -404,18 +389,6 @@ async fn start_relay(state: &State) -> Option<Child> {
     }
     if local_test {
         command.arg("--allow-loopback-peers");
-    }
-    let tls = PathBuf::from("/data/tls/fullchain.pem").is_file()
-        && PathBuf::from("/data/tls/privkey.pem").is_file();
-    if tls {
-        command.args([
-            "--tls-listen",
-            &format!("{address}:5349"),
-            "--tls-cert",
-            "/data/tls/fullchain.pem",
-            "--tls-key",
-            "/data/tls/privkey.pem",
-        ]);
     }
     let mut child = command
         .stdin(Stdio::null())
@@ -429,17 +402,9 @@ async fn start_relay(state: &State) -> Option<Child> {
         if child.try_wait().ok().flatten().is_some() {
             return None;
         }
-        if binding(address).await {
+        if binding(address, settings.turn_port).await {
             if let Ok(mut authority) = state.lock() {
                 authority.config.ready = true;
-                if tls || env::var("SPRY_TLS_GATE").as_deref() == Ok("true") {
-                    if let Ok(url) = url::Url::parse(&authority.config.endpoint) {
-                        if let Some(host) = url.host_str() {
-                            let url = format!("turns:{host}:5349?transport=tcp");
-                            authority.config.urls.push(url);
-                        }
-                    }
-                }
             }
             return Some(child);
         }
@@ -447,7 +412,7 @@ async fn start_relay(state: &State) -> Option<Child> {
     let _ = child.kill().await;
     None
 }
-async fn binding(address: Ipv4Addr) -> bool {
+async fn binding(address: Ipv4Addr, port: u16) -> bool {
     let Ok(socket) = UdpSocket::bind("127.0.0.1:0").await else {
         return false;
     };
@@ -460,7 +425,7 @@ async fn binding(address: Ipv4Addr) -> bool {
         };
         socket
     };
-    if socket.connect((address, 3478)).await.is_err() {
+    if socket.connect((address, port)).await.is_err() {
         return false;
     }
     let mut request = [0_u8; 20];
@@ -520,6 +485,15 @@ pub async fn run_with_assets(
         config.audience = Some(settings.audience().map_err(|_| "Invalid node identity")?);
         config.readiness = "Waiting for your node’s network.";
     }
+    let standard_settings = private_settings
+        .is_none()
+        .then(standard::Settings::from_environment)
+        .transpose()?;
+    if let Some(settings) = &standard_settings {
+        let endpoint = url::Url::parse(&config.endpoint)?;
+        let host = endpoint.host_str().ok_or("Invalid Spry configuration")?;
+        config.urls = settings.urls(host);
+    }
     // Public mode belongs to the standard profile, whose relay allocates
     // ordinary addresses. Its adverts are signed by the node transport
     // identity, never the owner's key.
@@ -570,8 +544,8 @@ pub async fn run_with_assets(
         return Err("The control service must sit behind an HTTPS reverse proxy".into());
     }
     let listener = TcpListener::bind(bind).await?;
-    let mut relay = if private_settings.is_none() {
-        start_relay(&state).await
+    let mut relay = if let Some(settings) = &standard_settings {
+        start_relay(&state, settings).await
     } else {
         None
     };
