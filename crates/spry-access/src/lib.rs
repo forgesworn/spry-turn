@@ -37,6 +37,23 @@ pub const PUBLIC_SOURCES: usize = 256;
 pub type Result<T> = std::result::Result<T, Refused>;
 #[derive(Debug)]
 pub struct Refused(pub u16, pub &'static str);
+/// One per-minute bucket in a table of at most 256, refusing with a generic
+/// message. `reserved` callers are admitted even when the table is full.
+fn count(
+    table: &mut HashMap<String, (u64, u16)>,
+    id: String,
+    reserved: bool,
+    now: u64,
+) -> Result<()> {
+    need(
+        reserved || table.contains_key(&id) || table.len() < 256,
+        429,
+        "Spry is busy. Try again shortly.",
+    )?;
+    let entry = table.entry(id).or_insert((now + 60, 0));
+    entry.1 = entry.1.saturating_add(1);
+    need(entry.1 <= 120, 429, "Too many requests. Try again shortly.")
+}
 fn need(ok: bool, status: u16, message: &'static str) -> Result<()> {
     if ok {
         Ok(())
@@ -216,7 +233,12 @@ pub struct Authority {
     pending: HashMap<String, u64>,
     grants: HashMap<String, Grant>,
     replays: HashMap<String, u64>,
+    // Unauthenticated requests, keyed by source address.
     rates: HashMap<String, (u64, u16)>,
+    // Authenticated requests, keyed by signing key. Kept apart from `rates`,
+    // so callers spread over many addresses cannot fill the table that
+    // owners and paired apps need after they authenticate.
+    key_rates: HashMap<String, (u64, u16)>,
     // Kept apart from `rates`, so anonymous callers cannot exhaust the
     // limiter that paired apps and owners rely on.
     public_rates: HashMap<String, (u64, u16)>,
@@ -231,6 +253,7 @@ impl Authority {
             grants: HashMap::new(),
             replays: HashMap::new(),
             rates: HashMap::new(),
+            key_rates: HashMap::new(),
             public_rates: HashMap::new(),
             public_window: (0, 0),
         }
@@ -354,22 +377,29 @@ impl Authority {
         }
         self.replays.retain(|_, until| *until >= now);
         self.rates.retain(|_, (until, _)| *until > now);
+        self.key_rates.retain(|_, (until, _)| *until > now);
         self.public_rates.retain(|_, (until, _)| *until > now);
         if self.public_window.0 <= now {
             self.public_window = (0, 0);
         }
     }
+    /// Counts one request before authentication against its source address.
     pub fn rate(&mut self, address: &str, now: u64) -> Result<()> {
         self.sweep(now);
-        let id = hash(address);
-        need(
-            self.rates.contains_key(&id) || self.rates.len() < 256,
-            429,
-            "Spry is busy. Try again shortly.",
-        )?;
-        let entry = self.rates.entry(id).or_insert((now + 60, 0));
-        entry.1 = entry.1.saturating_add(1);
-        need(entry.1 <= 120, 429, "Too many requests. Try again shortly.")
+        count(&mut self.rates, hash(address), false, now)
+    }
+    /// Counts one authenticated request against its signing key. Owner and
+    /// paired keys, at most a few dozen, always find room in the table, so
+    /// requests signed by fresh keys cannot crowd them out; each still has
+    /// the same per-minute cap.
+    pub fn key_rate(&mut self, key: &str, now: u64) -> Result<()> {
+        self.sweep(now);
+        let known = self.known_key(key);
+        count(&mut self.key_rates, hash(key), known, now)
+    }
+    /// An owner or a paired app.
+    fn known_key(&self, key: &str) -> bool {
+        self.config.owners.contains(key) || self.pairs.values().any(|pair| pair.key == key)
     }
     /// Counts one anonymous request against the public limits. The source is
     /// only held hashed, in memory, for at most a minute.
@@ -503,8 +533,9 @@ impl Authority {
                 .map_err(|_| Refused(401, "Approval required."))?,
         );
         schnorr::verify(&signature, &id, &key).map_err(|_| Refused(401, "Approval required."))?;
+        // Known keys are few, so letting them past a full table stays bounded.
         need(
-            self.replays.len() < 4096,
+            self.replays.len() < 4096 || self.known_key(&event.pubkey),
             429,
             "Spry is busy. Try again shortly.",
         )?;

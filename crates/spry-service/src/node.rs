@@ -49,7 +49,7 @@ impl ServiceState {
         let mut authority = self
             .lock()
             .map_err(|_| Refused(503, "Spry is temporarily unavailable."))?;
-        authority.rate(&format!("key:{key}"), now)?;
+        authority.key_rate(key, now)?;
         let private = self.private()?;
         if path == "/v1/peers" {
             let private = private.ok_or(Refused(404, "Not found."))?;

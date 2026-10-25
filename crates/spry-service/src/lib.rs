@@ -103,7 +103,8 @@ async fn read_body(body: Incoming, limit: usize) -> spry_access::Result<Bytes> {
 /// only on loopback behind that proxy, which appends the address it saw to
 /// `X-Forwarded-For`, so the right-most entry is the proxy's own. IPv6
 /// callers are grouped by /64, the usual smallest customer allocation.
-/// Used only as a hashed, in-memory rate key.
+/// Used only as a hashed, in-memory rate key, by the public limiter and by
+/// the limiter every other API request meets before authentication.
 fn public_source(headers: &hyper::HeaderMap, peer: IpAddr) -> IpAddr {
     let forwarded = peer
         .is_loopback()
@@ -242,10 +243,13 @@ async fn dispatch(
     if request.method() != "POST" || !path.starts_with("/v1/") {
         return Err(Refused(404, "Not found."));
     }
+    // Keyed by the caller the proxy saw, not the proxy itself, so one
+    // caller's flood cannot spend the allowance of owners and paired apps.
+    let source = public_source(request.headers(), peer).to_string();
     state
         .lock()
         .map_err(|_| Refused(503, "Unavailable."))?
-        .rate(&peer.to_string(), now())?;
+        .rate(&source, now())?;
     json_headers(request.headers(), MAX_BODY)?;
     let header = request
         .headers()
@@ -684,6 +688,11 @@ mod tests {
     const OWNER: &str = "1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f";
 
     async fn host(public: bool, ready: bool) -> SocketAddr {
+        host_seen_from(public, ready, None).await
+    }
+    /// `peer` stands in for the connecting address, as if the service were
+    /// reached directly rather than through the loopback proxy.
+    async fn host_seen_from(public: bool, ready: bool, peer: Option<IpAddr>) -> SocketAddr {
         let mut config = Config::new(
             "https://relay.example",
             "https://calls.example/j/",
@@ -699,7 +708,8 @@ mod tests {
         let address = listener.local_addr().unwrap();
         tokio::spawn(async move {
             loop {
-                let (stream, peer) = listener.accept().await.unwrap();
+                let (stream, address) = listener.accept().await.unwrap();
+                let peer = peer.unwrap_or(address.ip());
                 let state = state.clone();
                 tokio::spawn(async move {
                     let _ = hyper::server::conn::http1::Builder::new()
@@ -707,7 +717,7 @@ mod tests {
                         .serve_connection(
                             TokioIo::new(stream),
                             service_fn(move |request| {
-                                serve(request, state.clone(), peer.ip(), UiAssets::STANDALONE)
+                                serve(request, state.clone(), peer, UiAssets::STANDALONE)
                             }),
                         )
                         .await;
@@ -927,6 +937,56 @@ mod tests {
         }
         assert!(
             issue(address, &from("198.51.100.200"))
+                .await
+                .starts_with("http/1.1 429")
+        );
+    }
+
+    async fn unsigned(address: SocketAddr, forwarded: &str) -> String {
+        let headers = json(&format!("X-Forwarded-For: {forwarded}\r\n"));
+        send(address, "POST", "/v1/credentials", &headers, "{}").await
+    }
+
+    #[tokio::test]
+    async fn the_api_limiter_keys_on_the_forwarded_source_not_the_proxy() {
+        let address = host(false, true).await;
+        // Each source has its own allowance before authentication.
+        for _ in 0..120 {
+            let refused = unsigned(address, "198.51.100.1").await;
+            assert!(refused.starts_with("http/1.1 401"), "{refused}");
+        }
+        let flooded = unsigned(address, "198.51.100.1").await;
+        assert!(flooded.starts_with("http/1.1 429"), "{flooded}");
+        assert!(flooded.contains("Too many requests. Try again shortly."));
+        // A flood from one source leaves another, such as an owner, alone.
+        let other = unsigned(address, "198.51.100.2").await;
+        assert!(other.starts_with("http/1.1 401"), "{other}");
+        // One IPv6 /64 is one source here too.
+        for n in 0..120 {
+            assert!(
+                unsigned(address, &format!("2001:db8:5:6::{n:x}"))
+                    .await
+                    .starts_with("http/1.1 401")
+            );
+        }
+        assert!(
+            unsigned(address, "2001:db8:5:6:ffff::1")
+                .await
+                .starts_with("http/1.1 429")
+        );
+    }
+
+    #[tokio::test]
+    async fn a_direct_callers_forwarded_header_is_ignored() {
+        let remote: IpAddr = "203.0.113.5".parse().unwrap();
+        let address = host_seen_from(false, true, Some(remote)).await;
+        // Varying the header does not buy a non-loopback caller new buckets.
+        for n in 0..120 {
+            let refused = unsigned(address, &format!("192.0.2.{n}")).await;
+            assert!(refused.starts_with("http/1.1 401"), "{refused}");
+        }
+        assert!(
+            unsigned(address, "192.0.2.200")
                 .await
                 .starts_with("http/1.1 429")
         );

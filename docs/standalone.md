@@ -37,7 +37,12 @@ An operator who wants to serve anyone can turn on [public mode](public-mode.md)
 in this standard profile; it is off by default and has no default relays.
 
 `spry-node` listens on loopback HTTP port 3744 behind the operator's HTTPS
-reverse proxy. It finds `spry-turn` beside itself; `SPRY_RELAY_BINARY`
+reverse proxy. That proxy must append or set `X-Forwarded-For`: requests
+are rate-limited per caller before authentication, keyed on the right-most
+entry (IPv6 grouped by /64), and without the header every caller shares the
+proxy's one allowance. Authenticated requests also have a per-key limit, in
+which owners and paired apps always keep a place. `spry-node` finds
+`spry-turn` beside itself; `SPRY_RELAY_BINARY`
 overrides that location. Standard TURN listeners and the bounded peer range
 are described in the [operator guide](operations.md). Optional certificate
 files for the relay reside under `/data/tls`; an external host adapter can
