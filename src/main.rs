@@ -9,13 +9,15 @@ Options:\n\
   --listen ADDRESS              UDP and TCP listener (127.0.0.1:3478)\n\
   --relay-ip IP                 Local relay bind address (listener IP)\n\
   --relay-ports FIRST:LAST       Inclusive UDP relay range (OS ephemeral by default)\n\
-  --public-ip IP                Advertised relay IP if behind one-to-one NAT\n\
+  --relay-port-map LOCAL:PUBLIC  Repeatable UDP port pair, max 1024; excludes range\n\
+  --public-ip IP                Advertised relay IP if behind NAT\n\
   --realm NAME                  Authentication realm (spry-turn)\n\
   --max-allocations COUNT        Total allocation limit (1024)\n\
   --max-per-user COUNT           Per-credential allocation limit (8)\n\
   --max-connections COUNT        TCP/TLS connection limit (256)\n\
   --bytes-per-second COUNT       Per-allocation aggregate bandwidth (67108864)\n\
   --allow-loopback-peers         Local interop tests only; requires loopback listener\n\
+  --exit-on-stdin-close          Serve only: exit when the supervisor's stdin pipe closes\n\
   --tls-listen ADDRESS           Optional TLS listener (requires tls build feature)\n\
   --tls-cert FILE --tls-key FILE PEM certificate and private key\n\n\
 No service discovery, hosted endpoints, room authority or media processing.\n";
@@ -48,7 +50,7 @@ fn run(_: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
 fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
     use spry_turn::{
         auth,
-        turn::{Config, Server, unix_time},
+        turn::{Config, MAX_RELAY_PORT_MAPPINGS, RelayPortMapping, Server, unix_time},
     };
     use std::{net::SocketAddr, time::Duration};
     let secret = env::var("SPRY_TURN_SECRET")
@@ -62,6 +64,7 @@ fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
     let mut ttl = 3600u64;
     let mut label = String::from("client");
     let mut relay_given = false;
+    let mut exit_on_stdin_close = false;
     let mut tls_address: Option<SocketAddr> = None;
     let mut cert: Option<String> = None;
     let mut key: Option<String> = None;
@@ -73,6 +76,13 @@ fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
         iter.next();
     }
     while let Some(option) = iter.next() {
+        if option == "--exit-on-stdin-close" {
+            if credential || exit_on_stdin_close {
+                return Err("--exit-on-stdin-close is a single serve-only flag".into());
+            }
+            exit_on_stdin_close = true;
+            continue;
+        }
         if option == "--allow-loopback-peers" {
             config.allow_loopback_peers = true;
             continue;
@@ -90,6 +100,19 @@ fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
                     .split_once(':')
                     .ok_or("use --relay-ports FIRST:LAST")?;
                 config.relay_port_range = Some((first.parse()?, last.parse()?));
+            }
+            "--relay-port-map" => {
+                let mappings = config.relay_port_mappings.get_or_insert_with(Vec::new);
+                if mappings.len() >= MAX_RELAY_PORT_MAPPINGS {
+                    return Err("at most 1024 relay port mappings are supported".into());
+                }
+                let (local, public) = value
+                    .split_once(':')
+                    .ok_or("use --relay-port-map LOCAL:PUBLIC")?;
+                mappings.push(RelayPortMapping {
+                    local_port: local.parse()?,
+                    advertised_port: public.parse()?,
+                });
             }
             "--realm" => config.realm = value,
             "--max-allocations" => config.max_allocations = value.parse()?,
@@ -149,6 +172,27 @@ fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
         return Err("--tls-listen is required with TLS files".into());
     }
     let mut server = Server::bind(config)?;
+    if exit_on_stdin_close {
+        // This deliberately ends the whole process, including a busy forwarding
+        // loop. Rust destructors do not run; the OS closes all relay sockets.
+        // Only an explicitly supervising host should supply this pipe/flag.
+        std::thread::Builder::new()
+            .name("spry-parent-lifetime".into())
+            .spawn(|| {
+                use std::io::{self, Read};
+                let stdin = io::stdin();
+                let mut input = stdin.lock();
+                let mut bytes = [0; 4096];
+                loop {
+                    match input.read(&mut bytes) {
+                        Ok(0) => std::process::exit(0),
+                        Ok(_) => (),
+                        Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                        Err(_) => std::process::exit(1),
+                    }
+                }
+            })?;
+    }
     eprintln!(
         "spry-turn {} ready (UDP/TCP {})",
         env!("CARGO_PKG_VERSION"),

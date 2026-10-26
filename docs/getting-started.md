@@ -14,25 +14,21 @@ cd spry-turn
 ```
 
 Source is the portable installation path. Cargo and npm publication are
-disabled. The public v0.2.1 GitHub prerelease carries macOS ARM64 and
-GNU/Linux ARM64 TLS-enabled executable archives, and a WASM codec archive.
-Fetch and verify the archives in an empty directory, or use the release
-page's downloads:
+disabled. The public v0.3.0 GitHub prerelease carries the TLS-enabled macOS
+ARM64 `spry-turn` executable with checksums and a build manifest. Fetch and
+verify it in an empty directory:
 
 ```sh
-gh release download v0.2.1 --repo forgesworn/spry-turn
+gh release download v0.3.0 --repo forgesworn/spry-turn
 shasum -a 256 -c SHA256SUMS
 ```
 
-[Download v0.2.1](https://github.com/forgesworn/spry-turn/releases/tag/v0.2.1).
-Existing archives and tags retain their original bytes; older bundled guides
-may describe the private access that applied when those releases were created.
-
-Choose the matching operating-system archive. The Linux executable was
-tested with Debian glibc 2.36 and needs glibc and libgcc; it is not an Alpine
-musl, Windows or phone build. A release does not establish production or
-physical-device acceptance. Source builds remain available for other
-supported native environments.
+[Download v0.3.0](https://github.com/forgesworn/spry-turn/releases/tag/v0.3.0).
+Linux, Windows, WASM and `spry-node` are source builds for this version.
+The [older v0.2.1 release](https://github.com/forgesworn/spry-turn/releases/tag/v0.2.1)
+retains its original macOS/Linux ARM64 and WASM archives; those do not contain
+the newer options. Existing archives and tags retain their original bytes.
+A release does not establish production or physical-device acceptance.
 
 Rust 1.85 or newer is declared; Rust 1.94.1 and 1.96 were used for the
 initial verification and native M4 measurements. Current CI checks stable

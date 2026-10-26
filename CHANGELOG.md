@@ -1,6 +1,27 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 — 26 October 2026
+
+Public MIT prerelease. The native macOS ARM64 download includes the TLS-enabled
+`spry-turn` executable. Other platforms and the service adapter remain source
+builds for this version; older release artefacts retain their original bytes.
+
+- Add exact local/public UDP allocation pairs with `--relay-port-map`, bounded
+  to 1024 unique entries, no gap/ephemeral fallback and authenticated 508 on
+  exhaustion. Local socket ownership and advertised endpoints remain separate.
+- Reject crossed or released own-address endpoint authority, including stale
+  permission/channel forwarding; translated ports require a distinct public IP.
+- Add the explicit serve-only `--exit-on-stdin-close` parent-lifetime guard.
+  Standalone default lifetime remains unchanged.
+- Record private/public self-hosting goals, software-publisher boundaries and
+  separate desktop, VPN, Android, media and maintainer acceptance gates.
+- Add `Config::relay_port_mappings`: Rust hosts using struct literals must
+  supply it, or use `Config::local(secret)`. Map acquisition/renewal, Proton
+  reachability, independent-network media and physical-device acceptance remain
+  unqualified. No desktop binary bundling or running service is included.
+
+Previously merged source changes included in this prerelease:
+
 
 - Extract owner-authorised pairing and scoped credentials into the reusable
   `spry-access` Rust library, with explicit calling-application configuration.

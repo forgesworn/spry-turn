@@ -2,11 +2,11 @@
 
 > Lightweight Rust STUN/TURN server, embeddable native relay and WASM packet codec. MIT; maintained by TheCryptoDonkey under ForgeSworn.
 
-Version 0.2.1. Source and GitHub prereleases are public, under MIT, copyright 2026 TheCryptoDonkey. There is no crates.io, docs.rs or npm publication, hosted relay, credential service or public documentation site.
+Version 0.3.0. Source and GitHub prereleases are public, under MIT, copyright 2026 TheCryptoDonkey. There is no crates.io, docs.rs or npm publication, hosted relay, credential service or public documentation site.
 
 Native UDP/TCP clients and optional TLS use UDP peer allocations. Browser applications use their existing WebRTC ICE implementation. Ordinary browser WASM cannot host a raw-socket TURN server. Shared TURN secrets belong only to trusted operator tools; give clients short-lived credentials.
 
-This is an initial implementation, without full coturn parity or production qualification. UDP peer-relay port ranges are optional and fail closed on exhaustion. Static user databases, TCP relay allocations, DTLS, dual allocations and deployed Archy/Sapflow integration are not implemented. Physical phone and public-network acceptance remain open.
+This is an initial implementation, without full coturn parity or production qualification. UDP peer-relay port ranges are optional and fail closed on exhaustion. Static user databases, TCP relay allocations, DTLS and dual allocations are not implemented. Archipelago private packaging has separate qualification; native desktop/Android hosting controls and general physical-phone/public-network acceptance remain open. Sapflow integration remains a later goal.
 
 The full v0.2.1 native ARM64 M4 Max loopback matrix measured 16–22% higher UDP delivery rate and 27–35% higher TLS delivery rate than the tested coturn configuration; TCP ranged from 1.2% behind to 8.5% ahead. Linux VM results differ, including UDP regressions. These are workload results, not maximum WAN capacity. Stream and kernel socket memory have separate costs. Consult current qualification and raw evidence before reusing figures.
 
@@ -26,6 +26,7 @@ These files provide navigation and source context for readers and tools. They do
 
 - [Public mode](https://github.com/forgesworn/spry-turn/blob/main/docs/public-mode.md): Opt-in anonymous credentials, the kind 31478 advert and the client rules; off by default.
 - [Independent operation](https://github.com/forgesworn/spry-turn/blob/main/docs/operations.md): Bounded relay ports, firewall/NAT plan, secret rotation, TLS and limits.
+- [Explicit TURN allocation mappings](https://github.com/forgesworn/spry-turn/blob/main/docs/mapped-ports.md): Exact local/public UDP endpoint pairs, fail-closed allocation and separate VPN/reachability gates.
 - [Security](https://github.com/forgesworn/spry-turn/blob/main/SECURITY.md): Reporting channel and transport/credential boundaries.
 - [Support and donations](https://github.com/forgesworn/spry-turn/blob/main/SUPPORT.md): Bug reports and established ForgeSworn funding destinations.
 
@@ -36,7 +37,7 @@ These files provide navigation and source context for readers and tools. They do
 - [KithMoot acceptance](https://github.com/forgesworn/spry-turn/blob/main/docs/kithmoot-acceptance.md): Actual web application with operator credentials, generated media and explicit physical-phone gates.
 - [Performance experiments](https://github.com/forgesworn/spry-turn/blob/main/docs/performance-experiments.md): Separate Linux batching, process scaling and profile-guided experiments; no implied runtime integration.
 - [Verification](https://github.com/forgesworn/spry-turn/blob/main/docs/verification.md): Actual local/CI evidence and explicitly unqualified gates.
-- [Acceptance and roadmap](https://github.com/forgesworn/spry-turn/blob/main/GOALS.md): Completed standalone work, missing coturn features and later integrations.
+- [Goals and acceptance](https://github.com/forgesworn/spry-turn/blob/main/GOALS.md): Software-publisher boundaries, private/public self-hosting, desktop and Android goals, legal questions and acceptance gates.
 - [Changelog](https://github.com/forgesworn/spry-turn/blob/main/CHANGELOG.md): Current and historical prerelease contents.
 
 ## Optional

@@ -14,11 +14,13 @@ performance and explicit compatibility gaps. The source and GitHub prereleases a
 | Find Rust types, Cargo features and WASM methods | [API reference](api.md) |
 | Assess an existing coturn configuration | [Coturn compatibility](coturn-compatibility.md) |
 | Configure addresses, credentials, TLS and resource limits | [Operations](operations.md) |
+| Configure exact local/public TURN allocation port pairs | [Explicit allocation mappings](mapped-ports.md) |
 | Open your own relay to anyone, optionally advertised on Nostr | [Public mode](public-mode.md) |
 | Inspect current throughput, latency and resource measurements | [Standalone qualification](qualification-0.2.1.md), [historical benchmarks](benchmarks.md) |
 | Reproduce optional performance experiments | [Batching, process scaling and PGO](performance-experiments.md) |
 | Test the actual KithMoot web client with an owner-selected relay | [KithMoot acceptance](kithmoot-acceptance.md) |
-| Check what passed and what remains unqualified | [Verification](verification.md), [acceptance checklist](../GOALS.md) |
+| Review self-hosting goals, publisher boundaries and acceptance gates | [Goals and acceptance](../GOALS.md) |
+| Check recorded transport qualification | [Verification](verification.md), [transport acceptance checklist](../GOALS.md#existing-transport-compatibility-and-acceptance) |
 | Report bugs or support development | [Support and donations](../SUPPORT.md) |
 
 ## Project references

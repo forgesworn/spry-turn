@@ -1,6 +1,6 @@
 # Rust and WASM API reference
 
-Version 0.2.1. Source is authoritative; there is no published crates.io,
+Version 0.3.0. Source is authoritative; there is no published crates.io,
 docs.rs or npm package. Authorised users can generate local Rust API pages
 with `cargo doc --locked --all-features --no-deps`.
 
@@ -32,6 +32,7 @@ Source: [src/turn.rs](../src/turn.rs).
 | `listen` | `127.0.0.1:3478`, shared UDP/TCP listening address |
 | `relay_ip` | `127.0.0.1`, local bind address of UDP peer sockets |
 | `relay_port_range` | `None` for OS ephemeral ports, or `Some((first, last))` for an inclusive nonzero UDP relay range with no fallback |
+| `relay_port_mappings` | `None`; optional 1–1024 exact `RelayPortMapping` local/public UDP pairs, excluding range mode; see [mapped ports](mapped-ports.md) |
 | `advertised_ip` | `None`; optional NAT-visible relay IP of the same address family |
 | `realm` | `spry-turn`, long-term authentication realm |
 | `secret` | Caller supplied, at least 32 bytes |
