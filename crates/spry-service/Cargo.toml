@@ -16,7 +16,7 @@ path = "src/main.rs"
 [dependencies]
 spry-access = { path = "../spry-access", version = "=0.1.0" }
 spry-link = { path = "../spry-link", version = "=0.1.0" }
-spry-turn = { path = "../..", version = "=0.2.1", default-features = false, features = ["runtime", "turn", "connected-udp"] }
+spry-turn = { path = "../..", version = "=0.3.0", default-features = false, features = ["runtime", "turn", "connected-udp"] }
 socket2 = { version = "=0.6.5", features = ["all"] }
 futures-util = { version = "=0.3.34", default-features = false, features = ["sink", "std"] }
 tokio-tungstenite = { version = "=0.30.0", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }

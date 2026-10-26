@@ -654,6 +654,148 @@ class Interop(unittest.TestCase):
         c = Client(f); self.addCleanup(c.close)
         self.assertEqual(c.allocate(), ("203.0.113.7", first))
 
+    def test_identity_mapped_port_sets_allow_implicit_or_equal_advertised_ip(self):
+        first, reserved = self.reserve_relay_range()
+        for advertised in ((), ("--public-ip", "127.0.0.1")):
+            with self.subTest(advertised=bool(advertised)):
+                f = Fixture(BINARY, tls=TLS, limits=(
+                    "--relay-port-map", f"{first}:{first}",
+                    "--relay-port-map", f"{first + 2}:{first + 2}", *advertised))
+                self.addCleanup(f.close)
+                reserved[0].close(); reserved[2].close()
+                for mode in ["udp", "tcp"] + (["tls"] if TLS else []):
+                    clients = [Client(f, mode=mode) for _ in range(2)]
+                    for client in clients: self.addCleanup(client.close)
+                    self.assertEqual({client.allocate() for client in clients},
+                                     {("127.0.0.1", first), ("127.0.0.1", first + 2)})
+                    for client in clients:
+                        self.assertEqual(client.request(4, [(LIFETIME, bytes(4))])[0], 0x104)
+                        client.close()
+                f.close()
+
+    def test_translation_requires_an_explicit_distinct_advertised_ip(self):
+        for advertised in ((), ("--public-ip", "127.0.0.1")):
+            with self.subTest(advertised=bool(advertised)):
+                result = subprocess.run(
+                    [str(BINARY), "serve", "--listen", "127.0.0.1:0",
+                     "--relay-port-map", "41000:51000", *advertised],
+                    env={**os.environ, "SPRY_TURN_SECRET": secrets.token_hex(32)},
+                    capture_output=True, timeout=3)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(b"translated relay ports", result.stderr)
+                self.assertNotIn(b"ready", result.stderr)
+
+    def test_mapped_loopback_own_peers_require_explicit_opt_in(self):
+        first, reserved = self.reserve_relay_range()
+        for opt_in in (False, True):
+            with self.subTest(opt_in=opt_in):
+                f = Fixture(BINARY, loopback=opt_in, limits=(
+                    "--relay-port-map", f"{first}:10003", "--public-ip", "127.0.0.2"))
+                self.addCleanup(f.close); reserved[0].close()
+                c = Client(f); self.addCleanup(c.close)
+                self.assertEqual(c.allocate(), ("127.0.0.2", 10003))
+                for index, endpoint in enumerate((("127.0.0.1", first), ("127.0.0.2", 10003))):
+                    for method in (8, 9):
+                        response = c.peer_request(method, endpoint, 0x4000 + index if method == 9 else None)
+                        if opt_in: self.assertEqual(response[0], 0x100 + method)
+                        else: self.assertEqual(error_code(response[1]), 403)
+                for endpoint in (("127.0.0.1", 10003), ("127.0.0.2", first)):
+                    self.assertEqual(error_code(c.peer_request(8, endpoint)[1]), 403)
+                c.close(); f.close()
+
+    def test_explicit_mapped_ports_exhaust_reuse_and_forward_without_filling_gaps(self):
+        first, reserved = self.reserve_relay_range()
+        public = {first: 10001, first + 2: 10003}
+        f = Fixture(BINARY, tls=TLS, limits=(
+            "--relay-port-map", f"{first}:10001", "--relay-port-map", f"{first + 2}:10003",
+            "--public-ip", "203.0.113.7"))
+        self.addCleanup(f.close)
+        reserved[2].close()
+        # The first mapped local port stays occupied by a separate host socket.
+        # Leave the intervening port free: exhaustion must not bind that gap.
+        reserved[1].close()
+        modes = ["udp", "tcp"] + (["tls"] if TLS else [])
+        for mode in modes:
+            with self.subTest(mode=mode):
+                if mode != modes[0]:
+                    reserved[0] = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                    self.addCleanup(reserved[0].close)
+                    reserved[0].bind(("127.0.0.1", first))
+                a, b, c = [Client(f, mode=mode) for _ in range(3)]
+                for client in (a, b, c): self.addCleanup(client.close)
+                transaction = secrets.token_bytes(12)
+                self.assertEqual(a.allocate(transaction), ("203.0.113.7", public[first + 2]))
+                self.assertEqual(a.allocate(transaction), ("203.0.113.7", public[first + 2]))
+                _, fields, _ = b.request(3, signed=False); b.nonce = fields[NONCE]
+                self.assertEqual(error_code(b.request(3, [(TRANSPORT, b"\x11\0\0\0")])[1]), 508)
+                # Both the occupied entry and free gap remain outside ownership.
+                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as gap:
+                    gap.bind(("127.0.0.1", first + 1))
+                reserved[0].close()
+                self.assertEqual(b.allocate(), ("203.0.113.7", public[first]))
+                _, fields, _ = c.request(3, signed=False); c.nonce = fields[NONCE]
+                self.assertEqual(error_code(c.request(3, [(TRANSPORT, b"\x11\0\0\0")])[1]), 508)
+                # Use two live local relay endpoints as peers. This exercises
+                # real UDP source ports without depending on additional loopback
+                # aliases (macOS only binds 127.0.0.1 by default).
+                local_a, local_b = ("127.0.0.1", first + 2), ("127.0.0.1", first)
+                self.assertEqual(a.peer_request(9, local_b, 0x4000)[0], 0x109)
+                self.assertEqual(b.peer_request(8, local_a)[0], 0x108)
+                a.send(struct.pack("!HH", 0x4000, 6) + b"mapped")
+                _, fields, tid = parse(b.receive())
+                self.assertEqual(fields[DATA], b"mapped")
+                self.assertEqual(address(fields[PEER], tid), local_a)
+                tid = secrets.token_bytes(12)
+                b.send(packet(6, [(PEER, peer_attr(local_a, tid)), (DATA, b"reply")],
+                              tid=tid, indication=True))
+                response = a.receive()
+                self.assertEqual(struct.unpack_from("!HH", response), (0x4000, 5))
+                self.assertEqual(response[4:9], b"reply")
+                # The same IP-scoped permission must never authorise crossed
+                # local/public port numbers or an unmapped advertised gap.
+                self.assertEqual(b.peer_request(8, a.relay)[0], 0x108)
+                self.assertEqual(b.peer_request(9, a.relay, 0x4001)[0], 0x109)
+                for endpoint in (("127.0.0.1", 10003), ("203.0.113.7", first + 2),
+                                 ("203.0.113.7", 10002)):
+                    self.assertEqual(error_code(b.peer_request(8, endpoint)[1]), 403)
+                    self.assertEqual(error_code(b.peer_request(9, endpoint, 0x4002)[1]), 403)
+                self.assertEqual(b.peer_request(9, local_a, 0x4002)[0], 0x109)
+                self.assertEqual(a.request(4, [(LIFETIME, bytes(4))])[0], 0x104)
+                self.assertEqual(error_code(b.peer_request(9, a.relay, 0x4001)[1]), 403)
+                # Existing IP permissions and channels must not reach a host
+                # service which takes a released mapped local port.
+                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as replacement:
+                    replacement.bind(local_a); replacement.settimeout(.15)
+                    b.send(struct.pack("!HH", 0x4002, 5) + b"stale")
+                    tid = secrets.token_bytes(12)
+                    b.send(packet(6, [(PEER, peer_attr(local_a, tid)), (DATA, b"stale")],
+                                  tid=tid, indication=True))
+                    with self.assertRaises(socket.timeout): replacement.recvfrom(1024)
+                self.assertEqual(c.allocate(), a.relay)
+                for client in (b, c):
+                    self.assertEqual(client.request(4, [(LIFETIME, bytes(4))])[0], 0x104)
+                for client in (a, b, c): client.close()
+
+    def test_invalid_mapped_relay_port_cli_refuses_startup(self):
+        options = [("--relay-port-map", value) for value in
+                   ("0:1", "1:0", "65536:1", "1:65536", "-1:9", "1", "1:2:3")]
+        options += [
+            ("--relay-port-map", "41000:51000", "--relay-port-map", "41000:51001"),
+            ("--relay-port-map", "41000:51000", "--relay-port-map", "41001:51000"),
+            ("--relay-port-map", "41000:51000", "--relay-ports", "41001:41002"),
+            ("--listen", "127.0.0.1:41000", "--relay-port-map", "41000:51000"),
+            ("--relay-port-map", "41000:51000", "--public-ip", "::1"),
+            tuple(value for _ in range(1025) for value in ("--relay-port-map", "41000:51000")),
+        ]
+        for index, values in enumerate(options):
+            with self.subTest(case=index):
+                result = subprocess.run([str(BINARY), "serve", "--listen", "127.0.0.1:0",
+                                         "--public-ip", "203.0.113.7", *values],
+                                        env={**os.environ, "SPRY_TURN_SECRET": secrets.token_hex(32)},
+                                        capture_output=True, timeout=3)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn(b"ready", result.stderr)
+
     def test_invalid_relay_port_cli_refuses_startup(self):
         for value in ("0:0", "0:65535", "40001:40000", "65536:65536", "-1:9", "1", "1:2:3"):
             with self.subTest(value=value):

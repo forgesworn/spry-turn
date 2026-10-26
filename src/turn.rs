@@ -36,6 +36,15 @@ fn local_bridge_address(ip: IpAddr) -> bool {
     matches!(ip, IpAddr::V4(v) if v.octets()[0] == 127 && (64..=127).contains(&v.octets()[1]))
 }
 
+/// Maximum explicit local/advertised UDP port pairs accepted by one server.
+pub const MAX_RELAY_PORT_MAPPINGS: usize = 1024;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RelayPortMapping {
+    pub local_port: u16,
+    pub advertised_port: u16,
+}
+
 #[derive(Clone)]
 pub struct Config {
     pub listen: SocketAddr,
@@ -43,6 +52,10 @@ pub struct Config {
     /// Inclusive UDP peer-relay range. None retains OS-assigned ephemeral ports.
     /// A configured range never falls back to an ephemeral port on exhaustion.
     pub relay_port_range: Option<(u16, u16)>,
+    /// Explicit bounded UDP port pairs, mutually exclusive with a relay range.
+    /// None retains range/ephemeral behaviour; Some must contain 1..=1024 pairs.
+    /// Translation requires an explicit advertised_ip different from relay_ip.
+    pub relay_port_mappings: Option<Vec<RelayPortMapping>>,
     pub advertised_ip: Option<IpAddr>,
     pub realm: String,
     pub secret: Vec<u8>,
@@ -468,7 +481,8 @@ mod policy_tests {
                     socket: relay_socket,
                     client_socket: None,
                     token: relay_token,
-                    address,
+                    bound_address: address,
+                    advertised_address: address,
                     username: "overload-fixture".into(),
                     transaction: [1; 12],
                     expires,
@@ -694,6 +708,176 @@ mod policy_tests {
     }
 
     #[test]
+    fn mapped_ports_validate_before_binding() {
+        let pair = RelayPortMapping {
+            local_port: 41000,
+            advertised_port: 51000,
+        };
+        for case in 0..10 {
+            let mut config = Config::local(vec![1; 32]);
+            config.listen.set_port(0);
+            config.relay_port_mappings = Some(vec![pair]);
+            config.advertised_ip = Some("203.0.113.7".parse().unwrap());
+            match case {
+                0 => config.relay_port_mappings = Some(vec![]),
+                1 => config.relay_port_mappings.as_mut().unwrap()[0].local_port = 0,
+                2 => config.relay_port_mappings.as_mut().unwrap()[0].advertised_port = 0,
+                3 => config
+                    .relay_port_mappings
+                    .as_mut()
+                    .unwrap()
+                    .push(RelayPortMapping {
+                        local_port: pair.local_port,
+                        advertised_port: 51001,
+                    }),
+                4 => config
+                    .relay_port_mappings
+                    .as_mut()
+                    .unwrap()
+                    .push(RelayPortMapping {
+                        local_port: 41001,
+                        advertised_port: pair.advertised_port,
+                    }),
+                5 => {
+                    config.relay_port_mappings = Some(
+                        (0..=MAX_RELAY_PORT_MAPPINGS)
+                            .map(|index| RelayPortMapping {
+                                local_port: 10000 + index as u16,
+                                advertised_port: 20000 + index as u16,
+                            })
+                            .collect(),
+                    );
+                }
+                6 => config.relay_port_range = Some((41000, 41001)),
+                7 => config.local_peer_bridge = true,
+                8 => config.listen.set_port(pair.local_port),
+                _ => config.advertised_ip = Some("::1".parse().unwrap()),
+            }
+            assert!(Server::bind(config).is_err(), "case {case}");
+        }
+        let mut config = Config::local(vec![1; 32]);
+        config.listen = "0.0.0.0:41000".parse().unwrap();
+        config.relay_port_mappings = Some(vec![pair]);
+        config.advertised_ip = Some("203.0.113.7".parse().unwrap());
+        assert!(Server::bind(config).is_err());
+    }
+
+    #[test]
+    fn mapped_port_capacity_accepts_the_unique_maximum_without_prebinding_relays() {
+        let mut config = Config::local(vec![1; 32]);
+        config.listen.set_port(0);
+        config.advertised_ip = Some("203.0.113.7".parse().unwrap());
+        config.relay_port_mappings = Some(
+            (0..MAX_RELAY_PORT_MAPPINGS)
+                .map(|index| RelayPortMapping {
+                    local_port: 10000 + index as u16,
+                    advertised_port: 20000 + index as u16,
+                })
+                .collect(),
+        );
+        let server = Server::bind(config).unwrap();
+        assert_eq!(server.allocated_relay_ports().count(), 0);
+    }
+
+    #[test]
+    fn translated_ports_require_a_distinct_advertised_ip_but_identity_pairs_do_not() {
+        for advertised_ip in [None, Some("127.0.0.1".parse().unwrap())] {
+            let mut config = Config::local(vec![1; 32]);
+            config.listen.set_port(0);
+            config.advertised_ip = advertised_ip;
+            config.relay_port_mappings = Some(vec![RelayPortMapping {
+                local_port: 41000,
+                advertised_port: 51000,
+            }]);
+            let error = Server::bind(config.clone())
+                .err()
+                .expect("translation refused");
+            assert!(error.to_string().contains("translated relay ports"));
+            config.relay_port_mappings = Some(vec![
+                RelayPortMapping {
+                    local_port: 41000,
+                    advertised_port: 41000,
+                },
+                RelayPortMapping {
+                    local_port: 41002,
+                    advertised_port: 41002,
+                },
+            ]);
+            let server = Server::bind(config).unwrap();
+            assert_eq!(server.allocated_relay_ports().count(), 0);
+        }
+    }
+
+    #[test]
+    fn mapped_loopback_endpoints_require_the_explicit_test_opt_in() {
+        let mut config = Config::local(vec![1; 32]);
+        config.advertised_ip = Some("127.0.0.2".parse().unwrap());
+        config.relay_port_mappings = Some(vec![RelayPortMapping {
+            local_port: 41000,
+            advertised_port: 51000,
+        }]);
+        let local = HashSet::from([41000]);
+        let public = HashSet::from([51000]);
+        for endpoint in ["127.0.0.1:41000", "127.0.0.2:51000"] {
+            let endpoint = endpoint.parse().unwrap();
+            assert!(!Server::allowed_peer(&config, &local, &public, endpoint));
+            config.allow_loopback_peers = true;
+            assert!(Server::allowed_peer(&config, &local, &public, endpoint));
+            config.allow_loopback_peers = false;
+        }
+        config.allow_loopback_peers = true;
+        for endpoint in ["127.0.0.1:51000", "127.0.0.2:41000"] {
+            assert!(!Server::allowed_peer(
+                &config,
+                &local,
+                &public,
+                endpoint.parse().unwrap()
+            ));
+        }
+    }
+
+    #[test]
+    fn mapped_own_addresses_require_matching_live_endpoint_pairs() {
+        let mut config = Config::local(vec![1; 32]);
+        config.relay_ip = "127.0.0.1".parse().unwrap();
+        config.advertised_ip = Some("203.0.113.7".parse().unwrap());
+        config.allow_loopback_peers = true;
+        config.relay_port_mappings = Some(vec![RelayPortMapping {
+            local_port: 41000,
+            advertised_port: 51000,
+        }]);
+        let local = HashSet::from([41000]);
+        let public = HashSet::from([51000]);
+        for endpoint in ["127.0.0.1:41000", "203.0.113.7:51000"] {
+            assert!(Server::allowed_peer(
+                &config,
+                &local,
+                &public,
+                endpoint.parse().unwrap()
+            ));
+            assert!(!Server::allowed_peer(
+                &config,
+                &HashSet::new(),
+                &HashSet::new(),
+                endpoint.parse().unwrap()
+            ));
+        }
+        for endpoint in [
+            "127.0.0.1:51000",
+            "203.0.113.7:41000",
+            "127.0.0.1:22",
+            "203.0.113.7:22",
+        ] {
+            assert!(!Server::allowed_peer(
+                &config,
+                &local,
+                &public,
+                endpoint.parse().unwrap()
+            ));
+        }
+    }
+
+    #[test]
     #[cfg(feature = "direct-index")]
     fn recycled_slots_ignore_stale_events_and_stay_bounded() {
         let a = Client::Datagram("127.0.0.1:1234".parse().unwrap());
@@ -732,10 +916,16 @@ mod policy_tests {
         .into();
         let ports = HashSet::from([49160]);
         for peer in ["127.64.1.2:49160", "127.127.255.255:49191"] {
-            assert!(Server::allowed_peer(&config, &ports, peer.parse().unwrap()));
+            assert!(Server::allowed_peer(
+                &config,
+                &ports,
+                &ports,
+                peer.parse().unwrap()
+            ));
         }
         assert!(Server::allowed_peer(
             &config,
+            &ports,
             &ports,
             "127.64.1.1:49160".parse().unwrap()
         ));
@@ -753,7 +943,7 @@ mod policy_tests {
             "[::ffff:127.64.1.2]:49160",
         ] {
             assert!(
-                !Server::allowed_peer(&config, &ports, peer.parse().unwrap()),
+                !Server::allowed_peer(&config, &ports, &ports, peer.parse().unwrap()),
                 "{peer}"
             );
         }
@@ -786,10 +976,12 @@ mod policy_tests {
         assert!(Server::allowed_peer(
             &config,
             &ports,
+            &ports,
             "203.0.113.1:50000".parse().unwrap()
         ));
         assert!(!Server::allowed_peer(
             &config,
+            &ports,
             &ports,
             "203.0.113.1:22".parse().unwrap()
         ));
@@ -797,15 +989,18 @@ mod policy_tests {
         assert!(!Server::allowed_peer(
             &config,
             &ports,
+            &ports,
             "203.0.113.1:50000".parse().unwrap()
         ));
         assert!(!Server::allowed_peer(
             &config,
             &ports,
+            &ports,
             "10.0.0.1:50000".parse().unwrap()
         ));
         assert!(!Server::allowed_peer(
             &config,
+            &ports,
             &ports,
             "[::ffff:127.0.0.1]:22".parse().unwrap()
         ));
@@ -818,6 +1013,7 @@ impl Config {
             listen: "127.0.0.1:3478".parse().expect("literal"),
             relay_ip: "127.0.0.1".parse().expect("literal"),
             relay_port_range: None,
+            relay_port_mappings: None,
             advertised_ip: None,
             realm: "spry-turn".into(),
             secret,
@@ -908,7 +1104,8 @@ struct Allocation {
     #[cfg(feature = "connected-udp")]
     client_socket: Option<UdpSocket>,
     token: Token,
-    address: SocketAddr,
+    bound_address: SocketAddr,
+    advertised_address: SocketAddr,
     username: String,
     transaction: [u8; 12],
     expires: Instant,
@@ -1127,6 +1324,8 @@ pub struct Server {
     #[cfg(feature = "direct-index")]
     relays: RelaySlots,
     relay_ports: HashSet<u16>,
+    advertised_relay_ports: HashSet<u16>,
+    next_relay_mapping: usize,
     next_relay_port: u16,
     connections: HashMap<Token, Connection>,
     pending_streams: VecDeque<Token>,
@@ -1236,6 +1435,37 @@ impl Server {
     }
 
     pub fn bind(config: Config) -> io::Result<Self> {
+        if let Some(mappings) = &config.relay_port_mappings {
+            let mut local = HashSet::new();
+            let mut advertised = HashSet::new();
+            if mappings.is_empty()
+                || mappings.len() > MAX_RELAY_PORT_MAPPINGS
+                || config.relay_port_range.is_some()
+                || config.local_peer_bridge
+                || mappings.iter().any(|mapping| {
+                    mapping.local_port == 0
+                        || mapping.advertised_port == 0
+                        || !local.insert(mapping.local_port)
+                        || !advertised.insert(mapping.advertised_port)
+                        || (mapping.local_port == config.listen.port()
+                            && (config.listen.ip().is_unspecified()
+                                || config.listen.ip() == config.relay_ip))
+                })
+            {
+                return Err(io::Error::other(
+                    "relay port mappings require 1..=1024 unique nonzero local/public ports, no listener collision, range or peer bridge",
+                ));
+            }
+            if mappings
+                .iter()
+                .any(|mapping| mapping.local_port != mapping.advertised_port)
+                && config.advertised_ip.is_none_or(|ip| ip == config.relay_ip)
+            {
+                return Err(io::Error::other(
+                    "translated relay ports require an explicit advertised IP different from the local relay IP",
+                ));
+            }
+        }
         if config
             .relay_port_range
             .is_some_and(|(first, last)| first == 0 || first > last)
@@ -1326,6 +1556,8 @@ impl Server {
             allocations: HashMap::new(),
             relays: Default::default(),
             relay_ports: HashSet::new(),
+            advertised_relay_ports: HashSet::new(),
+            next_relay_mapping: 0,
             next_relay_port,
             connections: HashMap::new(),
             pending_streams: VecDeque::new(),
@@ -1701,7 +1933,9 @@ impl Server {
             if let Some(socket) = &mut allocation.client_socket {
                 let _ = self.poll.registry().deregister(socket);
             }
-            self.relay_ports.remove(&allocation.address.port());
+            self.relay_ports.remove(&allocation.bound_address.port());
+            self.advertised_relay_ports
+                .remove(&allocation.advertised_address.port());
             let _ = self.poll.registry().deregister(&mut allocation.socket);
             self.relays.remove(&allocation.token);
         }
@@ -1837,7 +2071,12 @@ impl Server {
             else {
                 return;
             };
-            if !Self::allowed_peer(&self.config, &self.relay_ports, channel.peer) {
+            if !Self::allowed_peer(
+                &self.config,
+                &self.relay_ports,
+                &self.advertised_relay_ports,
+                channel.peer,
+            ) {
                 self.stats.dropped_packets += 1;
                 return;
             }
@@ -2000,14 +2239,23 @@ impl Server {
                 .register(&mut socket, token, Interest::READABLE)?;
             Ok(address)
         });
-        let Ok(mut address) = address else {
+        let Ok(bound_address) = address else {
             #[cfg(feature = "direct-index")]
             self.relays.remove(&token);
             self.error(client, peer, m, 508, Some(&key));
             return;
         };
+        let mut advertised_address = bound_address;
         if let Some(ip) = self.config.advertised_ip {
-            address.set_ip(ip);
+            advertised_address.set_ip(ip);
+        }
+        if let Some(mappings) = &self.config.relay_port_mappings {
+            // bind_relay_socket selects only validated entries from this map.
+            let mapping = mappings
+                .iter()
+                .find(|mapping| mapping.local_port == bound_address.port())
+                .expect("bound mapped port");
+            advertised_address.set_port(mapping.advertised_port);
         }
         let now = Instant::now();
         let lifetime = credential_lifetime(
@@ -2024,7 +2272,8 @@ impl Server {
                 #[cfg(feature = "connected-udp")]
                 client_socket,
                 token,
-                address,
+                bound_address,
+                advertised_address,
                 username,
                 transaction: m.transaction,
                 expires: now + lifetime,
@@ -2037,13 +2286,33 @@ impl Server {
                 ),
             },
         );
-        self.relay_ports.insert(address.port());
+        self.relay_ports.insert(bound_address.port());
+        self.advertised_relay_ports
+            .insert(advertised_address.port());
         #[cfg(not(feature = "direct-index"))]
         self.relays.insert(token, client);
         self.allocated(client, peer, m, &key);
     }
 
     fn bind_relay_socket(&mut self) -> io::Result<UdpSocket> {
+        if let Some(mappings) = &self.config.relay_port_mappings {
+            for _ in 0..mappings.len() {
+                let mapping = mappings[self.next_relay_mapping];
+                self.next_relay_mapping = (self.next_relay_mapping + 1) % mappings.len();
+                if self.relay_ports.contains(&mapping.local_port) {
+                    continue;
+                }
+                match UdpSocket::bind(SocketAddr::new(self.config.relay_ip, mapping.local_port)) {
+                    Ok(socket) => return Ok(socket),
+                    Err(error) if error.kind() == io::ErrorKind::AddrInUse => continue,
+                    Err(error) => return Err(error),
+                }
+            }
+            return Err(io::Error::new(
+                io::ErrorKind::AddrInUse,
+                "relay port mappings exhausted",
+            ));
+        }
         let Some((first, last)) = self.config.relay_port_range else {
             return UdpSocket::bind(SocketAddr::new(self.config.relay_ip, 0));
         };
@@ -2078,7 +2347,7 @@ impl Server {
             .saturating_add(1)
             .min(3600) as u32;
         let mut b = Builder::new(ALLOCATE, 2, m.transaction);
-        b.address(RELAYED, a.address)
+        b.address(RELAYED, a.advertised_address)
             .address(MAPPED, peer)
             .number(LIFETIME, lifetime)
             .attr(SOFTWARE, b"spry-turn");
@@ -2095,7 +2364,7 @@ impl Server {
                 self.error(client, peer, m, 400, Some(&key));
                 return;
             }
-            if (family[0] == 1) != a.address.is_ipv4() {
+            if (family[0] == 1) != a.advertised_address.is_ipv4() {
                 self.error(client, peer, m, 443, Some(&key));
                 return;
             }
@@ -2122,10 +2391,20 @@ impl Server {
     }
 
     fn peer_allowed(&self, address: SocketAddr) -> bool {
-        Self::allowed_peer(&self.config, &self.relay_ports, address)
+        Self::allowed_peer(
+            &self.config,
+            &self.relay_ports,
+            &self.advertised_relay_ports,
+            address,
+        )
     }
 
-    fn allowed_peer(config: &Config, ports: &HashSet<u16>, address: SocketAddr) -> bool {
+    fn allowed_peer(
+        config: &Config,
+        ports: &HashSet<u16>,
+        advertised_ports: &HashSet<u16>,
+        address: SocketAddr,
+    ) -> bool {
         if address.port() == 0 {
             return false;
         }
@@ -2144,14 +2423,28 @@ impl Server {
                 .relay_port_range
                 .is_some_and(|(first, last)| (first..=last).contains(&address.port()));
         }
-        if ip.is_loopback() {
-            return config.allow_loopback_peers;
-        }
         if ip.is_unspecified() || ip.is_multicast() {
             return false;
         }
+        if ip.is_loopback() && !config.allow_loopback_peers {
+            return false;
+        }
+        // Mapped mode must not let the local-test loopback opt-in bypass
+        // exact ownership checks on the configured local/public relay IPs.
+        if config.relay_port_mappings.is_some()
+            && (ip == config.relay_ip || Some(ip) == config.advertised_ip)
+        {
+            return (ip == config.relay_ip && ports.contains(&address.port()))
+                || (ip == config.advertised_ip.unwrap_or(config.relay_ip)
+                    && advertised_ports.contains(&address.port()));
+        }
+        if ip.is_loopback() {
+            return config.allow_loopback_peers;
+        }
         if ip == config.relay_ip || Some(ip) == config.advertised_ip {
-            return ports.contains(&address.port());
+            return (ip == config.relay_ip && ports.contains(&address.port()))
+                || (ip == config.advertised_ip.unwrap_or(config.relay_ip)
+                    && advertised_ports.contains(&address.port()));
         }
         match ip {
             IpAddr::V4(v) => {
