@@ -1522,16 +1522,12 @@ impl Connection {
     }
 
     fn flush(&mut self) -> io::Result<bool> {
+        #[cfg(feature = "tls")]
+        if self.tls.is_some() {
+            return self.flush_tls();
+        }
         while self.written < self.output.len() {
-            #[cfg(feature = "tls")]
-            let result = if let Some(tls) = &mut self.tls {
-                tls.writer().write(&self.output[self.written..])
-            } else {
-                self.socket.write(&self.output[self.written..])
-            };
-            #[cfg(not(feature = "tls"))]
-            let result = self.socket.write(&self.output[self.written..]);
-            match result {
+            match self.socket.write(&self.output[self.written..]) {
                 Ok(0) => break,
                 Ok(n) => self.written += n,
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
@@ -1543,20 +1539,44 @@ impl Connection {
             self.output.clear();
             self.written = 0;
         }
-        #[cfg(feature = "tls")]
-        if let Some(tls) = &mut self.tls {
-            while tls.wants_write() {
-                match tls.write_tls(&mut self.socket) {
+        Ok(!self.output.is_empty())
+    }
+
+    #[cfg(feature = "tls")]
+    fn flush_tls(&mut self) -> io::Result<bool> {
+        let tls = self.tls.as_mut().expect("TLS checked by flush");
+        loop {
+            while self.written < self.output.len() {
+                match tls.writer().write(&self.output[self.written..]) {
                     Ok(0) => break,
-                    Ok(_) => (),
+                    Ok(n) => self.written += n,
                     Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
                     Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
                     Err(e) => return Err(e),
                 }
             }
-            return Ok(!self.output.is_empty() || tls.wants_write());
+            if self.written == self.output.len() {
+                self.output.clear();
+                self.written = 0;
+            }
+            let mut ciphertext_progress = false;
+            while tls.wants_write() {
+                match tls.write_tls(&mut self.socket) {
+                    Ok(0) => return Ok(true),
+                    Ok(_) => ciphertext_progress = true,
+                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => return Ok(true),
+                    Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                    Err(e) => return Err(e),
+                }
+            }
+            if self.output.is_empty() || !ciphertext_progress || tls.is_handshaking() {
+                return Ok(!self.output.is_empty());
+            }
+            // Draining TLS records freed its writer's bounded capacity. Retry
+            // the existing application queue before waiting for another edge.
+            // No new application bytes enter this call; blocked/no-progress or
+            // pre-handshake states above always return to the event loop.
         }
-        Ok(!self.output.is_empty())
     }
 }
 

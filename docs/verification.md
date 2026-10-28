@@ -1,5 +1,21 @@
 # Standalone verification
 
+## TLS flush regression
+
+The unit test `tls_flush_retries_application_after_ciphertext_drain` uses a real
+verified localhost TLS handshake. It fills a small fixture-only rustls buffer,
+queues application bytes and consumes an already-armed writable event, then
+requires both queues to drain and read-only interest to resume without another
+payload. Production queue limits are unchanged.
+
+Run it with `cargo test --locked --lib --features tls
+tls_flush_retries_application_after_ciphertext_drain` on Unix with the default
+features. The existing OpenSSL test prerequisite generates temporary SAN/v3
+localhost certificates and keys in an owned private directory; the test bounds
+generation and removes the child process and files. No fixed private key or
+certificate is committed. This regression does not establish the cause of a
+particular network or playback failure.
+
 ## v0.2.1 qualification
 
 The stream-readiness optimisation passed ten all-feature Rust unit tests,
