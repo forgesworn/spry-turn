@@ -174,8 +174,60 @@ fn main() {
             "privacy link with a dot segment",
             "https://operator.example/a/../privacy",
         ),
+        (
+            "privacy link with userinfo",
+            "https://user@operator.example/privacy",
+        ),
+        (
+            "privacy link with a backslash",
+            "https://operator.example/privacy\\notice",
+        ),
+        (
+            "privacy link with a trailing dot",
+            "https://operator.example./privacy",
+        ),
+        (
+            "privacy link on an IPv6 literal",
+            "https://[2001:db8::1]/privacy",
+        ),
+        ("privacy link without a path", "https://operator.example"),
+        (
+            "privacy link with a reserved last label",
+            "https://operator.test/privacy",
+        ),
+        (
+            "privacy link with a numeric last label",
+            "https://operator.123/privacy",
+        ),
+        (
+            "privacy link with ? in the host",
+            "https://operator.example?x/privacy",
+        ),
+        (
+            "privacy link with # in the host",
+            "https://operator.example#x/privacy",
+        ),
     ] {
         cases.push(case(name, vec![with_privacy(&node, &[link], NOW)]));
+    }
+    let (mut tags, content) = advert::open_parts(&offer(), Some("GB"), None, NOW).unwrap();
+    tags.push(vec!["privacy".into()]);
+    cases.push(case(
+        "one-item privacy tag",
+        vec![sign(&node, tags, content, NOW)],
+    ));
+    // Spry never puts the tag on a withdrawal, but a reader checks it
+    // wherever it appears and exposes a valid one, as it does `g`.
+    for (name, link) in [
+        ("valid privacy tag on a withdrawal", PRIVACY),
+        (
+            "invalid privacy tag on a withdrawal",
+            "http://operator.example/privacy",
+        ),
+    ] {
+        let (mut tags, content) = advert::withdrawn_parts(NOW).unwrap();
+        tags.push(vec!["privacy".into(), link.into()]);
+        cases.push(case(name, vec![sign(&node, tags, content, NOW)]));
     }
     let fixture = json!({"schema":1,"synthetic":true,"profile":"spry-public-advert-v1",
         "now":NOW,"nodeKeyRepeatedByte":5,"nodeKey":node.public_key(),"cases":cases});

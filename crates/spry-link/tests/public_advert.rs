@@ -77,9 +77,29 @@ fn committed_public_advert_fixture_gives_the_expected_verdicts() {
         "privacy link on an IP literal",
         "privacy link with an xn-- label",
         "privacy link with a dot segment",
+        "privacy link with userinfo",
+        "privacy link with a backslash",
+        "privacy link with a trailing dot",
+        "privacy link on an IPv6 literal",
+        "privacy link without a path",
+        "privacy link with a reserved last label",
+        "privacy link with a numeric last label",
+        "privacy link with ? in the host",
+        "privacy link with # in the host",
+        "one-item privacy tag",
+        "invalid privacy tag on a withdrawal",
     ] {
         assert_eq!(find(name), ["Destination"], "{name}");
     }
+    assert_eq!(find("valid privacy tag on a withdrawal"), ["withdrawn"]);
+    let withdrawal = cases
+        .iter()
+        .find(|case| case["name"] == "valid privacy tag on a withdrawal")
+        .unwrap();
+    assert_eq!(
+        withdrawal["privacy"],
+        serde_json::json!(["https://operator.example/privacy"])
+    );
     let linked = cases
         .iter()
         .find(|case| case["name"] == "valid open advert with a privacy link")

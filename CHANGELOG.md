@@ -25,7 +25,7 @@
   bytes; an invalid value refuses startup. Adverts stay version 1, older
   readers ignore the tag, and Spry never fetches the link. Advert verifiers
   now refuse `xn--` labels in the credential host, as Android already did.
-  The fixture gains thirteen cases; existing cases are unchanged. Rust
+  The fixture gains twenty-five cases; existing cases are unchanged. Rust
   callers of `advert::open` and `advert::open_parts` pass the new `privacy`
   argument, and `Advert` gains a `privacy` field.
 

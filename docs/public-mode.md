@@ -309,10 +309,13 @@ a valid withdrawal, and invalid cases (bad signature, missing expiration,
 expiration too far ahead, future `created_at`, an `expiration` with a sign,
 IP-literal endpoint, mismatched TURN host, a TURN port outside the allowed
 three, older open after newer withdrawn, the same advert twice, an `xn--`
-credential host), a valid open advert with a privacy link, and privacy links
-that are refused (over `http:`, with a port, query, fragment, percent-escape,
-uppercase host, IP literal, `xn--` label or dot segment, or a repeated
-`privacy` tag, each `Destination`; over 256 bytes, `Size`). Each case lists
+credential host), a valid open advert with a privacy link, a withdrawal
+carrying a valid privacy tag (`withdrawn`, link exposed), and privacy links
+that are refused (over `http:`, with userinfo, a port, query, fragment,
+percent-escape, backslash, uppercase host, trailing dot, IPv4 or IPv6
+literal, `xn--` label, reserved or numeric last label, `?` or `#` before the
+path, no path or a dot segment, a repeated or one-item `privacy` tag, or an
+invalid tag on a withdrawal, each `Destination`; over 256 bytes, `Size`). Each case lists
 events to give, in order, to a fresh watermark at the file's `now`, with the
 expected verdict for each: `open`, `withdrawn` or the refusal's name, and in
 `privacy` the link a verifier must expose for each, or null. Readers that
