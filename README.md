@@ -34,6 +34,10 @@ Spry is independent of Archipelago. The reusable `spry-turn`, `spry-access`,
 pairing service. Archipelago is an optional package and host integration.
 See [standalone use and library boundaries](docs/standalone.md).
 
+The [standalone guide](docs/standalone.md#linux-ci-artefact) describes the
+short-retention Linux CI bundle of both executables, source and licences.
+It is separate from the existing prerelease downloads and deployment acceptance.
+
 ## What works
 
 - STUN Binding, authenticated TURN Allocate and Refresh, CreatePermission,

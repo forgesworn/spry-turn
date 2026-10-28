@@ -4,6 +4,8 @@
 
 Version 0.3.0. Source and GitHub prereleases are public, under MIT, copyright 2026 TheCryptoDonkey. There is no crates.io, docs.rs or npm publication, hosted relay, credential service or public documentation site.
 
+The existing Linux verify job is configured to upload a three-day CI artefact containing both TLS-enabled standalone executables, exact committed source, dependency licences, checksums and ELF/GLIBC provenance. This is separate from formal release downloads and operator deployment or network acceptance.
+
 Native UDP/TCP clients and optional TLS use UDP peer allocations. Browser applications use their existing WebRTC ICE implementation. Ordinary browser WASM cannot host a raw-socket TURN server. Shared TURN secrets belong only to trusted operator tools; give clients short-lived credentials.
 
 This is an initial implementation, without full coturn parity or production qualification. UDP peer-relay port ranges are optional and fail closed on exhaustion. Static user databases, TCP relay allocations, DTLS and dual allocations are not implemented. Archipelago private packaging has separate qualification; native desktop/Android hosting controls and general physical-phone/public-network acceptance remain open. Sapflow integration remains a later goal.
@@ -55,6 +57,10 @@ Spry is independent of Archipelago. The reusable `spry-turn`, `spry-access`,
 `spry-link` and `spry-service` Rust libraries live here, together with a standalone
 pairing service. Archipelago is an optional package and host integration.
 See [standalone use and library boundaries](https://github.com/forgesworn/spry-turn/blob/main/docs/standalone.md).
+
+The [standalone guide](https://github.com/forgesworn/spry-turn/blob/main/docs/standalone.md#linux-ci-artefact) describes the
+short-retention Linux CI bundle of both executables, source and licences.
+It is separate from the existing prerelease downloads and deployment acceptance.
 
 ## What works
 
@@ -600,6 +606,31 @@ Build both standalone executables:
 ```sh
 cargo build --locked --release --workspace --features tls
 ```
+
+## Linux CI artefact
+
+The existing verify workflow is configured to build both TLS-enabled standalone
+executables on `ubuntu-24.04`, after which its existing Rust, interop, stress and
+browser checks must pass before packaging. Successful Linux verify jobs upload
+`spry-standalone-linux-x86_64-<commit>` to GitHub Actions for three days. This is
+a CI artefact, not a formal Linux release, container image or running service;
+the v0.3.0 release downloads retain their original bytes. Other workflow jobs,
+operator deployment and network/device acceptance remain separate gates.
+
+The download contains a tarball and its SHA-256 sidecar. Verify that checksum,
+extract the tarball, then run `sha256sum -c SHA256SUMS` inside its directory.
+Check `provenance.json` against the intended workflow run and Git commit before
+executing either file in `bin/`. It records binary and lockfile hashes, compiler,
+ELF architecture/interpreter, required system libraries and direct GLIBC symbol
+requirements. System libraries are not bundled; their dependencies also need
+to be present. No universal Linux compatibility is claimed. Checksums establish
+content integrity, not an independent signature or release approval.
+
+`source.tar.gz` is an exact `git archive` of the recorded commit, accompanied by
+`Cargo.lock`, the MIT licence, RFC notice, the existing workspace-wide dependency
+licences and operator guides. Workspace and Cargo paths are remapped during the
+Linux build; packaging refuses binaries retaining those build paths. The
+packager starts no service and supplies no endpoint, configuration or secret.
 
 For the pairing service, supply `SPRY_PUBLIC_URL` (its HTTPS origin),
 `SPRY_OWNER_KEYS` (comma-separated owner public keys), `SPRY_TURN_SECRET`
@@ -3032,6 +3063,11 @@ Canonical source: [CHANGELOG.md](https://github.com/forgesworn/spry-turn/blob/ma
   the maximums; invalid values, or a per-credential cap above the total,
   refuse startup. The private-node profile and the public credential issuance
   limits are unchanged.
+- Configure the existing Linux verify job on `ubuntu-24.04` to build both
+  TLS-enabled standalone executables and upload a three-day CI artefact after
+  its checks pass. Include exact committed source, dependency licences,
+  checksums and ELF/GLIBC provenance. This adds no formal Linux release, image,
+  service or deployment qualification; existing prerelease bytes stay unchanged.
 
 ## 0.3.0 — 26 October 2026
 
