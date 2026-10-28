@@ -58,6 +58,11 @@ For the pairing service, supply `SPRY_PUBLIC_URL` (its HTTPS origin),
 Set `SPRY_STATE_FILE` to a private persistent file and, if needed,
 `SPRY_KITHMOOT_URL` to the intended calling application's HTTPS URL.
 `SPRY_ALLOWED_ORIGINS` explicitly adds HTTPS origins for other clients.
+`SPRY_ROOM_SEAL` (`auto`, the default, `required` or `off`; any other value
+refuses startup) decides when a room grant admits only the signing keys its
+paired app registered: once that app seals the grant, on every grant, or
+never. It applies to both profiles; see the
+[API reference](api.md#room-grant-paths).
 An operator who wants to serve anyone can turn on [public mode](public-mode.md)
 in this standard profile; it is off by default and has no default relays.
 

@@ -12,10 +12,12 @@ use url::Url;
 pub const REQUEST_KIND: u16 = 24181;
 pub const RESPONSE_KIND: u16 = 24182;
 pub const MAX_BODY: usize = 8192;
-const PATHS: [&str; 5] = [
+const PATHS: [&str; 7] = [
     "/v1/pairings/claim",
     "/v1/pairings/remove-self",
     "/v1/grants",
+    "/v1/grants/devices",
+    "/v1/grants/vouch",
     "/v1/credentials",
     "/v1/peers",
 ];

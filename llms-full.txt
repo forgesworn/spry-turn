@@ -638,6 +638,11 @@ For the pairing service, supply `SPRY_PUBLIC_URL` (its HTTPS origin),
 Set `SPRY_STATE_FILE` to a private persistent file and, if needed,
 `SPRY_KITHMOOT_URL` to the intended calling application's HTTPS URL.
 `SPRY_ALLOWED_ORIGINS` explicitly adds HTTPS origins for other clients.
+`SPRY_ROOM_SEAL` (`auto`, the default, `required` or `off`; any other value
+refuses startup) decides when a room grant admits only the signing keys its
+paired app registered: once that app seals the grant, on every grant, or
+never. It applies to both profiles; see the
+[API reference](https://github.com/forgesworn/spry-turn/blob/main/docs/api.md#room-grant-paths).
 An operator who wants to serve anyone can turn on [public mode](https://github.com/forgesworn/spry-turn/blob/main/docs/public-mode.md)
 in this standard profile; it is off by default and has no default relays.
 
@@ -876,6 +881,70 @@ Parsing and integrity verification do not themselves grant a peer
 permission, allocate a relay or enforce the application's membership.
 For normal server use, let `Server` own the TURN state machine.
 
+## Room-grant paths
+
+Source: [crates/spry-access/src/lib.rs](https://github.com/forgesworn/spry-turn/blob/main/crates/spry-access/src/lib.rs).
+
+The `spry-node` service and `spry:` control channel pass these `POST`
+bodies to `Authority::handle` after the usual signed-request check, body
+limit and per-source and per-key rate limits. Every refusal is
+`{"error":"<message>"}` with the status shown.
+
+| Path | Signer | Body | Success |
+|---|---|---|---|
+| `/v1/grants` | Paired app | `{"pairing","scope"}` | `{"v":1,"endpoint","token","expiresAt"}`; one grant per pairing and scope, renewed in place |
+| `/v1/grants/remove` | Paired app | `{"pairing","grant"}` | `{"removed":true}`; drops the grant and its registered keys |
+| `/v1/grants/devices` | The pairing that owns the grant | `{"v":1,"pairing","grant","add":[...],"remove":[...],"seal":true,"revision":N}` | `{"v":1,"sealed":bool,"enforced":bool,"devices":N}` |
+| `/v1/grants/vouch` | A confirmed key on the grant | `{"v":1,"grant","add":[...]}` | `{"v":1,"added":N}` |
+| `/v1/credentials` | Any key, or a registered key when enforced | `{"grant"}` | TURN `urls`, `username`, `credential`, `expiresAt` (at most 5 minutes) and `accessExpiresAt` |
+
+`/v1/grants/devices` and `/v1/grants/vouch` refuse any field not shown and
+any `v` other than 1 (400 "Invalid request."). Keys are distinct lowercase
+64-hex x-only public keys that are valid curve points.
+
+- `/v1/grants/devices`: at most 32 keys in each of `add` and `remove`, no key
+  in both; `seal` optional; `revision` an integer up to 2^53 - 1 that must
+  exceed the last one accepted for the grant in the past 90 seconds (else
+  409 "Out of date. Try again."). A signer that does not hold the named
+  pairing, or a grant of another pairing, gets 403 "Approval required.";
+  an unknown or expired grant gets 403 "Call access has expired.". An added
+  key becomes a confirmed entry with a 30-day lease, replacing a vouched
+  entry for it. A removed key loses its entry and its device slot at once.
+  `seal: true` seals the grant for good; `false` never unseals. Changes apply
+  all or nothing: a request refused for capacity also drops its removals
+  and its seal. Clients should therefore send removals, and a seal, in a
+  request of their own rather than with adds.
+- `/v1/grants/vouch`: one to four keys. The signer must hold a confirmed,
+  unexpired entry, else 403 "Call access has expired.". A key already listed
+  is left as it is; any other gains a vouched entry that lapses 24 hours
+  later, is never renewed by use and cannot vouch. Every named key counts
+  against the caps, listed or not, and `added` is the number of keys named,
+  so the answer does not reveal which keys were listed. At most 8 vouched
+  entries per grant at once, 8 vouches per signer per grant per 24 hours
+  and 64 signers tracked per grant; these and the grant, pairing and node
+  limits below all refuse with 429 "Spry is busy. Try again shortly.". A
+  vouch never evicts.
+- `/v1/credentials`: an enforced grant refuses a key without an unexpired
+  entry with 403 "Call access has expired.", the same refusal as an expired
+  grant, before counting it against the 32 concurrent device slots. A
+  confirmed entry's lease renews to 30 days on use once fewer than 29 days
+  remain.
+
+A grant is enforced when `Config::seal` is `Required`, or when it is `Auto`
+(the default) and the grant is sealed. `Off` stores registrations and
+vouches but never enforces them. `spry-node` reads this from
+`SPRY_ROOM_SEAL` (`auto`, `required` or `off`) once at startup.
+
+A grant holds at most 64 registered keys, the grants of one pairing at most
+512 together (half the node) and the node at most 1024. Adding to a full
+grant evicts the confirmed entry with no live device slot that was used
+least recently since start; with none to evict it refuses with 429 "This
+call has reached its device limit.". Over the pairing's share or the node
+limit it refuses with 429 "Spry is already helping too many calls.". Registered keys persist
+in the state file as `"sealed":true` and `"members":[["<key>",<lease end>,
+<vouched>]]` on each grant; the file stays version 1 and within its 131072
+byte limit, and an older binary loads it with every grant unsealed.
+
 ## WASM build
 
 ```sh
@@ -1041,8 +1110,20 @@ those.
 | `SPRY_PUBLIC_RELAYS` | JSON array of `wss://` relays to publish the advert to. Unset: public but unlisted (no advert) |
 | `SPRY_PUBLIC_REGION` | Optional ISO 3166-1 alpha-2 country code the operator chooses to state, such as `GB` |
 | `SPRY_PUBLIC_NOTE` | Optional operator text, at most 140 bytes, shown to people choosing a relay |
+| `SPRY_PUBLIC_PRIVACY_URL` | Optional link to the operator's own privacy notice, published on open adverts as `["privacy", url]` |
 
-There is no default relay list, region or note. Spry never fills these in.
+There is no default relay list, region, note or privacy link. Spry never
+fills these in, and never fetches the privacy link.
+
+`SPRY_PUBLIC_PRIVACY_URL` must be an `https://` address on a DNS name of two
+or more lowercase labels, with a path, at most 256 bytes: for example
+`https://operator.example/privacy`, or `https://operator.example/` for the
+site's front page (the trailing `/` is required). It may not carry userinfo,
+a port, a query, a fragment, a percent-escape, an uppercase or `xn--` label,
+an IP address, a reserved suffix such as `.local`, or an empty, `.` or `..`
+path segment. Spry refuses to start, naming the setting, when it is invalid.
+It is published only on open adverts, so only when `SPRY_PUBLIC_RELAYS` is
+set. Its host need not be the relay's.
 
 If you have no relays of your own in mind, these widely read public relays
 accepted connections on 25 October 2026. They are run by other people, are
@@ -1187,7 +1268,8 @@ A Nostr addressable event signed by the node's transport identity (the
 ```json
 {"kind":31478,
  "tags":[["d","spry-turn"],["v","1"],["status","open"],["auth","public"],
-         ["expiration","1793007200"],["g","GB"]],
+         ["expiration","1793007200"],["g","GB"],
+         ["privacy","https://operator.example/privacy"]],
  "content":"{\"credentials\":\"https://relay.example/v1/public/credentials\",\"urls\":[\"turn:relay.example:3478?transport=udp\",\"turn:relay.example:3478?transport=tcp\",\"turns:relay.example:5349?transport=tcp\"],\"note\":\"Optional operator text\"}"}
 ```
 
@@ -1197,6 +1279,11 @@ A Nostr addressable event signed by the node's transport identity (the
   it to exactly two hours.
 - `g` appears only on an open advert, and only if the operator set
   `SPRY_PUBLIC_REGION`.
+- `privacy` appears only on an open advert, and only if the operator set
+  `SPRY_PUBLIC_PRIVACY_URL`. Like `g`, a reader refuses the whole advert if
+  the tag is repeated, has other than two items or holds a link outside the
+  rules above, wherever it appears. Readers that predate it ignore it, so
+  the advert stays version 1.
 - `content` holds the credential endpoint, the TURN URLs and the optional
   note. A withdrawn advert has `content` `{}`.
 - It never contains credentials, the TURN secret, owner keys, pairings,
@@ -1248,8 +1335,8 @@ own change gate applies before it builds this.
    other event with the same `created_at`, is still refused.
 4. The credential endpoint must be exactly
    `https://<DNS hostname>/v1/public/credentials` in canonical form: no
-   userinfo, port (not even `:443`), query, fragment or other path. Refuse
-   IP literals and names that resolve to private, loopback, link-local or
+   userinfo, port (not even `:443`), query, fragment or other path, and no
+   `xn--` label. Refuse IP literals and names that resolve to private, loopback, link-local or
    reserved addresses. Every TURN URL (`turn:` over UDP or TCP, `turns:`
    over TCP, at most four) must use the same hostname, and a port of
    exactly `3478`, `5349` or `443`, or none for the scheme's default. Do
@@ -1259,14 +1346,17 @@ own change gate applies before it builds this.
 6. Choose and rank locally. Send no choice, latency, failure or usage report
    to the publisher or anyone else.
 7. A signature shows which key made the statement. It does not show the
-   operator's identity, honesty, uptime, logging or jurisdiction; `g` is the
-   operator's own claim. Show it as such.
-8. Reading an advert grants nothing. Credentials come only from the chosen
+   operator's identity, honesty, uptime, logging or jurisdiction; `g` and
+   `privacy` are the operator's own claims. Show them as such.
+8. A privacy link is the operator's own; never fetch it without the person
+   tapping it, and send no referrer. Show its hostname, label it as the
+   operator's, and do not prefetch, preconnect, preview or persist it.
+9. Reading an advert grants nothing. Credentials come only from the chosen
    operator's endpoint, and room admission stays with the calling app.
 
-`spry_link::advert` implements rules 2 to 4 and the watermark
-(`verify` and the bounded `AdvertBook`), so clients and fixtures share one
-implementation. It opens no sockets, so the resolution part of rule 4
+`spry_link::advert` implements rules 2 to 4, the privacy-link grammar
+(`privacy_valid`) and the watermark (`verify` and the bounded `AdvertBook`),
+so clients and fixtures share one implementation. It opens no sockets, so the resolution part of rule 4
 remains the client's job when it connects.
 
 ## Fixtures
@@ -1293,9 +1383,19 @@ fixed test key to `docs/fixtures/public-advert-v1.json`: a valid open advert,
 a valid withdrawal, and invalid cases (bad signature, missing expiration,
 expiration too far ahead, future `created_at`, an `expiration` with a sign,
 IP-literal endpoint, mismatched TURN host, a TURN port outside the allowed
-three, older open after newer withdrawn, the same advert twice). Each case lists events to give, in order, to a fresh watermark at
-the file's `now`, with the expected verdict for each: `open`, `withdrawn`
-or the refusal's name. Signing uses fixed auxiliary bytes, so regenerating
+three, older open after newer withdrawn, the same advert twice, an `xn--`
+credential host), a valid open advert with a privacy link, a withdrawal
+carrying a valid privacy tag (`withdrawn`, link exposed), and privacy links
+that are refused (over `http:`, with userinfo, a port, query, fragment,
+percent-escape, backslash, uppercase host, trailing dot, IPv4 or IPv6
+literal, `xn--` label, reserved or numeric last label, `?` or `#` before the
+path, no path or a dot segment, a repeated or one-item `privacy` tag, or an
+invalid tag on a withdrawal, each `Destination`; over 256 bytes, `Size`). Each case lists
+events to give, in order, to a fresh watermark at the file's `now`, with the
+expected verdict for each: `open`, `withdrawn` or the refusal's name, and in
+`privacy` the link a verifier must expose for each, or null. Readers that
+predate `privacy` accept the privacy-link cases' events as open adverts;
+that is harmless, since they never show the link. Signing uses fixed auxiliary bytes, so regenerating
 gives the same file. Clients test against that file.
 
 ---
@@ -3048,6 +3148,32 @@ Canonical source: [CHANGELOG.md](https://github.com/forgesworn/spry-turn/blob/ma
 
 ## Unreleased
 
+- Seal room grants: a paired app registers the signing keys that may redeem
+  its grant through `POST /v1/grants/devices` (add and remove with 30-day
+  leases, ordered by revision) and may seal the grant; a confirmed key may
+  vouch for up to four newcomers at a time through `POST /v1/grants/vouch`
+  (24-hour entries that cannot vouch, at most 8 per grant and per sponsor
+  per day, sponsors tracked per grant so one grant cannot stop vouching on
+  another; every named key is counted and answered alike, so vouching does
+  not reveal which keys are registered). An enforced grant refuses
+  unregistered keys at `/v1/credentials` with the existing "Call access has
+  expired." refusal. `SPRY_ROOM_SEAL` (`auto` by default, `required` or
+  `off`) chooses when grants are enforced; any other value refuses startup.
+  At most 64 registered keys per grant, 512 across one pairing's grants and
+  1024 per node. Registered keys persist in the version 1 state file within
+  its 128 KiB limit; an older binary still loads it, with every grant
+  unsealed. Both paths also work over the `spry:` control channel.
+- Removing a pairing now drops its grants from the saved state in the same
+  write, and a state write that would exceed the read limit is refused.
+- Add an optional operator privacy-notice link to public adverts as a
+  `["privacy", url]` tag, set with `SPRY_PUBLIC_PRIVACY_URL` (no default).
+  The link is `https://` on a DNS name with a restricted path, at most 256
+  bytes; an invalid value refuses startup. Adverts stay version 1, older
+  readers ignore the tag, and Spry never fetches the link. Advert verifiers
+  now refuse `xn--` labels in the credential host, as Android already did.
+  The fixture gains twenty-five cases; existing cases are unchanged. Rust
+  callers of `advert::open` and `advert::open_parts` pass the new `privacy`
+  argument, and `Advert` gains a `privacy` field.
 - Resume queued application bytes after TLS ciphertext drains, without waiting
   for another writable event. Queue limits and the control reserve are unchanged.
 - Configure the existing Linux verify job on `ubuntu-24.04` to build both
