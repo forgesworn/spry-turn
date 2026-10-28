@@ -118,14 +118,19 @@ any `v` other than 1 (400 "Invalid request."). Keys are distinct lowercase
   key becomes a confirmed entry with a 30-day lease, replacing a vouched
   entry for it. A removed key loses its entry and its device slot at once.
   `seal: true` seals the grant for good; `false` never unseals. Changes apply
-  all or nothing.
+  all or nothing: a request refused for capacity also drops its removals
+  and its seal. Clients should therefore send removals, and a seal, in a
+  request of their own rather than with adds.
 - `/v1/grants/vouch`: one to four keys. The signer must hold a confirmed,
   unexpired entry, else 403 "Call access has expired.". A key already listed
-  is left as it is and not counted; any other gains a vouched entry that
-  lapses 24 hours later, is never renewed by use and cannot vouch. At most 8
-  vouched entries per grant at once and 8 vouches per signer per grant per
-  24 hours, else 429 "Spry is busy. Try again shortly.". A vouch never
-  evicts.
+  is left as it is; any other gains a vouched entry that lapses 24 hours
+  later, is never renewed by use and cannot vouch. Every named key counts
+  against the caps, listed or not, and `added` is the number of keys named,
+  so the answer does not reveal which keys were listed. At most 8 vouched
+  entries per grant at once, 8 vouches per signer per grant per 24 hours
+  and 64 signers tracked per grant; these and the grant, pairing and node
+  limits below all refuse with 429 "Spry is busy. Try again shortly.". A
+  vouch never evicts.
 - `/v1/credentials`: an enforced grant refuses a key without an unexpired
   entry with 403 "Call access has expired.", the same refusal as an expired
   grant, before counting it against the 32 concurrent device slots. A
@@ -137,11 +142,12 @@ A grant is enforced when `Config::seal` is `Required`, or when it is `Auto`
 vouches but never enforces them. `spry-node` reads this from
 `SPRY_ROOM_SEAL` (`auto`, `required` or `off`) once at startup.
 
-A grant holds at most 64 registered keys and the node at most 1024. Adding
-to a full grant evicts the confirmed entry with no live device slot that was
-used least recently since start; with none to evict it refuses with 429
-"This call has reached its device limit.". Over the node limit it refuses
-with 429 "Spry is already helping too many calls.". Registered keys persist
+A grant holds at most 64 registered keys, the grants of one pairing at most
+512 together (half the node) and the node at most 1024. Adding to a full
+grant evicts the confirmed entry with no live device slot that was used
+least recently since start; with none to evict it refuses with 429 "This
+call has reached its device limit.". Over the pairing's share or the node
+limit it refuses with 429 "Spry is already helping too many calls.". Registered keys persist
 in the state file as `"sealed":true` and `"members":[["<key>",<lease end>,
 <vouched>]]` on each grant; the file stays version 1 and within its 131072
 byte limit, and an older binary loads it with every grant unsealed.

@@ -40,6 +40,9 @@ pub const PUBLIC_SOURCES: usize = 256;
 pub const MAX_MEMBERS: usize = 64;
 /// Registered signing keys across every grant on the node.
 pub const MAX_NODE_MEMBERS: usize = 1024;
+/// Registered signing keys the grants of one pairing may hold together:
+/// half the node, so one pairing cannot fill it for every other.
+pub const MAX_PAIRING_MEMBERS: usize = MAX_NODE_MEMBERS / 2;
 /// Vouched keys one grant may hold at once.
 pub const MAX_VOUCHED: usize = 8;
 /// A vouched key lapses this long after the vouch and is never renewed by use.
@@ -49,7 +52,9 @@ pub const MAX_STATE: usize = 131_072;
 const MAX_REGISTRATION: usize = 32;
 const MAX_VOUCH: usize = 4;
 const SPONSOR_VOUCHES: usize = 8;
-const SPONSORS: usize = 256;
+/// Sponsors one grant tracks at once, so churn on one grant cannot stop
+/// vouching on another.
+const SPONSORS: usize = MAX_MEMBERS;
 const REVISION_WINDOW: u64 = 90;
 const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
 const EXPIRED: &str = "Call access has expired.";
@@ -328,6 +333,10 @@ struct Grant {
     /// Last redemption by each member since start, in memory only.
     #[serde(skip)]
     used: HashMap<String, u64>,
+    /// Keys each sponsor vouched for, by hashed sponsor key: window end and
+    /// count. In memory only, and gone with the grant.
+    #[serde(skip)]
+    sponsors: HashMap<String, (u64, usize)>,
 }
 impl Grant {
     fn member(&self, key: &str) -> Option<&(String, u64, bool)> {
@@ -368,8 +377,6 @@ pub struct Authority {
     public_window: (u64, u16),
     // The newest registration revision per grant, held for 90 seconds.
     revisions: HashMap<String, (u64, u64)>,
-    // Keys each sponsor vouched for per grant: window end and count.
-    vouches: HashMap<(String, String), (u64, usize)>,
 }
 impl Authority {
     pub fn new(config: Config) -> Self {
@@ -384,7 +391,6 @@ impl Authority {
             public_rates: HashMap::new(),
             public_window: (0, 0),
             revisions: HashMap::new(),
-            vouches: HashMap::new(),
         }
     }
 
@@ -413,6 +419,13 @@ impl Authority {
     }
     fn member_total(&self) -> usize {
         self.grants.values().map(|grant| grant.members.len()).sum()
+    }
+    fn pairing_total(&self, pairing: &str) -> usize {
+        self.grants
+            .values()
+            .filter(|grant| grant.pair == pairing)
+            .map(|grant| grant.members.len())
+            .sum()
     }
 
     /// Transport configuration is an owner action. The adapter validates its URI profile.
@@ -487,6 +500,15 @@ impl Authority {
                         })
                 })
                 && state.grants.iter().map(|g| g.members.len()).sum::<usize>() <= MAX_NODE_MEMBERS
+                && state.pairs.iter().all(|p| {
+                    state
+                        .grants
+                        .iter()
+                        .filter(|g| g.pair == p.id)
+                        .map(|g| g.members.len())
+                        .sum::<usize>()
+                        <= MAX_PAIRING_MEMBERS
+                })
                 && state
                     .pairs
                     .iter()
@@ -531,12 +553,11 @@ impl Authority {
             grant
                 .used
                 .retain(|key, _| members.iter().any(|member| member.0 == *key));
+            grant.sponsors.retain(|_, (until, _)| *until > now);
         }
         let grants = &self.grants;
         self.revisions
             .retain(|id, (_, until)| *until > now && grants.contains_key(id));
-        self.vouches
-            .retain(|(id, _), (until, _)| *until > now && grants.contains_key(id));
         self.replays.retain(|_, until| *until >= now);
         self.rates.retain(|_, (until, _)| *until > now);
         self.key_rates.retain(|_, (until, _)| *until > now);
@@ -835,6 +856,7 @@ impl Authority {
                         sealed: false,
                         members: Vec::new(),
                         used: HashMap::new(),
+                        sponsors: HashMap::new(),
                     },
                 );
                 if self.save().is_err() {
@@ -1021,7 +1043,9 @@ impl Authority {
             next.members.push((key.clone(), lease, false));
         }
         need(
-            self.member_total() - current.members.len() + next.members.len() <= MAX_NODE_MEMBERS,
+            self.member_total() - current.members.len() + next.members.len() <= MAX_NODE_MEMBERS
+                && self.pairing_total(pair) - current.members.len() + next.members.len()
+                    <= MAX_PAIRING_MEMBERS,
             429,
             "Spry is already helping too many calls.",
         )?;
@@ -1059,35 +1083,26 @@ impl Authority {
             .ok_or(Refused(403, EXPIRED))?;
         // Indistinguishable from an expired grant to anyone else.
         need(grant.confirmed(key, now), 403, EXPIRED)?;
+        // Every named key counts against every cap, listed already or not,
+        // and the answer is the same either way, so vouching cannot be used
+        // to learn which keys are registered. One message for every cap.
+        let named = add.len();
+        let sponsor = hash(key);
+        let spent = grant.sponsors.get(&sponsor).map_or(0, |entry| entry.1);
+        need(
+            (grant.sponsors.contains_key(&sponsor) || grant.sponsors.len() < SPONSORS)
+                && spent + named <= SPONSOR_VOUCHES
+                && grant.vouched() + named <= MAX_VOUCHED
+                && grant.members.len() + named <= MAX_MEMBERS
+                && self.pairing_total(&grant.pair) + named <= MAX_PAIRING_MEMBERS
+                && self.member_total() + named <= MAX_NODE_MEMBERS,
+            429,
+            BUSY,
+        )?;
         let fresh: Vec<String> = add
             .into_iter()
             .filter(|key| grant.member(key).is_none())
             .collect();
-        if fresh.is_empty() {
-            return Ok(json!({"v":1,"added":0}));
-        }
-        let sponsor = (id.clone(), hash(key));
-        let spent = self.vouches.get(&sponsor).map_or(0, |entry| entry.1);
-        need(
-            self.vouches.contains_key(&sponsor) || self.vouches.len() < SPONSORS,
-            429,
-            BUSY,
-        )?;
-        need(
-            spent + fresh.len() <= SPONSOR_VOUCHES && grant.vouched() + fresh.len() <= MAX_VOUCHED,
-            429,
-            BUSY,
-        )?;
-        need(
-            grant.members.len() + fresh.len() <= MAX_MEMBERS,
-            429,
-            DEVICE_LIMIT,
-        )?;
-        need(
-            self.member_total() + fresh.len() <= MAX_NODE_MEMBERS,
-            429,
-            "Spry is already helping too many calls.",
-        )?;
         let grant = self
             .grants
             .get_mut(&id)
@@ -1096,15 +1111,22 @@ impl Authority {
         for key in &fresh {
             grant.members.push((key.clone(), now + VOUCH_TTL, true));
         }
-        if self.save().is_err() {
+        if !fresh.is_empty() && self.save().is_err() {
             if let Some(grant) = self.grants.get_mut(&id) {
                 grant.members.truncate(before);
             }
             return Err(Refused(503, "Call access could not be saved."));
         }
-        let entry = self.vouches.entry(sponsor).or_insert((now + VOUCH_TTL, 0));
-        entry.1 += fresh.len();
-        Ok(json!({"v":1,"added":fresh.len()}))
+        let grant = self
+            .grants
+            .get_mut(&id)
+            .ok_or(Refused(503, "Unavailable."))?;
+        let entry = grant
+            .sponsors
+            .entry(sponsor)
+            .or_insert((now + VOUCH_TTL, 0));
+        entry.1 += named;
+        Ok(json!({"v":1,"added":named}))
     }
 }
 

@@ -6,11 +6,14 @@
   its grant through `POST /v1/grants/devices` (add and remove with 30-day
   leases, ordered by revision) and may seal the grant; a confirmed key may
   vouch for up to four newcomers at a time through `POST /v1/grants/vouch`
-  (24-hour entries that cannot vouch, at most 8 per grant and per sponsor per
-  day). An enforced grant refuses unregistered keys at `/v1/credentials`
-  with the existing "Call access has expired." refusal. `SPRY_ROOM_SEAL`
-  (`auto` by default, `required` or `off`) chooses when grants are enforced;
-  any other value refuses startup. At most 64 registered keys per grant and
+  (24-hour entries that cannot vouch, at most 8 per grant and per sponsor
+  per day, sponsors tracked per grant so one grant cannot stop vouching on
+  another; every named key is counted and answered alike, so vouching does
+  not reveal which keys are registered). An enforced grant refuses
+  unregistered keys at `/v1/credentials` with the existing "Call access has
+  expired." refusal. `SPRY_ROOM_SEAL` (`auto` by default, `required` or
+  `off`) chooses when grants are enforced; any other value refuses startup.
+  At most 64 registered keys per grant, 512 across one pairing's grants and
   1024 per node. Registered keys persist in the version 1 state file within
   its 128 KiB limit; an older binary still loads it, with every grant
   unsealed. Both paths also work over the `spry:` control channel.

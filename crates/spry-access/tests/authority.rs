@@ -5,8 +5,8 @@ use base64::{
 use secp256k1::{Keypair, SecretKey, schnorr};
 use serde_json::{Value, json};
 use spry_access::{
-    Authority, Config, GRANT_TTL, MAX_MEMBERS, MAX_NODE_MEMBERS, MAX_STATE, MAX_VOUCHED, Refused,
-    Seal, VOUCH_TTL, hash, hex,
+    Authority, Config, GRANT_TTL, MAX_MEMBERS, MAX_NODE_MEMBERS, MAX_PAIRING_MEMBERS, MAX_STATE,
+    MAX_VOUCHED, Refused, Seal, VOUCH_TTL, hash, hex,
 };
 
 const NOW: u64 = 1_800_000_000;
@@ -1017,11 +1017,12 @@ fn members_vouch_for_newcomers_within_bounds() {
         refusal(vouch(&mut a, &public(10), &token, &[public(11)], NOW)),
         (403, EXPIRED)
     );
-    // Already listed keys are untouched and uncounted; a confirmed key is
-    // never downgraded, so it can still vouch.
+    // Already listed keys are left as they are, but answered and counted
+    // like any other, so a member cannot learn which keys are listed. A
+    // confirmed key is never downgraded, so it can still vouch.
     assert_eq!(
         vouch(&mut a, &member, &token, &[public(10), public(2)], NOW).expect("no-op"),
-        json!({"v":1,"added":0})
+        json!({"v":1,"added":2})
     );
     vouch(&mut a, &public(2), &token, &[public(12)], NOW).expect("still confirmed");
     // The registrar adding a vouched key confirms it.
@@ -1282,59 +1283,63 @@ fn a_full_grant_evicts_its_least_used_idle_entry_or_refuses() {
     assert_eq!(full["devices"], MAX_MEMBERS);
     assert_eq!(
         refusal(vouch(&mut a, &keys[2], &token, &wides(400..401), NOW)),
-        (429, "This call has reached its device limit.")
+        (429, "Spry is busy. Try again shortly.")
     );
     assert_eq!(MAX_VOUCHED, 8);
 }
 
+/// Fills eight grants of `pairing` with 64 keys each, from key `base`.
+fn fill(a: &mut Authority, pairing: &str, signer: &str, base: u32) -> Vec<String> {
+    (0..8_u32)
+        .map(|g| {
+            let token = grant_for(a, pairing, signer, &format!("{pairing}-{g}"), NOW);
+            let first = base + g * 64;
+            for (revision, range) in [(1, first..first + 32), (2, first + 32..first + 64)] {
+                register_as(
+                    a,
+                    signer,
+                    pairing,
+                    &token,
+                    &wides(range),
+                    &[],
+                    false,
+                    revision,
+                    NOW,
+                )
+                .expect("fill");
+            }
+            token
+        })
+        .collect()
+}
+
 #[test]
-fn the_node_holds_at_most_1024_registered_keys() {
+fn a_pairing_holds_at_most_half_the_node_and_the_node_1024_keys() {
     let (mut a, pairing, _) = room();
-    let per = MAX_MEMBERS as u32;
-    let grants = MAX_NODE_MEMBERS as u32 / per;
-    for g in 0..grants {
-        let token = grant_for(&mut a, &pairing, &public(2), &format!("scope-{g}"), NOW);
-        register(
-            &mut a,
-            &pairing,
-            &token,
-            &wides(g * per..g * per + 32),
-            false,
-            1,
-            NOW,
-        );
-        register(
-            &mut a,
-            &pairing,
-            &token,
-            &wides(g * per + 32..(g + 1) * per),
-            false,
-            2,
-            NOW,
-        );
-    }
-    let token = grant_for(&mut a, &pairing, &public(2), "one-more", NOW);
+    let ours = fill(&mut a, &pairing, &public(2), 0);
+    assert_eq!(MAX_PAIRING_MEMBERS, 512);
+    let extra = grant_for(&mut a, &pairing, &public(2), "one-more", NOW);
+    let too_many = (429, "Spry is already helping too many calls.");
     assert_eq!(
         refusal(register_as(
             &mut a,
             &public(2),
             &pairing,
-            &token,
+            &extra,
             &[wide(90_000)],
             &[],
             false,
             1,
             NOW
         )),
-        (429, "Spry is already helping too many calls.")
+        too_many
     );
-    // Making room on one grant makes room on the node.
-    let first = grant_for(&mut a, &pairing, &public(2), "scope-0", NOW);
+    // Vouching counts against the pairing's share too.
     register_as(
         &mut a,
         &public(2),
         &pairing,
-        &first,
+        &ours[0],
         &[],
         &wides(0..1),
         false,
@@ -1342,10 +1347,71 @@ fn the_node_holds_at_most_1024_registered_keys() {
         NOW,
     )
     .unwrap();
-    register(&mut a, &pairing, &token, &[wide(90_000)], false, 2, NOW);
     assert_eq!(
-        refusal(vouch(&mut a, &wide(90_000), &token, &[wide(90_001)], NOW)),
-        (429, "Spry is already helping too many calls.")
+        refusal(vouch(
+            &mut a,
+            &wide(1),
+            &ours[0],
+            &wides(90_001..90_003),
+            NOW
+        )),
+        (429, "Spry is busy. Try again shortly.")
+    );
+    vouch(&mut a, &wide(1), &ours[0], &wides(90_001..90_002), NOW).unwrap();
+    // Another pairing still has its own share.
+    let theirs = pair_with(&mut a, &public(5), NOW);
+    let their_tokens = fill(&mut a, &theirs, &public(5), 10_000);
+    // The node is now full: a third pairing cannot add.
+    let third = pair_with(&mut a, &public(6), NOW);
+    let third_token = grant_for(&mut a, &third, &public(6), "third", NOW);
+    assert_eq!(
+        refusal(register_as(
+            &mut a,
+            &public(6),
+            &third,
+            &third_token,
+            &[wide(80_000)],
+            &[],
+            false,
+            1,
+            NOW
+        )),
+        too_many
+    );
+    // Making room on one grant makes room on the node.
+    register_as(
+        &mut a,
+        &public(5),
+        &theirs,
+        &their_tokens[0],
+        &[],
+        &wides(10_000..10_001),
+        false,
+        3,
+        NOW,
+    )
+    .unwrap();
+    register_as(
+        &mut a,
+        &public(6),
+        &third,
+        &third_token,
+        &[wide(80_000)],
+        &[],
+        false,
+        2,
+        NOW,
+    )
+    .unwrap();
+    assert_eq!(
+        refusal(vouch(
+            &mut a,
+            &wide(80_000),
+            &third_token,
+            &[wide(80_001)],
+            NOW
+        )),
+        (429, "Spry is busy. Try again shortly.")
     );
 }
 
@@ -1453,12 +1519,21 @@ fn restore_refuses_state_beyond_the_member_bounds() {
     b.config.state_file = Some(scratch.file());
     assert!(b.restore().is_err());
 
-    // More than 1024 members across grants, each grant within its own bound.
+    // More than 1024 members across grants and two pairings, each grant and
+    // pairing within its own bound.
     let mut state = good.clone();
+    let second = "B".repeat(43);
+    state["pairs"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"id":second,"key":public(5),"createdAt":NOW}));
     let template = state["grants"][0].clone();
     let mut grants = Vec::new();
     for g in 0..17_u32 {
         let mut grant = template.clone();
+        if g % 2 == 1 {
+            grant["pair"] = json!(second);
+        }
         grant["scope"] = json!(hash(format!("scope-{g}")));
         grant["members"] = json!(
             wides(g * 64..(g + 1) * 64)
@@ -1478,6 +1553,14 @@ fn restore_refuses_state_beyond_the_member_bounds() {
     let mut b = fixture();
     b.config.state_file = Some(scratch.file());
     b.restore().expect("1024 members restore");
+    // Over half the node under one pairing.
+    for grant in state["grants"].as_array_mut().unwrap().iter_mut().take(9) {
+        grant["pair"] = good["grants"][0]["pair"].clone();
+    }
+    write_state(&scratch.file(), &state);
+    let mut b = fixture();
+    b.config.state_file = Some(scratch.file());
+    assert!(b.restore().is_err());
 }
 
 /// The state a node at every bound writes stays within the read limit, and
@@ -1572,4 +1655,200 @@ fn a_full_state_fits_the_read_limit_and_parses_as_v0_3_state() {
     );
     let mut c = restarted(&scratch.file());
     redeem(&mut c, &wide(99_999), &tokens[0], NOW + 2).expect("rolled back state is unsealed");
+}
+
+#[test]
+fn churn_on_one_grant_leaves_vouching_on_another_working() {
+    let (mut a, pairing, first) = room();
+    let second = grant_for(&mut a, &pairing, &public(2), "second-scope", NOW);
+    register(&mut a, &pairing, &second, &[public(3)], true, 1, NOW);
+    // On the first grant, register a key, let it vouch, then remove both,
+    // more times than one grant tracks sponsors.
+    for i in 0..=MAX_MEMBERS as u32 {
+        let (sponsor, newcomer) = (wide(2 * i), wide(2 * i + 1));
+        register(
+            &mut a,
+            &pairing,
+            &first,
+            std::slice::from_ref(&sponsor),
+            true,
+            3 * u64::from(i) + 1,
+            NOW,
+        );
+        let vouched = vouch(
+            &mut a,
+            &sponsor,
+            &first,
+            std::slice::from_ref(&newcomer),
+            NOW,
+        );
+        if i < MAX_MEMBERS as u32 {
+            vouched.expect("within the grant's sponsor table");
+        } else {
+            assert_eq!(refusal(vouched), (429, "Spry is busy. Try again shortly."));
+        }
+        register_as(
+            &mut a,
+            &public(2),
+            &pairing,
+            &first,
+            &[],
+            &[sponsor, newcomer],
+            false,
+            3 * u64::from(i) + 2,
+            NOW,
+        )
+        .unwrap();
+    }
+    // The other grant on the node is untouched.
+    assert_eq!(
+        vouch(&mut a, &public(3), &second, &[public(4)], NOW).unwrap(),
+        json!({"v":1,"added":1})
+    );
+    // Removing the churned grant drops its sponsor table with it.
+    a.handle(
+        "/v1/grants/remove",
+        &public(2),
+        &json!({"pairing":pairing,"grant":first}),
+        NOW + 1,
+    )
+    .unwrap();
+    let again = grant_for(&mut a, &pairing, &public(2), "synthetic-scope", NOW + 1);
+    register(&mut a, &pairing, &again, &[wide(5000)], true, 1, NOW + 1);
+    vouch(&mut a, &wide(5000), &again, &[wide(5001)], NOW + 1).expect("fresh table");
+}
+
+#[test]
+fn vouching_answers_alike_whether_or_not_a_key_is_listed() {
+    let (mut a, pairing, token) = room();
+    let member = public(3);
+    register(
+        &mut a,
+        &pairing,
+        &token,
+        &[member.clone(), public(4)],
+        true,
+        1,
+        NOW,
+    );
+    let listed = vouch(&mut a, &member, &token, &[public(4)], NOW);
+    let unlisted = vouch(&mut a, &member, &token, &[public(5)], NOW);
+    assert_eq!(listed.unwrap(), unlisted.unwrap());
+    // Once a cap is reached, both are refused with the same message.
+    vouch(&mut a, &member, &token, &wides(0..4), NOW).unwrap();
+    vouch(&mut a, &member, &token, &wides(4..6), NOW).unwrap();
+    assert_eq!(
+        refusal(vouch(&mut a, &member, &token, &[public(4)], NOW)),
+        refusal(vouch(&mut a, &member, &token, &[public(6)], NOW))
+    );
+}
+
+#[test]
+fn renewing_a_sealed_grant_keeps_its_seal_and_members() {
+    let scratch = Scratch::new();
+    let (mut a, pairing, token) = room();
+    a.config.state_file = Some(scratch.file());
+    register(&mut a, &pairing, &token, &[public(3)], true, 1, NOW);
+    vouch(&mut a, &public(3), &token, &[public(4)], NOW).unwrap();
+    let renewed = grant_for(&mut a, &pairing, &public(2), "synthetic-scope", NOW + 3_600);
+    assert_eq!(renewed, token);
+    let grant = saved(&scratch.file())["grants"][0].clone();
+    assert_eq!(grant["sealed"], true);
+    assert_eq!(grant["members"].as_array().unwrap().len(), 2);
+    assert_eq!(grant["expires"], NOW + 3_600 + GRANT_TTL);
+    redeem(&mut a, &public(3), &token, NOW + 3_601).unwrap();
+    redeem(&mut a, &public(4), &token, NOW + 3_601).unwrap();
+    assert_eq!(
+        refusal(redeem(&mut a, &public(9), &token, NOW + 3_601)),
+        (403, EXPIRED)
+    );
+}
+
+#[test]
+fn a_state_restored_under_required_enforces_unsealed_grants() {
+    let scratch = Scratch::new();
+    let (mut a, pairing, token) = room();
+    a.config.state_file = Some(scratch.file());
+    register(&mut a, &pairing, &token, &[public(3)], false, 1, NOW);
+    assert!(saved(&scratch.file())["grants"][0].get("sealed").is_none());
+    let mut b = fixture();
+    b.config.seal = Seal::Required;
+    b.config.state_file = Some(scratch.file());
+    b.restore().unwrap();
+    redeem(&mut b, &public(3), &token, NOW + 1).expect("registered before the restart");
+    assert_eq!(
+        refusal(redeem(&mut b, &public(9), &token, NOW + 1)),
+        (403, EXPIRED)
+    );
+}
+
+/// A state write that fails leaves the authority as it was, for each of the
+/// new writes: registration, vouching and a member's lease renewal.
+#[cfg(unix)]
+#[test]
+fn failed_state_writes_change_nothing() {
+    use std::os::unix::fs::PermissionsExt;
+    let scratch = Scratch::new();
+    let (mut a, pairing, token) = room();
+    a.config.state_file = Some(scratch.file());
+    register(&mut a, &pairing, &token, &[public(3)], false, 1, NOW);
+    let lock = |mode: u32| {
+        std::fs::set_permissions(&scratch.0, std::fs::Permissions::from_mode(mode)).unwrap();
+    };
+    lock(0o500);
+    // A superuser ignores directory permissions; nothing can fail then.
+    if std::fs::write(scratch.0.join("probe"), b"x").is_ok() {
+        lock(0o700);
+        return;
+    }
+    let unsaved = (503, "Call access could not be saved.");
+    assert_eq!(
+        refusal(register_as(
+            &mut a,
+            &public(2),
+            &pairing,
+            &token,
+            &[public(4)],
+            &[public(3)],
+            true,
+            2,
+            NOW + 1
+        )),
+        unsaved
+    );
+    assert_eq!(
+        refusal(vouch(&mut a, &public(3), &token, &[public(5)], NOW + 1)),
+        unsaved
+    );
+    // Not sealed, public(3) still listed, public(4) and public(5) not.
+    redeem(&mut a, &public(9), &token, NOW + 1).expect("still unsealed");
+    vouch(&mut a, &public(3), &token, &[public(3)], NOW + 1).expect("still confirmed");
+    assert_eq!(
+        refusal(vouch(&mut a, &public(4), &token, &[public(6)], NOW + 1)),
+        (403, EXPIRED)
+    );
+    assert_eq!(
+        refusal(redeem(&mut a, &public(3), &token, NOW + 86_401)),
+        (503, "Call access could not be renewed.")
+    );
+    lock(0o700);
+    let state = saved(&scratch.file());
+    assert_eq!(state["grants"][0]["expires"], NOW + GRANT_TTL);
+    assert_eq!(
+        state["grants"][0]["members"],
+        json!([[public(3), NOW + GRANT_TTL, false]])
+    );
+    // With the write possible again, nothing refused earlier lingers: the
+    // revision was not recorded, the sponsor allowance was not spent beyond
+    // its one counted no-op, and the renewal happens now.
+    register(&mut a, &pairing, &token, &[], true, 2, NOW + 86_402);
+    assert_eq!(
+        refusal(redeem(&mut a, &public(5), &token, NOW + 86_402)),
+        (403, EXPIRED)
+    );
+    vouch(&mut a, &public(3), &token, &wides(0..4), NOW + 86_402).unwrap();
+    vouch(&mut a, &public(3), &token, &wides(4..7), NOW + 86_402).unwrap();
+    redeem(&mut a, &public(3), &token, NOW + 86_403).unwrap();
+    let state = saved(&scratch.file());
+    assert_eq!(state["grants"][0]["expires"], NOW + 86_403 + GRANT_TTL);
 }
