@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Configure the existing Linux verify job on `ubuntu-24.04` to build both
+  TLS-enabled standalone executables and upload a three-day CI artefact after
+  its checks pass. Include exact committed source, dependency licences,
+  checksums and ELF/GLIBC provenance. This adds no formal Linux release, image,
+  service or deployment qualification; existing prerelease bytes stay unchanged.
+
 ## 0.3.0 — 26 October 2026
 
 Public MIT prerelease. The native macOS ARM64 download includes the TLS-enabled

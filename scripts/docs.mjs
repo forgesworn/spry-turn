@@ -48,6 +48,8 @@ const summary = [
   '',
   `Version ${version}. Source and GitHub prereleases are public, under MIT, copyright 2026 TheCryptoDonkey. There is no crates.io, docs.rs or npm publication, hosted relay, credential service or public documentation site.`,
   '',
+  'The existing Linux verify job is configured to upload a three-day CI artefact containing both TLS-enabled standalone executables, exact committed source, dependency licences, checksums and ELF/GLIBC provenance. This is separate from formal release downloads and operator deployment or network acceptance.',
+  '',
   'Native UDP/TCP clients and optional TLS use UDP peer allocations. Browser applications use their existing WebRTC ICE implementation. Ordinary browser WASM cannot host a raw-socket TURN server. Shared TURN secrets belong only to trusted operator tools; give clients short-lived credentials.',
   '',
   'This is an initial implementation, without full coturn parity or production qualification. UDP peer-relay port ranges are optional and fail closed on exhaustion. Static user databases, TCP relay allocations, DTLS and dual allocations are not implemented. Archipelago private packaging has separate qualification; native desktop/Android hosting controls and general physical-phone/public-network acceptance remain open. Sapflow integration remains a later goal.',

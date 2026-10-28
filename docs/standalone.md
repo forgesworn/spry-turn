@@ -27,6 +27,31 @@ Build both standalone executables:
 cargo build --locked --release --workspace --features tls
 ```
 
+## Linux CI artefact
+
+The existing verify workflow is configured to build both TLS-enabled standalone
+executables on `ubuntu-24.04`, after which its existing Rust, interop, stress and
+browser checks must pass before packaging. Successful Linux verify jobs upload
+`spry-standalone-linux-x86_64-<commit>` to GitHub Actions for three days. This is
+a CI artefact, not a formal Linux release, container image or running service;
+the v0.3.0 release downloads retain their original bytes. Other workflow jobs,
+operator deployment and network/device acceptance remain separate gates.
+
+The download contains a tarball and its SHA-256 sidecar. Verify that checksum,
+extract the tarball, then run `sha256sum -c SHA256SUMS` inside its directory.
+Check `provenance.json` against the intended workflow run and Git commit before
+executing either file in `bin/`. It records binary and lockfile hashes, compiler,
+ELF architecture/interpreter, required system libraries and direct GLIBC symbol
+requirements. System libraries are not bundled; their dependencies also need
+to be present. No universal Linux compatibility is claimed. Checksums establish
+content integrity, not an independent signature or release approval.
+
+`source.tar.gz` is an exact `git archive` of the recorded commit, accompanied by
+`Cargo.lock`, the MIT licence, RFC notice, the existing workspace-wide dependency
+licences and operator guides. Workspace and Cargo paths are remapped during the
+Linux build; packaging refuses binaries retaining those build paths. The
+packager starts no service and supplies no endpoint, configuration or secret.
+
 For the pairing service, supply `SPRY_PUBLIC_URL` (its HTTPS origin),
 `SPRY_OWNER_KEYS` (comma-separated owner public keys), `SPRY_TURN_SECRET`
 (at least 32 bytes) and `SPRY_RELAY_IP` (the relay's reachable IPv4 address).
