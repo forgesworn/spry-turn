@@ -184,6 +184,15 @@ fn public_mode_refuses_the_private_node_profile_and_bad_settings_clearly() {
     ]);
     assert!(relays.contains("SPRY_PUBLIC_RELAYS"), "{relays}");
     assert!(!relays.contains("relay.example"), "{relays}");
+    let privacy = refused_setup(&[
+        ("SPRY_PUBLIC", "true"),
+        ("SPRY_PUBLIC_PRIVACY_URL", "http://operator.example/privacy"),
+    ]);
+    assert!(
+        privacy.contains("SPRY_PUBLIC_PRIVACY_URL must be an https:// address"),
+        "{privacy}"
+    );
+    assert!(!privacy.contains("operator.example"), "{privacy}");
     let ported = refused_setup(&[
         ("SPRY_PUBLIC_URL", "https://relay.example:3744"),
         ("SPRY_PUBLIC", "true"),
@@ -196,6 +205,9 @@ fn public_mode_refuses_the_private_node_profile_and_bad_settings_clearly() {
         ("SPRY_RELAY_PORTS", "3478:3479"),
         ("SPRY_BYTES_PER_SECOND", "0"),
         ("SPRY_BYTES_PER_SECOND", "18446744073709551616"),
+        ("SPRY_ROOM_SEAL", "yes"),
+        ("SPRY_ROOM_SEAL", ""),
+        ("SPRY_ROOM_SEAL", "Required"),
     ] {
         let refusal = refused_setup(&[(name, value)]);
         assert!(refusal.contains(name), "{refusal}");
@@ -314,12 +326,21 @@ mod profiles {
         binary
     }
 
+    /// Held from reserving a profile's ports until its service reports ready.
+    /// Tests run on parallel threads; without it one thread could release its
+    /// reservation to spawn a service while another reserves the same ports,
+    /// and the service then fails to bind ("Address already in use").
+    static STARTING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     impl Profile {
         fn start(block_turn: bool, private: bool) -> Self {
+            let _starting = STARTING
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             let binary = real_relay();
             // Stay outside normal host ephemeral ranges, reserve every socket
             // together, and never share fixed ports with another test process.
-            let (base, tcp, udp) = (0..64)
+            let (base, tcp, mut udp) = (0..64)
                 .find_map(|_| {
                     let mut random = [0; 2];
                     getrandom::fill(&mut random).unwrap();
@@ -384,9 +405,11 @@ mod profiles {
                 use std::os::unix::process::CommandExt;
                 command.process_group(0);
             }
+            // Keep the reserved TURN socket when the test blocks TURN, rather
+            // than releasing it and binding again.
+            let blocked = block_turn.then(|| udp.remove(1));
             drop(tcp);
             drop(udp);
-            let blocked = block_turn.then(|| UdpSocket::bind(turn).unwrap());
             let child = match command.spawn() {
                 Ok(child) => child,
                 Err(error) => {

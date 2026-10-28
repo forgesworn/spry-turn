@@ -82,6 +82,17 @@ fn encrypted_requests_and_responses_bind_identity_action_request_and_expiry() {
     let forged = control::response(&other, &accepted, 200, &json!({"urls":[]}), 1001).unwrap();
     assert!(control::open_response(&client, &request, &target, &forged, 1002).is_err());
     assert!(control::request(&client, &target, "/v1/pairings", &json!({}), 1000).is_err());
+    // Room-grant registration and vouching reach `spry:` nodes too.
+    for path in ["/v1/grants/devices", "/v1/grants/vouch"] {
+        let request = control::request(&client, &target, path, &json!({"v":1}), 1000).unwrap();
+        assert_eq!(
+            control::open_request(&node, &request, 1001).unwrap().path,
+            path
+        );
+    }
+    for path in ["/v1/grants/remove", "/v1/pairings/list", "/v1/grants/other"] {
+        assert!(control::request(&client, &target, path, &json!({}), 1000).is_err());
+    }
     assert!(
         control::request(
             &client,

@@ -8,6 +8,34 @@
   the maximums; invalid values, or a per-credential cap above the total,
   refuse startup. The private-node profile and the public credential issuance
   limits are unchanged.
+- Seal room grants: a paired app registers the signing keys that may redeem
+  its grant through `POST /v1/grants/devices` (add and remove with 30-day
+  leases, ordered by revision) and may seal the grant; a confirmed key may
+  vouch for up to four newcomers at a time through `POST /v1/grants/vouch`
+  (24-hour entries that cannot vouch, at most 8 per grant and per sponsor
+  per day, sponsors tracked per grant so one grant cannot stop vouching on
+  another; every named key is counted and answered alike, so vouching does
+  not reveal which keys are registered). An enforced grant refuses
+  unregistered keys at `/v1/credentials` with the existing "Call access has
+  expired." refusal. `SPRY_ROOM_SEAL` (`auto` by default, `required` or
+  `off`) chooses when grants are enforced; any other value refuses startup.
+  At most 64 registered keys per grant, 512 across one pairing's grants and
+  1024 per node. Registered keys persist in the version 1 state file within
+  its 128 KiB limit; an older binary still loads it, with every grant
+  unsealed. Both paths also work over the `spry:` control channel.
+- Removing a pairing now drops its grants from the saved state in the same
+  write, and a state write that would exceed the read limit is refused.
+- Add an optional operator privacy-notice link to public adverts as a
+  `["privacy", url]` tag, set with `SPRY_PUBLIC_PRIVACY_URL` (no default).
+  The link is `https://` on a DNS name with a restricted path, at most 256
+  bytes; an invalid value refuses startup. Adverts stay version 1, older
+  readers ignore the tag, and Spry never fetches the link. Advert verifiers
+  now refuse `xn--` labels in the credential host, as Android already did.
+  The fixture gains twenty-five cases; existing cases are unchanged. Rust
+  callers of `advert::open` and `advert::open_parts` pass the new `privacy`
+  argument, and `Advert` gains a `privacy` field.
+- Resume queued application bytes after TLS ciphertext drains, without waiting
+  for another writable event. Queue limits and the control reserve are unchanged.
 - Configure the existing Linux verify job on `ubuntu-24.04` to build both
   TLS-enabled standalone executables and upload a three-day CI artefact after
   its checks pass. Include exact committed source, dependency licences,

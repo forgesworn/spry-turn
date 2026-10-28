@@ -27,6 +27,13 @@ The host serialises access to an authority and supplies Unix time.
 `Authority::sweep` expires transient state. State writes are atomic and
 private on supported Unix hosts.
 
+A paired app may register the signing keys that may redeem a room grant and
+seal the grant, so a leaked grant token is useless without a registered key.
+`Config::seal` (`Seal::Auto`, `Required` or `Off`) decides when a grant
+enforces its list. Registered keys persist with the grant in the same
+version 1 state file; an older binary ignores them and loads every grant
+unsealed.
+
 Pairing links and grants use the existing version 1 Spry wire format.
 Room admission and media keys remain the calling application's concern.
 The current endpoint profile requires HTTPS; home-network mesh integration
@@ -35,5 +42,6 @@ network, independent-node or physical-phone acceptance.
 
 Validate from the repository root with `cargo test --locked -p spry-access`.
 The integration suite exercises signed requests, replay rejection, owner
-permissions, single-use pairing, expiry, renewal, revocation, persistence
-and overload bounds using generated fixtures.
+permissions, single-use pairing, expiry, renewal, revocation, persistence,
+room-grant registration, vouching, sealing modes and overload bounds using
+generated fixtures.

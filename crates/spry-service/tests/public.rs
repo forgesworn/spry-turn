@@ -95,6 +95,7 @@ async fn publisher_waits_for_ready_and_withdraws_with_a_newer_advert() {
         node.clone(),
         vec![relay],
         Some("GB".into()),
+        Some("https://operator.example/privacy".into()),
         options,
         Arc::new(source),
     );
@@ -128,9 +129,14 @@ async fn publisher_waits_for_ready_and_withdraws_with_a_newer_advert() {
     assert_eq!(first.status, Status::Open(offer()));
     assert_eq!(first.region.as_deref(), Some("GB"));
     assert_eq!(
-        book.accept(&withdrawn, now).unwrap().status,
-        Status::Withdrawn
+        first.privacy.as_deref(),
+        Some("https://operator.example/privacy")
     );
+    // A withdrawal names no region and carries no privacy link.
+    assert!(withdrawn.tag("privacy").is_err());
+    let gone = book.accept(&withdrawn, now).unwrap();
+    assert_eq!(gone.status, Status::Withdrawn);
+    assert_eq!(gone.privacy, None);
     assert_eq!(book.open(now).count(), 0);
     assert!(book.accept(&open, now).is_err());
 }
@@ -144,6 +150,7 @@ async fn an_unreachable_relay_does_not_hold_shutdown_past_the_bound() {
     let publisher = Publisher::start(
         Arc::new(Identity::from_secret(&[7; 32]).unwrap()),
         vec![relay],
+        None,
         None,
         RelayOptions {
             policy: RelayPolicy::LocalFixture,
@@ -169,6 +176,7 @@ async fn losing_readiness_withdraws_the_advert_and_regaining_it_reopens() {
     let publisher = Publisher::start(
         node.clone(),
         vec![relay],
+        None,
         None,
         RelayOptions {
             policy: RelayPolicy::LocalFixture,

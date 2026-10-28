@@ -21,6 +21,10 @@ pub const MAX_FUTURE: u64 = 10 * 60;
 pub const MAX_NOTE: usize = 140;
 pub const MAX_URLS: usize = 4;
 const MAX_URL: usize = 256;
+/// Longest operator privacy-notice link.
+pub const MAX_PRIVACY: usize = 256;
+/// Last labels a privacy link, like a credential endpoint, may not end in.
+const RESERVED_SUFFIXES: [&str; 5] = ["local", "localhost", "internal", "invalid", "test"];
 /// TURN ports a client will contact: the TURN and TURN-over-TLS defaults,
 /// and 443. Omitted means the scheme's default. Anything else could aim
 /// clients at an unrelated service on the same host.
@@ -55,6 +59,9 @@ pub struct Advert {
     pub expires_at: u64,
     /// The operator's own claim, never verified.
     pub region: Option<String>,
+    /// The operator's own privacy-notice link, never fetched by Spry. A
+    /// client shows its hostname and opens it only when the person taps it.
+    pub privacy: Option<String>,
     pub status: Status,
 }
 
@@ -63,6 +70,48 @@ pub fn region_valid(region: &str) -> bool {
 }
 pub fn note_valid(note: &str) -> bool {
     note.len() <= MAX_NOTE && !note.chars().any(char::is_control)
+}
+/// A DNS label as adverts accept it: lowercase letters, digits and inner
+/// hyphens, and no `xn--` (punycode) prefix, so readers need no IDN rules.
+fn label_valid(label: &str) -> bool {
+    (1..=63).contains(&label.len())
+        && label
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+        && !label.starts_with('-')
+        && !label.ends_with('-')
+        && !label.starts_with("xn--")
+}
+/// An operator privacy-notice link: `https://`, a DNS name of two or more
+/// labels whose last starts with a letter and is not reserved, and a path of
+/// `[A-Za-z0-9._~/-]` with no empty, `.` or `..` segment. So no userinfo,
+/// port, query, fragment, percent-escape, uppercase host or trailing dot,
+/// and the string is its own canonical form. Checkable by string operations
+/// alone; the URL parser only confirms the result.
+pub fn privacy_valid(link: &str) -> bool {
+    let Some(rest) = link.strip_prefix("https://") else {
+        return false;
+    };
+    let Some(slash) = rest.find('/') else {
+        return false;
+    };
+    let (host, path) = rest.split_at(slash);
+    let labels: Vec<&str> = host.split('.').collect();
+    link.len() <= MAX_PRIVACY
+        && labels.len() >= 2
+        && labels.iter().all(|label| label_valid(label))
+        && labels.last().is_some_and(|last| {
+            last.starts_with(|first: char| first.is_ascii_lowercase())
+                && !RESERVED_SUFFIXES.contains(last)
+        })
+        && path
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"._~/-".contains(&byte))
+        && !path.contains("//")
+        && path[1..]
+            .split('/')
+            .all(|segment| segment != "." && segment != "..")
+        && Url::parse(link).is_ok_and(|url| url.as_str() == link)
 }
 
 /// Static checks only. A client must still refuse names that resolve to
@@ -92,13 +141,12 @@ fn credential_host(endpoint: &str) -> Result<String> {
                 || !label
                     .bytes()
                     .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+                // Punycode labels are refused, as Android always has.
+                || label.starts_with("xn--")
         })
         || labels.last().is_some_and(|suffix| {
             suffix.bytes().all(|byte| byte.is_ascii_digit())
-                || matches!(
-                    *suffix,
-                    "local" | "localhost" | "internal" | "invalid" | "test"
-                )
+                || RESERVED_SUFFIXES.contains(suffix)
         })
     {
         return Err(Refused::Destination);
@@ -155,7 +203,12 @@ impl Offer {
     }
 }
 
-fn tags(status: &str, region: Option<&str>, now: u64) -> Result<Vec<Vec<String>>> {
+fn tags(
+    status: &str,
+    region: Option<&str>,
+    privacy: Option<&str>,
+    now: u64,
+) -> Result<Vec<Vec<String>>> {
     let mut tags = vec![
         vec!["d".into(), IDENTIFIER.into()],
         vec!["v".into(), "1".into()],
@@ -172,21 +225,29 @@ fn tags(status: &str, region: Option<&str>, now: u64) -> Result<Vec<Vec<String>>
         }
         tags.push(vec!["g".into(), region.into()]);
     }
+    if let Some(privacy) = privacy {
+        if !privacy_valid(privacy) {
+            return Err(Refused::Destination);
+        }
+        tags.push(vec!["privacy".into(), privacy.into()]);
+    }
     Ok(tags)
 }
 /// Tags and content of an open advert, for [`Identity::sign`].
 pub fn open_parts(
     offer: &Offer,
     region: Option<&str>,
+    privacy: Option<&str>,
     now: u64,
 ) -> Result<(Vec<Vec<String>>, String)> {
     offer.validate()?;
     let content = serde_json::to_string(offer).map_err(|_| Refused::Encoding)?;
-    Ok((tags("open", region, now)?, content))
+    Ok((tags("open", region, privacy, now)?, content))
 }
-/// Tags and content of a withdrawal. It names no region and offers nothing.
+/// Tags and content of a withdrawal. It names no region or privacy link and
+/// offers nothing.
 pub fn withdrawn_parts(now: u64) -> Result<(Vec<Vec<String>>, String)> {
-    Ok((tags("withdrawn", None, now)?, "{}".into()))
+    Ok((tags("withdrawn", None, None, now)?, "{}".into()))
 }
 fn bounded(event: &Event) -> Result<()> {
     if serde_json::to_vec(event)
@@ -198,8 +259,14 @@ fn bounded(event: &Event) -> Result<()> {
     }
     Ok(())
 }
-pub fn open(identity: &Identity, offer: &Offer, region: Option<&str>, now: u64) -> Result<Event> {
-    let (tags, content) = open_parts(offer, region, now)?;
+pub fn open(
+    identity: &Identity,
+    offer: &Offer,
+    region: Option<&str>,
+    privacy: Option<&str>,
+    now: u64,
+) -> Result<Event> {
+    let (tags, content) = open_parts(offer, region, privacy, now)?;
     let event = identity.sign(KIND, tags, content, now)?;
     bounded(&event)?;
     Ok(event)
@@ -249,6 +316,21 @@ pub fn verify(event: &Event, now: u64) -> Result<Advert> {
     } else {
         None
     };
+    // Like `g`: optional, but once present it must occur once, with two
+    // items and a valid link, or the whole advert is refused.
+    let privacy = if event
+        .tags
+        .iter()
+        .any(|tag| tag.first().is_some_and(|name| name == "privacy"))
+    {
+        let privacy = event.tag("privacy").map_err(|_| Refused::Destination)?;
+        if !privacy_valid(privacy) {
+            return Err(Refused::Destination);
+        }
+        Some(privacy.to_owned())
+    } else {
+        None
+    };
     let status = match event.tag("status")? {
         "open" => {
             let offer: Offer =
@@ -271,6 +353,7 @@ pub fn verify(event: &Event, now: u64) -> Result<Advert> {
         created_at: event.created_at,
         expires_at,
         region,
+        privacy,
         status,
     })
 }
@@ -353,6 +436,8 @@ mod tests {
             "https://relay.local/v1/public/credentials",
             "https://relay.example./v1/public/credentials",
             "https://RELAY.example/v1/public/credentials",
+            "https://xn--rlay-6qa.example/v1/public/credentials",
+            "https://relay.xn--p1ai/v1/public/credentials",
         ] {
             let mut offer = offer();
             offer.credentials = endpoint.into();
@@ -399,13 +484,13 @@ mod tests {
     fn signed_adverts_verify_and_a_newer_withdrawal_wins() {
         let node = Identity::from_secret(&[3; 32]).unwrap();
         let now = 1_793_000_000;
-        let event = open(&node, &offer(), Some("GB"), now).unwrap();
+        let event = open(&node, &offer(), Some("GB"), None, now).unwrap();
         assert!(event.tags.len() <= 8 && event.tags.iter().all(|tag| tag.len() <= 3));
         let advert = verify(&event, now).unwrap();
         assert_eq!(advert.status, Status::Open(offer()));
         assert_eq!(advert.region.as_deref(), Some("GB"));
         assert_eq!(advert.expires_at, now + MAX_LIFETIME);
-        assert!(open(&node, &offer(), Some("gb"), now).is_err());
+        assert!(open(&node, &offer(), Some("gb"), None, now).is_err());
         assert_eq!(verify(&event, now + MAX_LIFETIME), Err(Refused::Expired));
 
         let mut book = AdvertBook::new(4);
@@ -429,9 +514,114 @@ mod tests {
             &Identity::from_secret(&[4; 32]).unwrap(),
             &offer(),
             None,
+            None,
             now,
         )
         .unwrap();
         assert_eq!(full.accept(&other, now), Err(Refused::Overload));
+    }
+
+    #[test]
+    fn privacy_links_follow_the_string_grammar() {
+        for link in [
+            "https://operator.example/privacy",
+            "https://operator.example/",
+            "https://a.b.operator.example/legal/privacy-notice.html",
+            "https://op-erator.example/~operator/privacy_v2",
+            "https://123.example/p",
+            "https://operator.co.uk/Privacy/Notice",
+            &format!("https://operator.example/{}", "p".repeat(MAX_PRIVACY - 25)),
+        ] {
+            assert!(privacy_valid(link), "{link}");
+        }
+        for link in [
+            "",
+            "http://operator.example/privacy",
+            "HTTPS://operator.example/privacy",
+            "https://operator.example",
+            "https://operator.example:443/privacy",
+            "https://operator.example:8443/privacy",
+            "https://user@operator.example/privacy",
+            "https://user:pass@operator.example/privacy",
+            "https://operator.example/privacy?x=1",
+            "https://operator.example/privacy?",
+            "https://operator.example/privacy#notice",
+            "https://operator.example/privacy%20notice",
+            "https://Operator.example/privacy",
+            "https://OPERATOR.EXAMPLE/privacy",
+            "https://192.0.2.1/privacy",
+            "https://[2001:db8::1]/privacy",
+            "https://1.2.3.4.5/privacy",
+            "https://operator.123/privacy",
+            "https://operator.1example/privacy",
+            "https://localhost/privacy",
+            "https://operator.local/privacy",
+            "https://operator.localhost/privacy",
+            "https://operator.internal/privacy",
+            "https://operator.invalid/privacy",
+            "https://operator.test/privacy",
+            "https://operator/privacy",
+            "https://operator.example./privacy",
+            "https://.operator.example/privacy",
+            "https://operator..example/privacy",
+            "https://-operator.example/privacy",
+            "https://operator-.example/privacy",
+            "https://xn--oprator-bva.example/privacy",
+            "https://operator.xn--p1ai/privacy",
+            "https://opérator.example/privacy",
+            "https://operator_x.example/privacy",
+            "https://operator.example/a/../privacy",
+            "https://operator.example/./privacy",
+            "https://operator.example/privacy/..",
+            "https://operator.example/privacy/.",
+            "https://operator.example//privacy",
+            "https://operator.example/privacy//notice",
+            "https://operator.example/privacy notice",
+            "https://operator.example/privacy\\notice",
+            "https://operator.example/privacy\nnotice",
+            "https://operator.example/priv@cy",
+            &format!("https://{}.example/p", "l".repeat(64)),
+            &format!("https://operator.example/{}", "p".repeat(MAX_PRIVACY - 24)),
+        ] {
+            assert!(!privacy_valid(link), "{link}");
+        }
+    }
+
+    #[test]
+    fn a_privacy_link_rides_on_open_adverts_only() {
+        let node = Identity::from_secret(&[3; 32]).unwrap();
+        let now = 1_793_000_000;
+        let link = "https://operator.example/privacy";
+        let event = open(&node, &offer(), Some("GB"), Some(link), now).unwrap();
+        assert_eq!(event.tags.len(), 7);
+        assert!(serde_json::to_vec(&event).unwrap().len() <= MAX_ADVERT);
+        let advert = verify(&event, now).unwrap();
+        assert_eq!(advert.privacy.as_deref(), Some(link));
+        assert_eq!(advert.status, Status::Open(offer()));
+        assert_eq!(
+            verify(&open(&node, &offer(), None, None, now).unwrap(), now)
+                .unwrap()
+                .privacy,
+            None
+        );
+        assert_eq!(
+            open(&node, &offer(), None, Some("http://operator.example/"), now).unwrap_err(),
+            Refused::Destination
+        );
+        assert!(withdrawn(&node, now).unwrap().tag("privacy").is_err());
+        // A reader refuses a malformed or repeated tag wherever it appears.
+        let (mut tags, content) = open_parts(&offer(), None, None, now).unwrap();
+        tags.push(vec!["privacy".into(), link.into()]);
+        tags.push(vec!["privacy".into(), link.into()]);
+        let repeated = node.sign(KIND, tags, content, now).unwrap();
+        assert_eq!(verify(&repeated, now), Err(Refused::Destination));
+        let (mut tags, content) = open_parts(&offer(), None, None, now).unwrap();
+        tags.push(vec!["privacy".into(), link.into(), "extra".into()]);
+        let three = node.sign(KIND, tags, content, now).unwrap();
+        assert_eq!(verify(&three, now), Err(Refused::Destination));
+        let (mut tags, content) = withdrawn_parts(now).unwrap();
+        tags.push(vec!["privacy".into(), "https://192.0.2.1/".into()]);
+        let withdrawal = node.sign(KIND, tags, content, now).unwrap();
+        assert_eq!(verify(&withdrawal, now), Err(Refused::Destination));
     }
 }
