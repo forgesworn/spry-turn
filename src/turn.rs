@@ -451,6 +451,258 @@ mod policy_tests {
     }
 
     #[test]
+    #[cfg(all(feature = "tls", feature = "connected-udp", unix))]
+    fn tls_flush_retries_application_after_ciphertext_drain() {
+        use std::{
+            fs::{self, File, OpenOptions},
+            io::BufReader,
+            os::unix::fs::{DirBuilderExt, OpenOptionsExt},
+            path::PathBuf,
+            process::{Child, Command, Stdio},
+        };
+
+        struct FixtureDirectory(PathBuf);
+        impl Drop for FixtureDirectory {
+            fn drop(&mut self) {
+                let _ = fs::remove_dir_all(&self.0);
+            }
+        }
+        struct CertificateProcess(Child);
+        impl Drop for CertificateProcess {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+
+        // Ephemeral localhost material only: no fixed key/certificate is kept
+        // in source, and both the process and its private directory have owners.
+        let mut random = [0; 12];
+        getrandom::fill(&mut random).unwrap();
+        let suffix: String = random.iter().map(|byte| format!("{byte:02x}")).collect();
+        let directory = std::env::temp_dir().join(format!("spry-tls-flush-{suffix}"));
+        fs::DirBuilder::new()
+            .mode(0o700)
+            .create(&directory)
+            .unwrap();
+        let fixture = FixtureDirectory(directory);
+        let certificate = fixture.0.join("certificate.pem");
+        let private_key = fixture.0.join("private-key.pem");
+        let openssl_config = fixture.0.join("openssl.cnf");
+        for path in [&certificate, &private_key, &openssl_config] {
+            OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(path)
+                .unwrap();
+        }
+        fs::write(
+            &openssl_config,
+            "[req]\ndistinguished_name=dn\n[dn]\nCN=localhost\n",
+        )
+        .unwrap();
+        let mut generating = CertificateProcess(
+            Command::new("openssl")
+                .args([
+                    "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1", "-config",
+                ])
+                .arg(&openssl_config)
+                .args([
+                    "-subj",
+                    "/CN=localhost",
+                    "-addext",
+                    "subjectAltName=DNS:localhost,IP:127.0.0.1",
+                    "-addext",
+                    "basicConstraints=critical,CA:FALSE",
+                    "-addext",
+                    "keyUsage=critical,digitalSignature,keyEncipherment",
+                    "-addext",
+                    "extendedKeyUsage=serverAuth",
+                    "-keyout",
+                ])
+                .arg(&private_key)
+                .arg("-out")
+                .arg(&certificate)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .unwrap(),
+        );
+        let generation_deadline = Instant::now() + Duration::from_secs(15);
+        loop {
+            if let Some(status) = generating.0.try_wait().unwrap() {
+                assert!(status.success(), "localhost certificate generation failed");
+                break;
+            }
+            assert!(
+                Instant::now() < generation_deadline,
+                "localhost certificate generation exceeded its deadline"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        drop(generating);
+        let certificates =
+            rustls_pemfile::certs(&mut BufReader::new(File::open(certificate).unwrap()))
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap();
+        let key =
+            rustls_pemfile::private_key(&mut BufReader::new(File::open(private_key).unwrap()))
+                .unwrap()
+                .unwrap();
+        let mut roots = rustls::RootCertStore::empty();
+        roots.add(certificates[0].clone()).unwrap();
+        let tls_server = rustls::ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(certificates, key)
+            .unwrap();
+        let tls_client = rustls::ClientConfig::builder()
+            .with_root_certificates(roots)
+            .with_no_client_auth();
+        let mut client_tls = rustls::ClientConnection::new(
+            Arc::new(tls_client),
+            rustls::pki_types::ServerName::try_from("localhost").unwrap(),
+        )
+        .unwrap();
+        let mut config = Config::local(vec![1; 32]);
+        config.listen.set_port(0);
+        config.tls = Some(("127.0.0.1:0".parse().unwrap(), Arc::new(tls_server)));
+        let mut server = Server::bind(config).unwrap();
+        let mut client = std::net::TcpStream::connect(
+            server.tls_listener.as_ref().unwrap().local_addr().unwrap(),
+        )
+        .unwrap();
+        client.set_nonblocking(true).unwrap();
+        client.set_nodelay(true).unwrap();
+        accept_stream(&mut server);
+        let token = *server.connections.keys().next().unwrap();
+        socket2::SockRef::from(&server.connections[&token].socket)
+            .set_send_buffer_size(65_536)
+            .unwrap();
+        let handshake_deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            while client_tls.wants_write() {
+                match client_tls.write_tls(&mut client) {
+                    Ok(0) => panic!("TLS client closed during handshake"),
+                    Ok(_) => (),
+                    Err(error) if error.kind() == io::ErrorKind::WouldBlock => break,
+                    Err(error) => panic!("TLS client write failed: {error}"),
+                }
+            }
+            server.poll_once(Duration::from_millis(1)).unwrap();
+            match client_tls.read_tls(&mut client) {
+                Ok(0) => panic!("TLS server closed during handshake"),
+                Ok(_) => {
+                    client_tls.process_new_packets().unwrap();
+                }
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => (),
+                Err(error) => panic!("TLS client read failed: {error}"),
+            }
+            let tls = server.connections[&token].tls.as_ref().unwrap();
+            if !client_tls.is_handshaking()
+                && !client_tls.wants_write()
+                && !tls.is_handshaking()
+                && !tls.wants_write()
+            {
+                break;
+            }
+            assert!(
+                Instant::now() < handshake_deadline,
+                "TLS handshake timed out"
+            );
+        }
+
+        // Stage the exact reachable transition without saturating a kernel
+        // socket: a small fixture-only rustls cap makes its writer return zero
+        // while ciphertext and a separate application tail are both queued.
+        let prefix = vec![0x35; 1024];
+        let tail = vec![0x79; 512];
+        let conn = server.connections.get_mut(&token).unwrap();
+        assert!(!conn.writable_interest, "handshake output already drained");
+        let tls = conn.tls.as_mut().unwrap();
+        tls.set_buffer_limit(Some(prefix.len()));
+        assert_eq!(tls.writer().write(&prefix).unwrap(), prefix.len());
+        assert!(tls.wants_write());
+        assert_eq!(tls.writer().write(b"not accepted").unwrap(), 0);
+        conn.queue(&tail).unwrap();
+        conn.update_interest(server.poll.registry(), token, true)
+            .unwrap();
+        assert!(conn.writable_interest);
+        // Consume the actual already-armed edge. Neither another inbound
+        // plaintext request nor another application queue call may rescue it.
+        let mut events = Events::with_capacity(16);
+        let writable_deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            server
+                .poll
+                .poll(&mut events, Some(Duration::from_millis(10)))
+                .unwrap();
+            if events
+                .iter()
+                .any(|event| event.token() == token && event.is_writable())
+            {
+                break;
+            }
+            assert!(
+                Instant::now() < writable_deadline,
+                "socket was not writable"
+            );
+        }
+        server.stream(token, &mut [0; MAX_PACKET + HEADROOM]);
+        let conn = server
+            .connections
+            .get(&token)
+            .expect("TLS stream stays open");
+        assert!(
+            !conn.tls.as_ref().unwrap().wants_write(),
+            "fixture ciphertext must drain into the writable socket"
+        );
+        assert!(
+            conn.output.is_empty(),
+            "TLS ciphertext drained but the application tail was stranded"
+        );
+        assert_eq!(conn.written, 0);
+        assert!(
+            !conn.writable_interest,
+            "drained stream returns to READ only"
+        );
+        assert!(
+            conn.input.is_empty(),
+            "no new client plaintext was supplied"
+        );
+
+        let expected = [prefix, tail].concat();
+        let mut received = Vec::new();
+        let mut buffer = [0; 4096];
+        let receive_deadline = Instant::now() + Duration::from_secs(5);
+        while received.len() < expected.len() {
+            match client_tls.read_tls(&mut client) {
+                Ok(0) => panic!("TLS connection closed before the queued bytes arrived"),
+                Ok(_) => {
+                    client_tls.process_new_packets().unwrap();
+                }
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => (),
+                Err(error) => panic!("TLS receive failed: {error}"),
+            }
+            loop {
+                match client_tls.reader().read(&mut buffer) {
+                    Ok(0) => panic!("TLS plaintext ended before the queued bytes arrived"),
+                    Ok(n) => received.extend_from_slice(&buffer[..n]),
+                    Err(error) if error.kind() == io::ErrorKind::WouldBlock => break,
+                    Err(error) => panic!("TLS plaintext read failed: {error}"),
+                }
+            }
+            assert!(
+                Instant::now() < receive_deadline,
+                "TLS payload drain timed out"
+            );
+            std::thread::yield_now();
+        }
+        assert_eq!(received, expected);
+    }
+
+    #[test]
     #[cfg(all(feature = "connected-udp", unix))]
     fn relay_overload_preserves_stream_and_resumes_both_framing_paths() {
         for channel in [None, Some(0x4000_u16)] {
@@ -1270,16 +1522,12 @@ impl Connection {
     }
 
     fn flush(&mut self) -> io::Result<bool> {
+        #[cfg(feature = "tls")]
+        if self.tls.is_some() {
+            return self.flush_tls();
+        }
         while self.written < self.output.len() {
-            #[cfg(feature = "tls")]
-            let result = if let Some(tls) = &mut self.tls {
-                tls.writer().write(&self.output[self.written..])
-            } else {
-                self.socket.write(&self.output[self.written..])
-            };
-            #[cfg(not(feature = "tls"))]
-            let result = self.socket.write(&self.output[self.written..]);
-            match result {
+            match self.socket.write(&self.output[self.written..]) {
                 Ok(0) => break,
                 Ok(n) => self.written += n,
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
@@ -1291,20 +1539,44 @@ impl Connection {
             self.output.clear();
             self.written = 0;
         }
-        #[cfg(feature = "tls")]
-        if let Some(tls) = &mut self.tls {
-            while tls.wants_write() {
-                match tls.write_tls(&mut self.socket) {
+        Ok(!self.output.is_empty())
+    }
+
+    #[cfg(feature = "tls")]
+    fn flush_tls(&mut self) -> io::Result<bool> {
+        let tls = self.tls.as_mut().expect("TLS checked by flush");
+        loop {
+            while self.written < self.output.len() {
+                match tls.writer().write(&self.output[self.written..]) {
                     Ok(0) => break,
-                    Ok(_) => (),
+                    Ok(n) => self.written += n,
                     Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
                     Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
                     Err(e) => return Err(e),
                 }
             }
-            return Ok(!self.output.is_empty() || tls.wants_write());
+            if self.written == self.output.len() {
+                self.output.clear();
+                self.written = 0;
+            }
+            let mut ciphertext_progress = false;
+            while tls.wants_write() {
+                match tls.write_tls(&mut self.socket) {
+                    Ok(0) => return Ok(true),
+                    Ok(_) => ciphertext_progress = true,
+                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => return Ok(true),
+                    Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                    Err(e) => return Err(e),
+                }
+            }
+            if self.output.is_empty() || !ciphertext_progress || tls.is_handshaking() {
+                return Ok(!self.output.is_empty());
+            }
+            // Draining TLS records freed its writer's bounded capacity. Retry
+            // the existing application queue before waiting for another edge.
+            // No new application bytes enter this call; blocked/no-progress or
+            // pre-handshake states above always return to the event loop.
         }
-        Ok(!self.output.is_empty())
     }
 }
 
