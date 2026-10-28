@@ -640,6 +640,21 @@ this design was silent or ambiguous. Each takes the safer reading.
   from one grant by registering, vouching and removing keys in turn, which
   stopped vouching on every grant for a day. Churn now only exhausts the
   churned grant's own table.
+- Known limit (L1): eviction can push out absent members. A link holder who
+  fills a grant to 64 entries, through the owner's automatic registration
+  of roster keys, and redeems with each key gives those entries recent use
+  and live device slots, so the owner app's next add evicts idle genuine
+  members instead. They are then refused when they return with nobody
+  online, against A6. After a restart last use is empty, so eviction falls
+  back to key order. The node behaves as designed; the mitigation is client
+  policy: a cap on keys per participant, and no automatic adds near the
+  limit (the web client is building both).
+- Known limit (L6): a restart clears the in-memory tables. The per-grant
+  sponsor record is in memory only and is not persisted, so after a restart
+  each sponsor has 8 fresh vouches; the persisted cap of 8 vouched entries
+  per grant at once still holds. Revision ordering is lost for up to 90
+  seconds, bounded in practice by the control channel's 30-second request
+  expiry. Last use is lost, so eviction order falls back to key order.
 - Vouched entries are not removed when their sponsor is removed; they lapse
   within 24 hours, the risk this design already accepts. The node does not
   persist which key vouched for which.
