@@ -488,7 +488,8 @@ mod policy_tests {
         let fixture = FixtureDirectory(directory);
         let certificate = fixture.0.join("certificate.pem");
         let private_key = fixture.0.join("private-key.pem");
-        for path in [&certificate, &private_key] {
+        let openssl_config = fixture.0.join("openssl.cnf");
+        for path in [&certificate, &private_key, &openssl_config] {
             OpenOptions::new()
                 .write(true)
                 .create_new(true)
@@ -496,18 +497,18 @@ mod policy_tests {
                 .open(path)
                 .unwrap();
         }
+        fs::write(
+            &openssl_config,
+            "[req]\ndistinguished_name=dn\n[dn]\nCN=localhost\n",
+        )
+        .unwrap();
         let mut generating = CertificateProcess(
             Command::new("openssl")
                 .args([
-                    "req",
-                    "-x509",
-                    "-newkey",
-                    "rsa:2048",
-                    "-nodes",
-                    "-days",
-                    "1",
-                    "-config",
-                    "/dev/null",
+                    "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1", "-config",
+                ])
+                .arg(&openssl_config)
+                .args([
                     "-subj",
                     "/CN=localhost",
                     "-addext",
