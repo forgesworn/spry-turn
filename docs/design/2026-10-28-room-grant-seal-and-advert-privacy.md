@@ -655,6 +655,19 @@ this design was silent or ambiguous. Each takes the safer reading.
   per grant at once still holds. Revision ordering is lost for up to 90
   seconds, bounded in practice by the control channel's 30-second request
   expiry. Last use is lost, so eviction order falls back to key order.
+- Known limit (L2 residual, room members only): a vouch naming only keys
+  that are already listed skips the state write, so its response time can
+  show that the keys were listed. The caps also rise only for fresh keys
+  (vouched and total entries), so a member near the vouch cap can learn
+  whether a key was listed, at the cost of its allowance. Accepted: only a
+  confirmed member can vouch, and members already see the room's roster.
+- Known limit (L4 residual): two pairings at the 512-key share can still
+  fill the 1024-key node between them. Accepted because pairings are issued
+  by the owner, at most 16. A smaller share, or a share divided among the
+  active pairings, is the option if it is needed.
+- Testing note: `restore()` refuses a state file in which one pairing's
+  grants hold more than 512 registered keys. Only a node that ran an earlier
+  unreleased commit of this branch could have written one.
 - Vouched entries are not removed when their sponsor is removed; they lapse
   within 24 hours, the risk this design already accepts. The node does not
   persist which key vouched for which.
