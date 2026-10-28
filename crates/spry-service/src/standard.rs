@@ -10,10 +10,23 @@ pub(crate) struct Settings {
     pub tls_port: u16,
     pub relay_ports: (u16, u16),
     pub bytes_per_second: u64,
+    limits: Limits,
     direct_tls: bool,
     advertise_tls: bool,
 }
 
+/// Relay admission limits. Each default is also the maximum: an operator can
+/// lower a limit for a small host but never raise it above the standard profile.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Limits {
+    allocations: u32,
+    per_user: u32,
+    connections: u32,
+}
+
+const MAX_ALLOCATIONS: u32 = 32;
+const MAX_PER_USER: u32 = 8;
+const MAX_CONNECTIONS: u32 = 32;
 const MAX_BYTES_PER_SECOND: u64 = 64 * 1024 * 1024;
 const TURN_PORT: SetupError = SetupError("SPRY_TURN_PORT must be an integer from 1 to 65535");
 const TLS_PORT: SetupError =
@@ -23,12 +36,67 @@ const RELAY_PORTS: SetupError = SetupError(
 );
 const BANDWIDTH: SetupError =
     SetupError("SPRY_BYTES_PER_SECOND must be an integer from 1 to 67108864");
+const ALLOCATIONS: SetupError =
+    SetupError("SPRY_MAX_ALLOCATIONS must be a decimal integer from 1 to 32");
+const PER_USER: SetupError = SetupError(
+    "SPRY_MAX_ALLOCATIONS_PER_USER must be a decimal integer from 1 to 8 and not exceed SPRY_MAX_ALLOCATIONS",
+);
+const CONNECTIONS: SetupError =
+    SetupError("SPRY_MAX_TCP_CONNECTIONS must be a decimal integer from 1 to 32");
 
 fn port(value: &str) -> Option<u16> {
     (!value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit()))
         .then(|| value.parse::<u16>().ok())
         .flatten()
         .filter(|value| *value != 0)
+}
+
+/// A plain decimal integer from 1 to `maximum`: no sign, space or empty value.
+fn bounded(value: &str, maximum: u32) -> Option<u32> {
+    (!value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit()))
+        .then(|| value.parse::<u32>().ok())
+        .flatten()
+        .filter(|value| (1..=maximum).contains(value))
+}
+
+impl Default for Limits {
+    fn default() -> Self {
+        Self {
+            allocations: MAX_ALLOCATIONS,
+            per_user: MAX_PER_USER,
+            connections: MAX_CONNECTIONS,
+        }
+    }
+}
+
+impl Limits {
+    fn parse(
+        allocations: Option<&str>,
+        per_user: Option<&str>,
+        connections: Option<&str>,
+    ) -> Result<Self, SetupError> {
+        let allocations = match allocations {
+            Some(value) => bounded(value, MAX_ALLOCATIONS).ok_or(ALLOCATIONS)?,
+            None => MAX_ALLOCATIONS,
+        };
+        // An unset per-user limit follows a lowered total rather than refusing
+        // startup; an explicit one above the total is refused.
+        let per_user = match per_user {
+            Some(value) => bounded(value, MAX_PER_USER)
+                .filter(|value| *value <= allocations)
+                .ok_or(PER_USER)?,
+            None => MAX_PER_USER.min(allocations),
+        };
+        let connections = match connections {
+            Some(value) => bounded(value, MAX_CONNECTIONS).ok_or(CONNECTIONS)?,
+            None => MAX_CONNECTIONS,
+        };
+        Ok(Self {
+            allocations,
+            per_user,
+            connections,
+        })
+    }
 }
 
 fn setting(name: &str, invalid: SetupError) -> Result<Option<String>, SetupError> {
@@ -71,6 +139,7 @@ impl Settings {
             tls_port,
             relay_ports: (first, last),
             bytes_per_second,
+            limits: Limits::default(),
             direct_tls: false,
             advertise_tls: false,
         })
@@ -86,6 +155,14 @@ impl Settings {
             tls.as_deref(),
             relay.as_deref(),
             bandwidth.as_deref(),
+        )?;
+        let allocations = setting("SPRY_MAX_ALLOCATIONS", ALLOCATIONS)?;
+        let per_user = setting("SPRY_MAX_ALLOCATIONS_PER_USER", PER_USER)?;
+        let connections = setting("SPRY_MAX_TCP_CONNECTIONS", CONNECTIONS)?;
+        settings.limits = Limits::parse(
+            allocations.as_deref(),
+            per_user.as_deref(),
+            connections.as_deref(),
         )?;
         settings.direct_tls = Path::new("/data/tls/fullchain.pem").is_file()
             && Path::new("/data/tls/privkey.pem").is_file();
@@ -115,11 +192,11 @@ impl Settings {
             "--relay-ports",
             &format!("{}:{}", self.relay_ports.0, self.relay_ports.1),
             "--max-allocations",
-            "32",
+            &self.limits.allocations.to_string(),
             "--max-per-user",
-            "8",
+            &self.limits.per_user.to_string(),
             "--max-connections",
-            "32",
+            &self.limits.connections.to_string(),
             "--bytes-per-second",
             &self.bytes_per_second.to_string(),
         ]);
@@ -193,6 +270,93 @@ mod tests {
             ["--max-connections", "32"],
         ] {
             assert!(args.windows(2).any(|window| window == pair), "{pair:?}");
+        }
+    }
+
+    #[test]
+    fn unset_limits_are_todays_values_and_reach_the_child_unchanged() {
+        assert_eq!(
+            Limits::parse(None, None, None).unwrap(),
+            Limits {
+                allocations: 32,
+                per_user: 8,
+                connections: 32
+            }
+        );
+        assert_eq!(Limits::default(), Limits::parse(None, None, None).unwrap());
+        let settings = Settings::parse(None, None, None, None).unwrap();
+        assert_eq!(settings.limits, Limits::default());
+        let mut command = Command::new("synthetic-relay");
+        settings.configure_command(&mut command, Ipv4Addr::LOCALHOST);
+        let args: Vec<_> = command.as_std().get_args().collect();
+        for pair in [
+            ["--max-allocations", "32"],
+            ["--max-per-user", "8"],
+            ["--max-connections", "32"],
+            ["--bytes-per-second", "1000000"],
+        ] {
+            assert!(args.windows(2).any(|window| window == pair), "{pair:?}");
+        }
+    }
+
+    #[test]
+    fn lowered_limits_reach_the_child_and_the_maximum_is_accepted() {
+        let mut settings = Settings::parse(None, None, None, Some("125000")).unwrap();
+        settings.limits = Limits::parse(Some("8"), Some("2"), Some("16")).unwrap();
+        let mut command = Command::new("synthetic-relay");
+        settings.configure_command(&mut command, Ipv4Addr::LOCALHOST);
+        let args: Vec<_> = command.as_std().get_args().collect();
+        for pair in [
+            ["--max-allocations", "8"],
+            ["--max-per-user", "2"],
+            ["--max-connections", "16"],
+            ["--bytes-per-second", "125000"],
+        ] {
+            assert!(args.windows(2).any(|window| window == pair), "{pair:?}");
+        }
+        assert!(Limits::parse(Some("32"), Some("8"), Some("32")).is_ok());
+        assert!(Limits::parse(Some("1"), Some("1"), Some("1")).is_ok());
+        // An unset per-user limit follows a lowered total.
+        assert_eq!(Limits::parse(Some("4"), None, None).unwrap().per_user, 4);
+        assert_eq!(Limits::parse(Some("20"), None, None).unwrap().per_user, 8);
+    }
+
+    #[test]
+    fn invalid_limits_refuse_startup_naming_the_setting() {
+        for bad in [
+            "",
+            "0",
+            "-1",
+            "+1",
+            " 1",
+            "1 ",
+            "0x10",
+            "1.0",
+            "NaN",
+            "33",
+            "4294967296",
+            "99999999999999999999",
+        ] {
+            assert_eq!(
+                Limits::parse(Some(bad), None, None).unwrap_err(),
+                ALLOCATIONS
+            );
+            assert_eq!(
+                Limits::parse(None, None, Some(bad)).unwrap_err(),
+                CONNECTIONS
+            );
+        }
+        for bad in ["", "0", "-1", "+1", " 1", "9", "NaN"] {
+            assert_eq!(Limits::parse(None, Some(bad), None).unwrap_err(), PER_USER);
+        }
+        // Per-user may not exceed the total.
+        assert_eq!(
+            Limits::parse(Some("2"), Some("3"), None).unwrap_err(),
+            PER_USER
+        );
+        assert!(Limits::parse(Some("2"), Some("2"), None).is_ok());
+        for error in [ALLOCATIONS, PER_USER, CONNECTIONS] {
+            assert!(error.0.contains("SPRY_MAX_"), "{}", error.0);
         }
     }
 

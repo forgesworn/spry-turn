@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add `SPRY_MAX_ALLOCATIONS`, `SPRY_MAX_ALLOCATIONS_PER_USER` and
+  `SPRY_MAX_TCP_CONNECTIONS` to the `spry-node` standard profile so a small
+  host can lower the relay's caps. Defaults stay 32, 8 and 32, which are also
+  the maximums; invalid values, or a per-credential cap above the total,
+  refuse startup. The private-node profile and the public credential issuance
+  limits are unchanged.
 - Seal room grants: a paired app registers the signing keys that may redeem
   its grant through `POST /v1/grants/devices` (add and remove with 30-day
   leases, ordered by revision) and may seal the grant; a confirmed key may
