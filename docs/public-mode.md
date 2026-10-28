@@ -35,8 +35,20 @@ those.
 | `SPRY_PUBLIC_RELAYS` | JSON array of `wss://` relays to publish the advert to. Unset: public but unlisted (no advert) |
 | `SPRY_PUBLIC_REGION` | Optional ISO 3166-1 alpha-2 country code the operator chooses to state, such as `GB` |
 | `SPRY_PUBLIC_NOTE` | Optional operator text, at most 140 bytes, shown to people choosing a relay |
+| `SPRY_PUBLIC_PRIVACY_URL` | Optional link to the operator's own privacy notice, published on open adverts as `["privacy", url]` |
 
-There is no default relay list, region or note. Spry never fills these in.
+There is no default relay list, region, note or privacy link. Spry never
+fills these in, and never fetches the privacy link.
+
+`SPRY_PUBLIC_PRIVACY_URL` must be an `https://` address on a DNS name of two
+or more lowercase labels, with a path, at most 256 bytes: for example
+`https://operator.example/privacy`, or `https://operator.example/` for the
+site's front page (the trailing `/` is required). It may not carry userinfo,
+a port, a query, a fragment, a percent-escape, an uppercase or `xn--` label,
+an IP address, a reserved suffix such as `.local`, or an empty, `.` or `..`
+path segment. Spry refuses to start, naming the setting, when it is invalid.
+It is published only on open adverts, so only when `SPRY_PUBLIC_RELAYS` is
+set. Its host need not be the relay's.
 
 If you have no relays of your own in mind, these widely read public relays
 accepted connections on 25 October 2026. They are run by other people, are
@@ -181,7 +193,8 @@ A Nostr addressable event signed by the node's transport identity (the
 ```json
 {"kind":31478,
  "tags":[["d","spry-turn"],["v","1"],["status","open"],["auth","public"],
-         ["expiration","1793007200"],["g","GB"]],
+         ["expiration","1793007200"],["g","GB"],
+         ["privacy","https://operator.example/privacy"]],
  "content":"{\"credentials\":\"https://relay.example/v1/public/credentials\",\"urls\":[\"turn:relay.example:3478?transport=udp\",\"turn:relay.example:3478?transport=tcp\",\"turns:relay.example:5349?transport=tcp\"],\"note\":\"Optional operator text\"}"}
 ```
 
@@ -191,6 +204,11 @@ A Nostr addressable event signed by the node's transport identity (the
   it to exactly two hours.
 - `g` appears only on an open advert, and only if the operator set
   `SPRY_PUBLIC_REGION`.
+- `privacy` appears only on an open advert, and only if the operator set
+  `SPRY_PUBLIC_PRIVACY_URL`. Like `g`, a reader refuses the whole advert if
+  the tag is repeated, has other than two items or holds a link outside the
+  rules above, wherever it appears. Readers that predate it ignore it, so
+  the advert stays version 1.
 - `content` holds the credential endpoint, the TURN URLs and the optional
   note. A withdrawn advert has `content` `{}`.
 - It never contains credentials, the TURN secret, owner keys, pairings,
@@ -242,8 +260,8 @@ own change gate applies before it builds this.
    other event with the same `created_at`, is still refused.
 4. The credential endpoint must be exactly
    `https://<DNS hostname>/v1/public/credentials` in canonical form: no
-   userinfo, port (not even `:443`), query, fragment or other path. Refuse
-   IP literals and names that resolve to private, loopback, link-local or
+   userinfo, port (not even `:443`), query, fragment or other path, and no
+   `xn--` label. Refuse IP literals and names that resolve to private, loopback, link-local or
    reserved addresses. Every TURN URL (`turn:` over UDP or TCP, `turns:`
    over TCP, at most four) must use the same hostname, and a port of
    exactly `3478`, `5349` or `443`, or none for the scheme's default. Do
@@ -253,14 +271,17 @@ own change gate applies before it builds this.
 6. Choose and rank locally. Send no choice, latency, failure or usage report
    to the publisher or anyone else.
 7. A signature shows which key made the statement. It does not show the
-   operator's identity, honesty, uptime, logging or jurisdiction; `g` is the
-   operator's own claim. Show it as such.
-8. Reading an advert grants nothing. Credentials come only from the chosen
+   operator's identity, honesty, uptime, logging or jurisdiction; `g` and
+   `privacy` are the operator's own claims. Show them as such.
+8. A privacy link is the operator's own; never fetch it without the person
+   tapping it, and send no referrer. Show its hostname, label it as the
+   operator's, and do not prefetch, preconnect, preview or persist it.
+9. Reading an advert grants nothing. Credentials come only from the chosen
    operator's endpoint, and room admission stays with the calling app.
 
-`spry_link::advert` implements rules 2 to 4 and the watermark
-(`verify` and the bounded `AdvertBook`), so clients and fixtures share one
-implementation. It opens no sockets, so the resolution part of rule 4
+`spry_link::advert` implements rules 2 to 4, the privacy-link grammar
+(`privacy_valid`) and the watermark (`verify` and the bounded `AdvertBook`),
+so clients and fixtures share one implementation. It opens no sockets, so the resolution part of rule 4
 remains the client's job when it connects.
 
 ## Fixtures
@@ -287,7 +308,14 @@ fixed test key to `docs/fixtures/public-advert-v1.json`: a valid open advert,
 a valid withdrawal, and invalid cases (bad signature, missing expiration,
 expiration too far ahead, future `created_at`, an `expiration` with a sign,
 IP-literal endpoint, mismatched TURN host, a TURN port outside the allowed
-three, older open after newer withdrawn, the same advert twice). Each case lists events to give, in order, to a fresh watermark at
-the file's `now`, with the expected verdict for each: `open`, `withdrawn`
-or the refusal's name. Signing uses fixed auxiliary bytes, so regenerating
+three, older open after newer withdrawn, the same advert twice, an `xn--`
+credential host), a valid open advert with a privacy link, and privacy links
+that are refused (over `http:`, with a port, query, fragment, percent-escape,
+uppercase host, IP literal, `xn--` label or dot segment, or a repeated
+`privacy` tag, each `Destination`; over 256 bytes, `Size`). Each case lists
+events to give, in order, to a fresh watermark at the file's `now`, with the
+expected verdict for each: `open`, `withdrawn` or the refusal's name, and in
+`privacy` the link a verifier must expose for each, or null. Readers that
+predate `privacy` accept the privacy-link cases' events as open adverts;
+that is harmless, since they never show the link. Signing uses fixed auxiliary bytes, so regenerating
 gives the same file. Clients test against that file.

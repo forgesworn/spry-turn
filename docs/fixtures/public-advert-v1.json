@@ -40,7 +40,10 @@
       "expect": [
         "open"
       ],
-      "name": "valid open advert"
+      "name": "valid open advert",
+      "privacy": [
+        null
+      ]
     },
     {
       "events": [
@@ -78,7 +81,10 @@
       "expect": [
         "withdrawn"
       ],
-      "name": "valid withdrawal"
+      "name": "valid withdrawal",
+      "privacy": [
+        null
+      ]
     },
     {
       "events": [
@@ -120,7 +126,10 @@
       "expect": [
         "Authentication"
       ],
-      "name": "bad signature"
+      "name": "bad signature",
+      "privacy": [
+        null
+      ]
     },
     {
       "events": [
@@ -154,7 +163,10 @@
       "expect": [
         "Expired"
       ],
-      "name": "missing expiration"
+      "name": "missing expiration",
+      "privacy": [
+        null
+      ]
     },
     {
       "events": [
@@ -192,7 +204,10 @@
       "expect": [
         "Expired"
       ],
-      "name": "expiration more than two hours ahead"
+      "name": "expiration more than two hours ahead",
+      "privacy": [
+        null
+      ]
     },
     {
       "events": [
@@ -234,7 +249,10 @@
       "expect": [
         "Expired"
       ],
-      "name": "created_at more than ten minutes ahead"
+      "name": "created_at more than ten minutes ahead",
+      "privacy": [
+        null
+      ]
     },
     {
       "events": [
@@ -272,7 +290,10 @@
       "expect": [
         "Expired"
       ],
-      "name": "expiration with a sign"
+      "name": "expiration with a sign",
+      "privacy": [
+        null
+      ]
     },
     {
       "events": [
@@ -310,7 +331,10 @@
       "expect": [
         "Destination"
       ],
-      "name": "IP-literal credential endpoint"
+      "name": "IP-literal credential endpoint",
+      "privacy": [
+        null
+      ]
     },
     {
       "events": [
@@ -348,7 +372,10 @@
       "expect": [
         "Destination"
       ],
-      "name": "TURN host differs from the endpoint"
+      "name": "TURN host differs from the endpoint",
+      "privacy": [
+        null
+      ]
     },
     {
       "events": [
@@ -386,7 +413,10 @@
       "expect": [
         "Destination"
       ],
-      "name": "TURN port outside 3478, 5349 and 443"
+      "name": "TURN port outside 3478, 5349 and 443",
+      "privacy": [
+        null
+      ]
     },
     {
       "events": [
@@ -459,7 +489,11 @@
         "withdrawn",
         "Replay"
       ],
-      "name": "older open after newer withdrawn"
+      "name": "older open after newer withdrawn",
+      "privacy": [
+        null,
+        null
+      ]
     },
     {
       "events": [
@@ -536,7 +570,644 @@
         "open",
         "Replay"
       ],
-      "name": "the same advert twice"
+      "name": "the same advert twice",
+      "privacy": [
+        null,
+        null
+      ]
+    },
+    {
+      "events": [
+        {
+          "content": "{\"credentials\":\"https://xn--rlay-6qa.example/v1/public/credentials\",\"urls\":[\"turn:xn--rlay-6qa.example:3478?transport=udp\"],\"note\":\"Synthetic operator note\"}",
+          "created_at": 1793000000,
+          "id": "bb39397f9859a979d4d93f03a079e05e2519a883123d8aeebe26fae4d2bd3e7b",
+          "kind": 31478,
+          "pubkey": "62c0a046dacce86ddd0343c6d3c7c79c2208ba0d9c9cf24a6d046d21d21f90f7",
+          "sig": "257cbd444d7653e0d618a874fae9eaf67ee4d8fcf29eea977f20d7d2c36418e9fd5a90d7e98ed38b7ff69ecf0c99fca867da59c1cf5415ac29dc8cb831b90cb6",
+          "tags": [
+            [
+              "d",
+              "spry-turn"
+            ],
+            [
+              "v",
+              "1"
+            ],
+            [
+              "status",
+              "open"
+            ],
+            [
+              "auth",
+              "public"
+            ],
+            [
+              "expiration",
+              "1793007200"
+            ]
+          ]
+        }
+      ],
+      "expect": [
+        "Destination"
+      ],
+      "name": "xn-- credential host",
+      "privacy": [
+        null
+      ]
+    },
+    {
+      "events": [
+        {
+          "content": "{\"credentials\":\"https://relay.example/v1/public/credentials\",\"urls\":[\"turn:relay.example:3478?transport=udp\",\"turn:relay.example:3478?transport=tcp\",\"turns:relay.example:5349?transport=tcp\"],\"note\":\"Synthetic operator note\"}",
+          "created_at": 1793000000,
+          "id": "5c2fe63964d38d85b6862100fc27a5c6184eda0611a6368d86f794422b91db85",
+          "kind": 31478,
+          "pubkey": "62c0a046dacce86ddd0343c6d3c7c79c2208ba0d9c9cf24a6d046d21d21f90f7",
+          "sig": "12aa45c98e1e9c36b289e38bdf83c2c46efac2355e5fdd4a3b132dddc7c6b32f54a36e99f84f4a900a229eabb58b709aef9ffcbc58de83cdec1bdacbbfc134d9",
+          "tags": [
+            [
+              "d",
+              "spry-turn"
+            ],
+            [
+              "v",
+              "1"
+            ],
+            [
+              "status",
+              "open"
+            ],
+            [
+              "auth",
+              "public"
+            ],
+            [
+              "expiration",
+              "1793007200"
+            ],
+            [
+              "g",
+              "GB"
+            ],
+            [
+              "privacy",
+              "https://operator.example/privacy"
+            ]
+          ]
+        }
+      ],
+      "expect": [
+        "open"
+      ],
+      "name": "valid open advert with a privacy link",
+      "privacy": [
+        "https://operator.example/privacy"
+      ]
+    },
+    {
+      "events": [
+        {
+          "content": "{\"credentials\":\"https://relay.example/v1/public/credentials\",\"urls\":[\"turn:relay.example:3478?transport=udp\",\"turn:relay.example:3478?transport=tcp\",\"turns:relay.example:5349?transport=tcp\"],\"note\":\"Synthetic operator note\"}",
+          "created_at": 1793000000,
+          "id": "5c2fe63964d38d85b6862100fc27a5c6184eda0611a6368d86f794422b91db85",
+          "kind": 31478,
+          "pubkey": "62c0a046dacce86ddd0343c6d3c7c79c2208ba0d9c9cf24a6d046d21d21f90f7",
+          "sig": "12aa45c98e1e9c36b289e38bdf83c2c46efac2355e5fdd4a3b132dddc7c6b32f54a36e99f84f4a900a229eabb58b709aef9ffcbc58de83cdec1bdacbbfc134d9",
+          "tags": [
+            [
+              "d",
+              "spry-turn"
+            ],
+            [
+              "v",
+              "1"
+            ],
+            [
+              "status",
+              "open"
+            ],
+            [
+              "auth",
+              "public"
+            ],
+            [
+              "expiration",
+              "1793007200"
+            ],
+            [
+              "g",
+              "GB"
+            ],
+            [
+              "privacy",
+              "https://operator.example/pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp"
+            ]
+          ]
+        }
+      ],
+      "expect": [
+        "Size"
+      ],
+      "name": "privacy link over 256 bytes",
+      "privacy": [
+        null
+      ]
+    },
+    {
+      "events": [
+        {
+          "content": "{\"credentials\":\"https://relay.example/v1/public/credentials\",\"urls\":[\"turn:relay.example:3478?transport=udp\",\"turn:relay.example:3478?transport=tcp\",\"turns:relay.example:5349?transport=tcp\"],\"note\":\"Synthetic operator note\"}",
+          "created_at": 1793000000,
+          "id": "95ca544d72d14ac65fc0387b0fe07907d5c7ac6fcf0351c42aef786716b26717",
+          "kind": 31478,
+          "pubkey": "62c0a046dacce86ddd0343c6d3c7c79c2208ba0d9c9cf24a6d046d21d21f90f7",
+          "sig": "c137a1c22f97c4f324ca105d83d5ec0498cb453d1536f31947f4c4c02731a09dd427aec77730e4430a546aa655f387cc048efa56dee56c7d2cbb9b947f954063",
+          "tags": [
+            [
+              "d",
+              "spry-turn"
+            ],
+            [
+              "v",
+              "1"
+            ],
+            [
+              "status",
+              "open"
+            ],
+            [
+              "auth",
+              "public"
+            ],
+            [
+              "expiration",
+              "1793007200"
+            ],
+            [
+              "g",
+              "GB"
+            ],
+            [
+              "privacy",
+              "https://operator.example/privacy"
+            ],
+            [
+              "privacy",
+              "https://operator.example/privacy"
+            ]
+          ]
+        }
+      ],
+      "expect": [
+        "Destination"
+      ],
+      "name": "repeated privacy tag",
+      "privacy": [
+        null
+      ]
+    },
+    {
+      "events": [
+        {
+          "content": "{\"credentials\":\"https://relay.example/v1/public/credentials\",\"urls\":[\"turn:relay.example:3478?transport=udp\",\"turn:relay.example:3478?transport=tcp\",\"turns:relay.example:5349?transport=tcp\"],\"note\":\"Synthetic operator note\"}",
+          "created_at": 1793000000,
+          "id": "86ce169bee58de5a79bc3d5e6c4a55258a2274f45316484bce846a76293f5eaf",
+          "kind": 31478,
+          "pubkey": "62c0a046dacce86ddd0343c6d3c7c79c2208ba0d9c9cf24a6d046d21d21f90f7",
+          "sig": "bf1815d3a02b0057cad43823869192b0714d5544113df5354675bcc1dd021b7f649c74e199f6f927ada0ca90f86d68e5ccc123f5b6c041d72d15313ec65b4860",
+          "tags": [
+            [
+              "d",
+              "spry-turn"
+            ],
+            [
+              "v",
+              "1"
+            ],
+            [
+              "status",
+              "open"
+            ],
+            [
+              "auth",
+              "public"
+            ],
+            [
+              "expiration",
+              "1793007200"
+            ],
+            [
+              "g",
+              "GB"
+            ],
+            [
+              "privacy",
+              "http://operator.example/privacy"
+            ]
+          ]
+        }
+      ],
+      "expect": [
+        "Destination"
+      ],
+      "name": "privacy link over http",
+      "privacy": [
+        null
+      ]
+    },
+    {
+      "events": [
+        {
+          "content": "{\"credentials\":\"https://relay.example/v1/public/credentials\",\"urls\":[\"turn:relay.example:3478?transport=udp\",\"turn:relay.example:3478?transport=tcp\",\"turns:relay.example:5349?transport=tcp\"],\"note\":\"Synthetic operator note\"}",
+          "created_at": 1793000000,
+          "id": "2073e4b44d7a1ac260ce487a38b2a8c792d6a5e57b93c3eb7a3486c5febd66bd",
+          "kind": 31478,
+          "pubkey": "62c0a046dacce86ddd0343c6d3c7c79c2208ba0d9c9cf24a6d046d21d21f90f7",
+          "sig": "96bed06704dd2f6b69e6bcc1ab0af34fdcd76b5773c11d3e85305e7860445168a0be520a9a6f0ef09a16d721a1e16d91660fa173109c7c3614eeb4b2de404840",
+          "tags": [
+            [
+              "d",
+              "spry-turn"
+            ],
+            [
+              "v",
+              "1"
+            ],
+            [
+              "status",
+              "open"
+            ],
+            [
+              "auth",
+              "public"
+            ],
+            [
+              "expiration",
+              "1793007200"
+            ],
+            [
+              "g",
+              "GB"
+            ],
+            [
+              "privacy",
+              "https://operator.example:8443/privacy"
+            ]
+          ]
+        }
+      ],
+      "expect": [
+        "Destination"
+      ],
+      "name": "privacy link with a port",
+      "privacy": [
+        null
+      ]
+    },
+    {
+      "events": [
+        {
+          "content": "{\"credentials\":\"https://relay.example/v1/public/credentials\",\"urls\":[\"turn:relay.example:3478?transport=udp\",\"turn:relay.example:3478?transport=tcp\",\"turns:relay.example:5349?transport=tcp\"],\"note\":\"Synthetic operator note\"}",
+          "created_at": 1793000000,
+          "id": "c1e5961f7cfcba5a298aaa813b321f5d5d052612beac6a41b5ecd7d7a4f720c1",
+          "kind": 31478,
+          "pubkey": "62c0a046dacce86ddd0343c6d3c7c79c2208ba0d9c9cf24a6d046d21d21f90f7",
+          "sig": "688bee1e3fb428022d1e1310ea09fdef2ca53b4d4270049c66324c276dbcf9220fcb19899b2b4bcd4cb2ba4e4162f78f249c461037e5d59f67d45b3c9b02a4d7",
+          "tags": [
+            [
+              "d",
+              "spry-turn"
+            ],
+            [
+              "v",
+              "1"
+            ],
+            [
+              "status",
+              "open"
+            ],
+            [
+              "auth",
+              "public"
+            ],
+            [
+              "expiration",
+              "1793007200"
+            ],
+            [
+              "g",
+              "GB"
+            ],
+            [
+              "privacy",
+              "https://operator.example/privacy?x=1"
+            ]
+          ]
+        }
+      ],
+      "expect": [
+        "Destination"
+      ],
+      "name": "privacy link with a query",
+      "privacy": [
+        null
+      ]
+    },
+    {
+      "events": [
+        {
+          "content": "{\"credentials\":\"https://relay.example/v1/public/credentials\",\"urls\":[\"turn:relay.example:3478?transport=udp\",\"turn:relay.example:3478?transport=tcp\",\"turns:relay.example:5349?transport=tcp\"],\"note\":\"Synthetic operator note\"}",
+          "created_at": 1793000000,
+          "id": "0471603b04369dc1f7c03bddfd3d287ec23a4e7aacbf365505e0f29c66326c56",
+          "kind": 31478,
+          "pubkey": "62c0a046dacce86ddd0343c6d3c7c79c2208ba0d9c9cf24a6d046d21d21f90f7",
+          "sig": "acae8a00168c9b7504cfef9bc69ca52bb5c1a1140beee0666607dd621d7fb740df8cd61b74913ad0e9ce4d88df799d0378abf0d340b7202518d2e14b2154190e",
+          "tags": [
+            [
+              "d",
+              "spry-turn"
+            ],
+            [
+              "v",
+              "1"
+            ],
+            [
+              "status",
+              "open"
+            ],
+            [
+              "auth",
+              "public"
+            ],
+            [
+              "expiration",
+              "1793007200"
+            ],
+            [
+              "g",
+              "GB"
+            ],
+            [
+              "privacy",
+              "https://operator.example/privacy#x"
+            ]
+          ]
+        }
+      ],
+      "expect": [
+        "Destination"
+      ],
+      "name": "privacy link with a fragment",
+      "privacy": [
+        null
+      ]
+    },
+    {
+      "events": [
+        {
+          "content": "{\"credentials\":\"https://relay.example/v1/public/credentials\",\"urls\":[\"turn:relay.example:3478?transport=udp\",\"turn:relay.example:3478?transport=tcp\",\"turns:relay.example:5349?transport=tcp\"],\"note\":\"Synthetic operator note\"}",
+          "created_at": 1793000000,
+          "id": "9ca38a3146b13876db5c784e3f3fb83bcaf197fd992c78eb2a8d5635bd29a919",
+          "kind": 31478,
+          "pubkey": "62c0a046dacce86ddd0343c6d3c7c79c2208ba0d9c9cf24a6d046d21d21f90f7",
+          "sig": "b266a3199d732e648938319fe4ebe7c06a7568cffdfc0ddbf8a78e66c2a8f81e77a84111f998be337a165bf6e0454a8d40daf500b726b17a37443b2340e4e0e4",
+          "tags": [
+            [
+              "d",
+              "spry-turn"
+            ],
+            [
+              "v",
+              "1"
+            ],
+            [
+              "status",
+              "open"
+            ],
+            [
+              "auth",
+              "public"
+            ],
+            [
+              "expiration",
+              "1793007200"
+            ],
+            [
+              "g",
+              "GB"
+            ],
+            [
+              "privacy",
+              "https://operator.example/privacy%20notice"
+            ]
+          ]
+        }
+      ],
+      "expect": [
+        "Destination"
+      ],
+      "name": "privacy link with a percent-escape",
+      "privacy": [
+        null
+      ]
+    },
+    {
+      "events": [
+        {
+          "content": "{\"credentials\":\"https://relay.example/v1/public/credentials\",\"urls\":[\"turn:relay.example:3478?transport=udp\",\"turn:relay.example:3478?transport=tcp\",\"turns:relay.example:5349?transport=tcp\"],\"note\":\"Synthetic operator note\"}",
+          "created_at": 1793000000,
+          "id": "63ed334f80014f02c89b7c874fe2a0146459ec0a492f1b15db171a6bb72c9e3c",
+          "kind": 31478,
+          "pubkey": "62c0a046dacce86ddd0343c6d3c7c79c2208ba0d9c9cf24a6d046d21d21f90f7",
+          "sig": "0f03a2910ab257eed7490ae0b72a4d906b1fae5547f3949bf6c12d695ce32d6ba032a11d905841c1aeebe87836b6c85317d591205e35b9f17c9d834432a660d2",
+          "tags": [
+            [
+              "d",
+              "spry-turn"
+            ],
+            [
+              "v",
+              "1"
+            ],
+            [
+              "status",
+              "open"
+            ],
+            [
+              "auth",
+              "public"
+            ],
+            [
+              "expiration",
+              "1793007200"
+            ],
+            [
+              "g",
+              "GB"
+            ],
+            [
+              "privacy",
+              "https://Operator.example/privacy"
+            ]
+          ]
+        }
+      ],
+      "expect": [
+        "Destination"
+      ],
+      "name": "privacy link with an uppercase host",
+      "privacy": [
+        null
+      ]
+    },
+    {
+      "events": [
+        {
+          "content": "{\"credentials\":\"https://relay.example/v1/public/credentials\",\"urls\":[\"turn:relay.example:3478?transport=udp\",\"turn:relay.example:3478?transport=tcp\",\"turns:relay.example:5349?transport=tcp\"],\"note\":\"Synthetic operator note\"}",
+          "created_at": 1793000000,
+          "id": "dc36a1e1371a8fe088b124ee995b55ee074d12fa6dde41a2541dcc15d7816a60",
+          "kind": 31478,
+          "pubkey": "62c0a046dacce86ddd0343c6d3c7c79c2208ba0d9c9cf24a6d046d21d21f90f7",
+          "sig": "43b3386d4f779be70558e5d69ba7b67ac4e42db5fd17fa4db356bfa82af289881f5f4fd1f20d774de10a8641402e1fe49bc128369f503b311f61cee61c200f68",
+          "tags": [
+            [
+              "d",
+              "spry-turn"
+            ],
+            [
+              "v",
+              "1"
+            ],
+            [
+              "status",
+              "open"
+            ],
+            [
+              "auth",
+              "public"
+            ],
+            [
+              "expiration",
+              "1793007200"
+            ],
+            [
+              "g",
+              "GB"
+            ],
+            [
+              "privacy",
+              "https://192.0.2.1/privacy"
+            ]
+          ]
+        }
+      ],
+      "expect": [
+        "Destination"
+      ],
+      "name": "privacy link on an IP literal",
+      "privacy": [
+        null
+      ]
+    },
+    {
+      "events": [
+        {
+          "content": "{\"credentials\":\"https://relay.example/v1/public/credentials\",\"urls\":[\"turn:relay.example:3478?transport=udp\",\"turn:relay.example:3478?transport=tcp\",\"turns:relay.example:5349?transport=tcp\"],\"note\":\"Synthetic operator note\"}",
+          "created_at": 1793000000,
+          "id": "57858652022539a5f5bbad5beab0f3ba9a371c4d83453b4e5c2d6975a49739e9",
+          "kind": 31478,
+          "pubkey": "62c0a046dacce86ddd0343c6d3c7c79c2208ba0d9c9cf24a6d046d21d21f90f7",
+          "sig": "e761b65378c88fb500317709f13240f2148392e794a5fb13ecc5cd92e7e266e6048e1361b3ece45bcedd0869f1f869f79901a0d53d73e504950d9fc9eb77c59b",
+          "tags": [
+            [
+              "d",
+              "spry-turn"
+            ],
+            [
+              "v",
+              "1"
+            ],
+            [
+              "status",
+              "open"
+            ],
+            [
+              "auth",
+              "public"
+            ],
+            [
+              "expiration",
+              "1793007200"
+            ],
+            [
+              "g",
+              "GB"
+            ],
+            [
+              "privacy",
+              "https://xn--oprator-bva.example/privacy"
+            ]
+          ]
+        }
+      ],
+      "expect": [
+        "Destination"
+      ],
+      "name": "privacy link with an xn-- label",
+      "privacy": [
+        null
+      ]
+    },
+    {
+      "events": [
+        {
+          "content": "{\"credentials\":\"https://relay.example/v1/public/credentials\",\"urls\":[\"turn:relay.example:3478?transport=udp\",\"turn:relay.example:3478?transport=tcp\",\"turns:relay.example:5349?transport=tcp\"],\"note\":\"Synthetic operator note\"}",
+          "created_at": 1793000000,
+          "id": "bd2e326edfbdb1d7f8285b1d407aae237b3d2f9efd032e11f421929aab025ac1",
+          "kind": 31478,
+          "pubkey": "62c0a046dacce86ddd0343c6d3c7c79c2208ba0d9c9cf24a6d046d21d21f90f7",
+          "sig": "1b57368bfe0af911cc367f72d3013610284a330c1b52efb55f2e18c276806b717b5151c24b4eb36a48faf846364950d5850c788aff3636ff0f728eda5f29d20a",
+          "tags": [
+            [
+              "d",
+              "spry-turn"
+            ],
+            [
+              "v",
+              "1"
+            ],
+            [
+              "status",
+              "open"
+            ],
+            [
+              "auth",
+              "public"
+            ],
+            [
+              "expiration",
+              "1793007200"
+            ],
+            [
+              "g",
+              "GB"
+            ],
+            [
+              "privacy",
+              "https://operator.example/a/../privacy"
+            ]
+          ]
+        }
+      ],
+      "expect": [
+        "Destination"
+      ],
+      "name": "privacy link with a dot segment",
+      "privacy": [
+        null
+      ]
     }
   ],
   "nodeKey": "62c0a046dacce86ddd0343c6d3c7c79c2208ba0d9c9cf24a6d046d21d21f90f7",

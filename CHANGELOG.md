@@ -16,6 +16,15 @@
   unsealed. Both paths also work over the `spry:` control channel.
 - Removing a pairing now drops its grants from the saved state in the same
   write, and a state write that would exceed the read limit is refused.
+- Add an optional operator privacy-notice link to public adverts as a
+  `["privacy", url]` tag, set with `SPRY_PUBLIC_PRIVACY_URL` (no default).
+  The link is `https://` on a DNS name with a restricted path, at most 256
+  bytes; an invalid value refuses startup. Adverts stay version 1, older
+  readers ignore the tag, and Spry never fetches the link. Advert verifiers
+  now refuse `xn--` labels in the credential host, as Android already did.
+  The fixture gains thirteen cases; existing cases are unchanged. Rust
+  callers of `advert::open` and `advert::open_parts` pass the new `privacy`
+  argument, and `Advert` gains a `privacy` field.
 
 ## 0.3.0 — 26 October 2026
 

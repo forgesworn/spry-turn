@@ -580,6 +580,7 @@ pub async fn run_with_assets(
                 identity,
                 settings.relays,
                 settings.region,
+                settings.privacy,
                 options,
                 Arc::new(source),
             ));
