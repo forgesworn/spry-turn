@@ -205,12 +205,15 @@ against the existing per-source and per-key limits, and bounded by
 - Authorised only when the signer holds a confirmed, unexpired entry on that
   grant; else 403 "Call access has expired." (indistinguishable from an
   expired grant to a token holder).
-- `add`: at most 4 keys. A key already listed is left unchanged and is not
-  counted. Otherwise a vouched entry expiring 24 hours later.
+- `add`: one to 4 keys. A key already listed is left unchanged; any other
+  gains a vouched entry expiring 24 hours later. Every named key counts
+  against the caps below, listed or not.
 - At most 8 vouched entries per grant at once, and 8 vouches per sponsor per
-  grant per 24 hours (in memory, table of at most 256, swept); over either:
-  429 "Spry is busy. Try again shortly.".
-- Response: `{"v":1,"added":1}`.
+  grant per 24 hours (in memory on the grant, at most 64 sponsors per grant,
+  swept, gone with the grant); over either, or over the grant, pairing or
+  node limits below: 429 "Spry is busy. Try again shortly.".
+- Response: `{"v":1,"added":N}`, where `N` is the number of keys named, so
+  the answer is the same whether or not a key was already listed.
 
 **`/v1/credentials`** (changed)
 
@@ -270,9 +273,18 @@ New registrars decide `seal` per request: `true` when every device in
 `spryRoster()` that is not an agent carries a `spryKey`, otherwise `false`
 (keys are still registered, so a later seal is immediate). Agents are exempt
 because no agent redeems Spry offers today (`src/agent.ts` never uses
-`spry.ts`). Once a response reports `sealed: true`, the client stops deciding.
-A room therefore seals the first time its owner's app sees no old client
-present, and stays sealed.
+`spry.ts`). Once a response reports `sealed: true`, the client stops deciding
+for that grant. Whenever a later response reports `sealed: false`, the
+client decides again and sends `seal: true` as soon as the rule above
+holds. That covers a node rolled back to a binary that dropped the seal, a
+grant re-created after it lapsed unused for 30 days, and a grant removed
+with `/v1/grants/remove` and created again. A room therefore seals the first
+time its owner's app sees no old client present, and stays sealed while its
+grant lasts.
+
+Under `auto` any link holder can hold a room unsealed by keeping a device
+without a `spryKey` present on the roster; `required` is the remedy for an
+owner who needs the seal regardless.
 
 Order: the registrar registers (including itself) before its first
 redemption of a new grant, so `required` grants work for new clients from the
@@ -597,19 +609,37 @@ this design was silent or ambiguous. Each takes the safer reading.
 - Both new paths refuse any field not in their wire format and any `v`
   other than 1 (400). A later field needs `v: 2`. `/v1/grants/vouch` also
   refuses an empty `add`.
-- Statuses the design left without a message: a vouch into a grant already
-  holding 64 entries gets 429 "This call has reached its device limit.";
-  either path over the 1024-entry node limit gets 429 "Spry is already
-  helping too many calls.". A vouch over any cap adds nothing.
+- Statuses the design left without a message: registration over the
+  pairing's share or the 1024-entry node limit gets 429 "Spry is already
+  helping too many calls.". Every vouch cap, including the grant, pairing and
+  node limits, refuses with the design's 429 "Spry is busy. Try again
+  shortly.": one message costs a legitimate client nothing, since its
+  response to any 429 is the same, and distinct messages would tell a member
+  which limit it met. A vouch over any cap adds nothing.
+- Vouching counts every named key against the caps and answers with the
+  number named, whether or not a key was already listed. The design said a
+  listed key is not counted, but the `added` count then told a member which
+  keys were registered. The cost: a member re-vouching for a listed key
+  spends allowance, which clients avoid by vouching once per device per
+  session.
+- Added: the grants of one pairing may hold at most 512 registered keys,
+  half the node, so one pairing cannot use the whole 1024. Checked on
+  registration, vouching and restore.
+- `/v1/grants/devices` stays all or nothing: a request refused for capacity
+  drops its removals and seal too. Removals are already applied before the
+  capacity check within a request, so they free room for its adds, but
+  committing them when the request fails would make a refusal half-applied.
+  Clients should send removals and seals in requests of their own; the API
+  reference says so.
 - The per-sponsor vouch count is a fixed 24-hour window from the sponsor's
   first vouch, like the existing per-minute buckets, so across a window
   boundary a sponsor may add up to 16 keys in a little over a day. The
   8-at-once per-grant cap still holds.
-- Open: the sponsor table holds 256 entries, while 64 grants could each have
-  many confirmed sponsors. When it is full, a new sponsor gets 429 until
-  entries lapse, up to a day. Sponsors are only keys the owner's app
-  registered, so the owner bounds it; sizing it to the 1024-entry node limit
-  is an option.
+- Sponsor accounting is held on each grant, at most 64 sponsors, and goes
+  with the grant. A node-wide table of 256, as first written, could be filled
+  from one grant by registering, vouching and removing keys in turn, which
+  stopped vouching on every grant for a day. Churn now only exhausts the
+  churned grant's own table.
 - Vouched entries are not removed when their sponsor is removed; they lapse
   within 24 hours, the risk this design already accepts. The node does not
   persist which key vouched for which.
