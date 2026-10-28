@@ -8,6 +8,11 @@
   the maximums; invalid values, or a per-credential cap above the total,
   refuse startup. The private-node profile and the public credential issuance
   limits are unchanged.
+- Configure the existing Linux verify job on `ubuntu-24.04` to build both
+  TLS-enabled standalone executables and upload a three-day CI artefact after
+  its checks pass. Include exact committed source, dependency licences,
+  checksums and ELF/GLIBC provenance. This adds no formal Linux release, image,
+  service or deployment qualification; existing prerelease bytes stay unchanged.
 
 ## 0.3.0 — 26 October 2026
 
