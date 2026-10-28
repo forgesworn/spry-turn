@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Retry existing nonblocking stream output once before dropping a relay packet
+  for queue pressure. Recheck the unchanged queue/control-reserve limits after
+  that attempt; a genuinely blocked stream still drops the packet.
+
 - Add `SPRY_MAX_ALLOCATIONS`, `SPRY_MAX_ALLOCATIONS_PER_USER` and
   `SPRY_MAX_TCP_CONNECTIONS` to the `spry-node` standard profile so a small
   host can lower the relay's caps. Defaults stay 32, 8 and 32, which are also
