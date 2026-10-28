@@ -74,7 +74,11 @@ proxy's one allowance. Authenticated requests also have a per-key limit, in
 which owners and paired apps always keep a place. `spry-node` finds
 `spry-turn` beside itself; `SPRY_RELAY_BINARY`
 overrides that location. Standard TURN listeners and the bounded peer range
-are described in the [operator guide](operations.md). Optional certificate
+are described in the [operator guide](operations.md). A small host can lower
+the relay's allocation, per-credential and TCP connection caps and its
+per-allocation rate with `SPRY_MAX_ALLOCATIONS`,
+`SPRY_MAX_ALLOCATIONS_PER_USER`, `SPRY_MAX_TCP_CONNECTIONS` and
+`SPRY_BYTES_PER_SECOND`; see [public mode](public-mode.md#separate-standard-profiles-on-one-host). Optional certificate
 files for the relay reside under `/data/tls`; an external host adapter can
 instead terminate TURN TLS. Setting `SPRY_TLS_GATE=true` advertises that
 host's configured TLS transport and does not start or configure a TLS proxy.
