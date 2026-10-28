@@ -11,7 +11,7 @@ use hyper::{Request, Response, StatusCode, body::Incoming, service::service_fn};
 use hyper_util::rt::{TokioIo, TokioTimer};
 use node::{PrivateSettings, ServiceState};
 use serde_json::{Value, json};
-use spry_access::{Authority, Config, MAX_BODY, PUBLIC_PATH, Refused};
+use spry_access::{Authority, Config, MAX_BODY, PUBLIC_PATH, Refused, Seal};
 use std::{
     convert::Infallible,
     env,
@@ -437,11 +437,23 @@ async fn binding(address: Ipv4Addr, port: u16) -> bool {
     let mut response = [0_u8; 1024];
     matches!(timeout(Duration::from_millis(700), socket.recv(&mut response)).await, Ok(Ok(n)) if n >= 20 && response[..2] == [1,1] && response[8..20] == request[8..])
 }
+const ROOM_SEAL: public::SetupError =
+    public::SetupError("SPRY_ROOM_SEAL must be auto, required or off");
+/// `SPRY_ROOM_SEAL`, read once at startup. Unset is `auto`; any other value,
+/// empty included, refuses to start.
+fn room_seal(value: Option<&str>) -> std::result::Result<Seal, public::SetupError> {
+    value.map_or(Ok(Seal::Auto), |value| Seal::parse(value).ok_or(ROOM_SEAL))
+}
 /// Serve until a shutdown signal, using the host's runtime and environment.
 pub async fn run_with_assets(
     assets: UiAssets,
 ) -> std::result::Result<(), Box<dyn std::error::Error>> {
     let secret = env::var("SPRY_TURN_SECRET")?;
+    let seal = match env::var("SPRY_ROOM_SEAL") {
+        Ok(value) => room_seal(Some(&value))?,
+        Err(env::VarError::NotPresent) => room_seal(None)?,
+        Err(env::VarError::NotUnicode(_)) => return Err(ROOM_SEAL.into()),
+    };
     let private_settings = PrivateSettings::from_environment(secret.as_bytes())?;
     if private_settings.is_some() && env::var("SPRY_PUBLIC").as_deref() == Ok("true") {
         return Err(public::PRIVATE_PROFILE.into());
@@ -462,6 +474,7 @@ pub async fn run_with_assets(
         ),
     )
     .map_err(|_| "Invalid Spry configuration")?;
+    config.seal = seal;
     // Client-specific origins are an explicit host choice, never library defaults.
     for origins in ["SPRY_ALLOWED_ORIGINS", "SPRY_DASHBOARD_ORIGINS"]
         .into_iter()
@@ -567,6 +580,7 @@ pub async fn run_with_assets(
                 identity,
                 settings.relays,
                 settings.region,
+                settings.privacy,
                 options,
                 Arc::new(source),
             ));
@@ -657,6 +671,7 @@ pub fn main_with_assets(assets: UiAssets) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use signalling::ControlHandler;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     const OWNER: &str = "1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f";
@@ -972,6 +987,238 @@ mod tests {
         let refused = issue(address, "").await;
         assert!(refused.starts_with("http/1.1 503"), "{refused}");
         assert!(refused.contains("needs public access before Spry can connect calls"));
+    }
+
+    #[test]
+    fn the_room_seal_setting_takes_exactly_three_values() {
+        assert_eq!(room_seal(None), Ok(Seal::Auto));
+        assert_eq!(room_seal(Some("auto")), Ok(Seal::Auto));
+        assert_eq!(room_seal(Some("required")), Ok(Seal::Required));
+        assert_eq!(room_seal(Some("off")), Ok(Seal::Off));
+        for value in ["", "yes", "AUTO", " auto", "auto ", "true", "0"] {
+            let refused = room_seal(Some(value)).unwrap_err();
+            assert_eq!(refused, ROOM_SEAL);
+            assert!(refused.to_string().starts_with("SPRY_ROOM_SEAL "));
+        }
+    }
+
+    fn signing(seed: u8) -> secp256k1::Keypair {
+        secp256k1::Keypair::from_secret_key(
+            &secp256k1::SecretKey::from_secret_bytes([seed; 32]).unwrap(),
+        )
+    }
+    fn signer(seed: u8) -> String {
+        spry_access::hex(&signing(seed).x_only_public_key().0.to_byte_array())
+    }
+    /// A request proof as a client builds it, for `https://relay.example`.
+    fn proof(seed: u8, path: &str, body: &str) -> String {
+        use base64::Engine;
+        let mut nonce = [0_u8; 32];
+        getrandom::fill(&mut nonce).unwrap();
+        let now = now();
+        let tags = json!([
+            ["u", format!("https://relay.example{path}")],
+            ["method", "POST"],
+            ["payload", spry_access::hash(body)],
+            [
+                "nonce",
+                base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(nonce)
+            ]
+        ]);
+        let id = spry_access::hash(
+            serde_json::to_vec(&json!([0, signer(seed), now, 27235, tags, ""])).unwrap(),
+        );
+        let digest: Vec<u8> = (0..32)
+            .map(|i| u8::from_str_radix(&id[i * 2..i * 2 + 2], 16).unwrap())
+            .collect();
+        let sig = spry_access::hex(
+            &secp256k1::schnorr::sign_with_aux_rand(&digest, &signing(seed), &[0; 32])
+                .to_byte_array(),
+        );
+        let event = json!({"kind":27235,"created_at":now,"tags":tags,"content":"","pubkey":signer(seed),"id":id,"sig":sig});
+        format!(
+            "Authorization: Nostr {}\r\n",
+            base64::engine::general_purpose::STANDARD.encode(event.to_string())
+        )
+    }
+
+    #[tokio::test]
+    async fn grant_registration_paths_are_routed_and_keep_the_origin_rules() {
+        let address = host(false, true).await;
+        let token = "A".repeat(43);
+        let devices =
+            json!({"v":1,"pairing":token,"grant":token,"add":[signer(3)],"revision":1}).to_string();
+        let vouch = json!({"v":1,"grant":token,"add":[signer(3)]}).to_string();
+        // A signed stranger reaches the authority, which refuses it, rather
+        // than meeting a missing route.
+        let refused = send(
+            address,
+            "POST",
+            "/v1/grants/devices",
+            &json(&proof(9, "/v1/grants/devices", &devices)),
+            &devices,
+        )
+        .await;
+        assert!(refused.starts_with("http/1.1 403"), "{refused}");
+        assert_eq!(body(&refused), json!({"error":"Approval required."}));
+        let refused = send(
+            address,
+            "POST",
+            "/v1/grants/vouch",
+            &json(&proof(9, "/v1/grants/vouch", &vouch)),
+            &vouch,
+        )
+        .await;
+        assert!(refused.starts_with("http/1.1 403"), "{refused}");
+        assert_eq!(body(&refused), json!({"error":"Call access has expired."}));
+        let missing = send(
+            address,
+            "POST",
+            "/v1/grants/other",
+            &json(&proof(9, "/v1/grants/other", "{}")),
+            "{}",
+        )
+        .await;
+        assert!(missing.starts_with("http/1.1 404"), "{missing}");
+        // Unsigned, foreign-origin and wrong-type requests are refused as on
+        // every other authenticated path.
+        for path in ["/v1/grants/devices", "/v1/grants/vouch"] {
+            assert!(
+                send(address, "POST", path, &json(""), &vouch)
+                    .await
+                    .starts_with("http/1.1 401")
+            );
+            let foreign = send(
+                address,
+                "POST",
+                path,
+                &json(&format!(
+                    "Origin: https://elsewhere.example\r\n{}",
+                    proof(9, path, &vouch)
+                )),
+                &vouch,
+            )
+            .await;
+            assert!(foreign.starts_with("http/1.1 403"), "{foreign}");
+            assert!(foreign.contains("Request refused."));
+            assert!(!foreign.contains("access-control-allow-origin"));
+            let untyped = send(address, "POST", path, &proof(9, path, &vouch), &vouch).await;
+            assert!(untyped.starts_with("http/1.1 415"), "{untyped}");
+            let preflight = send(
+                address,
+                "OPTIONS",
+                path,
+                "Origin: https://calls.example\r\n",
+                "",
+            )
+            .await;
+            assert!(preflight.starts_with("http/1.1 204"), "{preflight}");
+            assert!(preflight.contains("access-control-allow-origin: https://calls.example\r\n"));
+        }
+    }
+
+    #[test]
+    fn sealing_applies_alike_to_http_and_control_requests() {
+        use spry_link::control::AcceptedRequest;
+        let mut config = Config::new(
+            "https://relay.example",
+            "https://calls.example/j/",
+            OWNER,
+            b"synthetic-test-secret-not-for-deployment",
+            None,
+        )
+        .unwrap();
+        config.ready = true;
+        let state = ServiceState::new(Authority::new(config));
+        let at = 1_800_000_000;
+        let link = state.api(OWNER, "/v1/pairings", &json!({}), at).unwrap();
+        let payload: Value = {
+            use base64::Engine;
+            let fragment = link["url"]
+                .as_str()
+                .unwrap()
+                .split("#spry=")
+                .nth(1)
+                .unwrap();
+            serde_json::from_slice(
+                &base64::engine::general_purpose::URL_SAFE_NO_PAD
+                    .decode(fragment)
+                    .unwrap(),
+            )
+            .unwrap()
+        };
+        let app = signer(2);
+        let pairing = state
+            .api(
+                &app,
+                "/v1/pairings/claim",
+                &json!({"code":payload["code"]}),
+                at,
+            )
+            .unwrap()["id"]
+            .clone();
+        let grant = state
+            .api(
+                &app,
+                "/v1/grants",
+                &json!({"pairing":pairing,"scope":spry_access::hash("synthetic-scope")}),
+                at,
+            )
+            .unwrap()["token"]
+            .clone();
+        assert!(
+            state
+                .api(&signer(5), "/v1/credentials", &json!({"grant":grant}), at)
+                .is_ok()
+        );
+        let registered = state
+            .api(
+                &app,
+                "/v1/grants/devices",
+                &json!({"v":1,"pairing":pairing,"grant":grant,"add":[app, signer(3)],"seal":true,"revision":1}),
+                at,
+            )
+            .unwrap();
+        assert_eq!(
+            registered,
+            json!({"v":1,"sealed":true,"enforced":true,"devices":2})
+        );
+        // No node card rides on these responses: there is no private bridge,
+        // and the new paths never carry one.
+        assert!(registered.get("node").is_none());
+        let request = |key: String, path: &str, body: Value| AcceptedRequest {
+            id: "0".repeat(64),
+            key,
+            path: path.into(),
+            body,
+            expires_at: at + 30,
+        };
+        let (status, refused) = ControlHandler::handle(
+            &state,
+            &request(signer(5), "/v1/credentials", json!({"grant":grant})),
+            at,
+        );
+        assert_eq!(
+            (status, refused),
+            (403, json!({"error":"Call access has expired."}))
+        );
+        let (status, vouched) = ControlHandler::handle(
+            &state,
+            &request(
+                signer(3),
+                "/v1/grants/vouch",
+                json!({"v":1,"grant":grant,"add":[signer(5)]}),
+            ),
+            at,
+        );
+        assert_eq!((status, vouched), (200, json!({"v":1,"added":1})));
+        let (status, issued) = ControlHandler::handle(
+            &state,
+            &request(signer(5), "/v1/credentials", json!({"grant":grant})),
+            at,
+        );
+        assert_eq!(status, 200, "{issued}");
+        assert!(issued["username"].is_string());
     }
 
     #[test]

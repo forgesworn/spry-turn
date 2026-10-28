@@ -46,6 +46,9 @@ const REGION: SetupError =
     SetupError("SPRY_PUBLIC_REGION must be two uppercase letters, such as GB");
 const NOTE: SetupError =
     SetupError("SPRY_PUBLIC_NOTE must be at most 140 bytes with no control characters");
+const PRIVACY: SetupError = SetupError(
+    "SPRY_PUBLIC_PRIVACY_URL must be an https:// address on a DNS name, without port, query or fragment, at most 256 bytes",
+);
 pub const ADVERT_ENDPOINT: SetupError = SetupError(
     "A public advert needs SPRY_PUBLIC_URL to be an https DNS hostname without a port or path",
 );
@@ -57,6 +60,8 @@ pub struct PublicSettings {
     pub relays: Vec<String>,
     pub region: Option<String>,
     pub note: Option<String>,
+    /// The operator's privacy-notice link, published on open adverts only.
+    pub privacy: Option<String>,
 }
 impl PublicSettings {
     /// Validates the raw values. Empty strings count as unset. Relays follow
@@ -66,6 +71,7 @@ impl PublicSettings {
         relays: Option<&str>,
         region: Option<&str>,
         note: Option<&str>,
+        privacy: Option<&str>,
         public_key: &str,
         policy: RelayPolicy,
     ) -> Result<Self, SetupError> {
@@ -93,11 +99,19 @@ impl PublicSettings {
         {
             return Err(NOTE);
         }
+        let privacy = set(privacy);
+        if privacy
+            .as_deref()
+            .is_some_and(|privacy| !advert::privacy_valid(privacy))
+        {
+            return Err(PRIVACY);
+        }
         Ok(Self {
             enabled: public == Some("true"),
             relays,
             region,
             note,
+            privacy,
         })
     }
     pub fn from_environment(public_key: &str, policy: RelayPolicy) -> Result<Self, SetupError> {
@@ -107,6 +121,7 @@ impl PublicSettings {
             read("SPRY_PUBLIC_RELAYS").as_deref(),
             read("SPRY_PUBLIC_REGION").as_deref(),
             read("SPRY_PUBLIC_NOTE").as_deref(),
+            read("SPRY_PUBLIC_PRIVACY_URL").as_deref(),
             public_key,
             policy,
         )
@@ -184,6 +199,7 @@ impl Publisher {
         identity: Arc<Identity>,
         relays: Vec<String>,
         region: Option<String>,
+        privacy: Option<String>,
         options: RelayOptions,
         source: Arc<dyn AdvertSource>,
     ) -> Self {
@@ -224,9 +240,13 @@ impl Publisher {
                     // Recorded before sending, so a withdrawal is always newer.
                     last.store(created_at, Ordering::Release);
                     advertised = Some(tokio::time::Instant::now());
-                    if let Ok(event) =
-                        advert::open(&identity, &offer, region.as_deref(), created_at)
-                    {
+                    if let Ok(event) = advert::open(
+                        &identity,
+                        &offer,
+                        region.as_deref(),
+                        privacy.as_deref(),
+                        created_at,
+                    ) {
                         publish_all(&relays, &options, &identity, &event).await;
                     }
                 }
@@ -263,7 +283,15 @@ mod tests {
         region: Option<&str>,
         note: Option<&str>,
     ) -> Result<PublicSettings, SetupError> {
-        PublicSettings::parse(public, relays, region, note, &key(), RelayPolicy::Public)
+        PublicSettings::parse(
+            public,
+            relays,
+            region,
+            note,
+            None,
+            &key(),
+            RelayPolicy::Public,
+        )
     }
 
     #[test]
@@ -330,10 +358,50 @@ mod tests {
             Some(r#"["ws://127.0.0.1:7000/"]"#),
             None,
             None,
+            None,
             &key(),
             RelayPolicy::LocalFixture,
         );
         assert!(local.is_ok());
+    }
+
+    #[test]
+    fn the_privacy_link_is_optional_bounded_and_never_defaulted() {
+        let privacy = |value: Option<&str>| {
+            PublicSettings::parse(
+                Some("true"),
+                None,
+                None,
+                None,
+                value,
+                &key(),
+                RelayPolicy::Public,
+            )
+        };
+        assert_eq!(privacy(None).unwrap().privacy, None);
+        assert_eq!(privacy(Some("")).unwrap().privacy, None);
+        assert_eq!(
+            privacy(Some("https://operator.example/privacy"))
+                .unwrap()
+                .privacy
+                .as_deref(),
+            Some("https://operator.example/privacy")
+        );
+        for value in [
+            "http://operator.example/privacy",
+            "https://operator.example",
+            "https://operator.example:443/privacy",
+            "https://operator.example/privacy?x=1",
+            "https://operator.example/privacy#x",
+            "https://192.0.2.1/privacy",
+            "https://xn--oprator-bva.example/privacy",
+            "https://operator.local/privacy",
+            &format!("https://operator.example/{}", "p".repeat(232)),
+        ] {
+            let refused = privacy(Some(value)).unwrap_err();
+            assert_eq!(refused, PRIVACY, "{value}");
+            assert!(!refused.to_string().contains(value));
+        }
     }
 
     #[test]
