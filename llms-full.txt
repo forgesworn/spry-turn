@@ -2590,6 +2590,23 @@ generation and removes the child process and files. No fixed private key or
 certificate is committed. This regression does not establish the cause of a
 particular network or playback failure.
 
+## Recovered stream queue admission
+
+The two `relay_*_retries_recovered_stream_before_overload_drop` tests exercise
+both TURN Data Indication and ChannelData framing. Each reaches real socket
+backpressure, fills the existing application queue, restores kernel write
+capacity and consumes a writable event without servicing the stream handler.
+One authorised UDP packet must then drain with the old prefix and complete new
+frame intact, no counted drop, retained allocation and read-only interest.
+
+The runtime retries the existing nonblocking flush once only when relay-data
+admission would overflow. Queue and control-reserve limits do not change.
+The genuine-backpressure regression still requires a whole-packet drop when
+capacity remains insufficient; flushing old bytes does not admit part of a new
+frame. The local TLS library suite passes 28 tests, including these cases and
+the TLS drain regression. This is correctness evidence, not a throughput or
+playback claim; an overloaded stream incurs one extra bounded flush attempt.
+
 ## v0.2.1 qualification
 
 The stream-readiness optimisation passed ten all-feature Rust unit tests,
@@ -3172,6 +3189,10 @@ Canonical source: [CHANGELOG.md](https://github.com/forgesworn/spry-turn/blob/ma
 # Changelog
 
 ## Unreleased
+
+- Retry existing nonblocking stream output once before dropping a relay packet
+  for queue pressure. Recheck the unchanged queue/control-reserve limits after
+  that attempt; a genuinely blocked stream still drops the packet.
 
 - Add `SPRY_MAX_ALLOCATIONS`, `SPRY_MAX_ALLOCATIONS_PER_USER` and
   `SPRY_MAX_TCP_CONNECTIONS` to the `spry-node` standard profile so a small
