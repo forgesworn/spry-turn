@@ -1,0 +1,58 @@
+--- a/src/turn.rs
++++ b/src/turn.rs
+@@ -1527,6 +1527,8 @@
+     next_relay_mapping: usize,
+     next_relay_port: u16,
+     connections: HashMap<Token, Connection>,
++    // Empty storage lent to one plain TCP receive dispatch at a time.
++    tcp_return_output: Vec<u8>,
+     pending_streams: VecDeque<Token>,
+     stream_prune_needed: bool,
+     drain_at: Option<Instant>,
+@@ -1933,6 +1935,7 @@
+             next_relay_mapping: 0,
+             next_relay_port,
+             connections: HashMap::new(),
++            tcp_return_output: Vec::new(),
+             pending_streams: VecDeque::new(),
+             stream_prune_needed: false,
+             drain_at: None,
+@@ -3145,15 +3148,38 @@
+         TcpReturnBatch::new(coalesce)
+     }
+ 
++    // Only empty vectors change owners. Pending bytes always remain with their
++    // connection for the existing partial-write and readiness handling.
++    fn swap_empty_peer_output(&mut self, client: Client) -> bool {
++        let Client::Stream(token) = client else {
++            return false;
++        };
++        let Some(conn) = self.connections.get_mut(&token) else {
++            return false;
++        };
++        if !conn.output.is_empty() || conn.written != 0 {
++            return false;
++        }
++        debug_assert!(self.tcp_return_output.is_empty());
++        std::mem::swap(&mut conn.output, &mut self.tcp_return_output);
++        true
++    }
++
+     fn receive_peer(&mut self, token: Token, input: &mut [u8]) {
+         let Some(client) = self.relays.get(&token).copied() else {
+             return;
+         };
+         let mut batch = self.peer_return_batch(client);
++        let lent_output = batch.enabled && self.swap_empty_peer_output(client);
+         self.receive_peer_packets(client, input, &mut batch);
+         // This outer boundary covers every return from the UDP drain, including
+         // expiry, socket errors and WouldBlock. No timer or next edge is needed.
+         self.flush_peer_batch(client, &mut batch);
++        if lent_output {
++            // A blocked or yielded writer keeps the buffer and every unsent
++            // byte. A drained connection regains its original empty storage.
++            self.swap_empty_peer_output(client);
++        }
+     }
+ 
+     fn receive_peer_packets(

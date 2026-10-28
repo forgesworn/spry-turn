@@ -1,0 +1,362 @@
+{
+  "schema": 1,
+  "date": "2026-10-28",
+  "comparison": "exact measured cap16 parent versus shared TCP batch buffer candidate",
+  "host": {
+    "processor": "Apple M4 Max",
+    "cores": 16,
+    "ram_gib": 64,
+    "architecture": "aarch64-apple-darwin",
+    "globally_idle": false
+  },
+  "build": {
+    "rust": "1.94.1",
+    "profile": "release",
+    "opt_level": 3,
+    "features": "default,tls",
+    "locked": true,
+    "offline": true,
+    "jobs": 1,
+    "timing_images_instrumented": false
+  },
+  "workload": {
+    "family": "IPv4",
+    "client_transport": "TCP",
+    "relay_transport": "UDP",
+    "clients": 512,
+    "payload_bytes": 1200,
+    "window": 8,
+    "workers": 4,
+    "loaded_round_trip_floor": 200000,
+    "minimum_loaded_seconds": 10,
+    "control_loaded_round_trips": 32768,
+    "max_connections": 1024,
+    "relay_ports": [
+      20000,
+      20999
+    ],
+    "bandwidth_bytes_per_second": 1099511627776,
+    "schedule": [
+      "AB",
+      "BA",
+      "AB",
+      "BA"
+    ],
+    "mode": "independently saturated"
+  },
+  "rows": [
+    {
+      "phase": "controls",
+      "index": 1,
+      "arm": "original",
+      "verified_forwards": 77728,
+      "cpu_seconds": 0.33789899999999995,
+      "loaded_rss_bytes": 32342016,
+      "p99_us": 379.5,
+      "packets_per_second": 274169.9,
+      "idle_rss_bytes": 1867776,
+      "peak_sampled_rss_bytes": 32342016,
+      "round_trips": 32768,
+      "loaded_latency_observations": 512,
+      "loaded_latency_retained": 512,
+      "loss_or_corruption": 0,
+      "full_lifetime_cpu_seconds_per_million_all_verified_payload_forwards": 4.347197920955126,
+      "loaded_seconds": 0.239034,
+      "status": "passed"
+    },
+    {
+      "phase": "controls",
+      "index": 2,
+      "arm": "candidate",
+      "verified_forwards": 77728,
+      "cpu_seconds": 0.325654,
+      "loaded_rss_bytes": 21381120,
+      "p99_us": 366.166,
+      "packets_per_second": 251769.7,
+      "idle_rss_bytes": 1851392,
+      "peak_sampled_rss_bytes": 21381120,
+      "round_trips": 32768,
+      "loaded_latency_observations": 512,
+      "loaded_latency_retained": 512,
+      "loss_or_corruption": 0,
+      "full_lifetime_cpu_seconds_per_million_all_verified_payload_forwards": 4.189661383285302,
+      "loaded_seconds": 0.260301,
+      "status": "passed"
+    },
+    {
+      "phase": "rows",
+      "index": 1,
+      "arm": "original",
+      "verified_forwards": 2915728,
+      "cpu_seconds": 9.967621,
+      "loaded_rss_bytes": 29835264,
+      "p99_us": 369.916,
+      "packets_per_second": 290348.3,
+      "idle_rss_bytes": 1851392,
+      "peak_sampled_rss_bytes": 29835264,
+      "round_trips": 1451768,
+      "loaded_latency_observations": 22528,
+      "loaded_latency_retained": 16384,
+      "loss_or_corruption": 0,
+      "full_lifetime_cpu_seconds_per_million_all_verified_payload_forwards": 3.4185702507229756,
+      "loaded_seconds": 10.000184,
+      "status": "passed"
+    },
+    {
+      "phase": "rows",
+      "index": 2,
+      "arm": "candidate",
+      "verified_forwards": 2968400,
+      "cpu_seconds": 10.062704,
+      "loaded_rss_bytes": 21839872,
+      "p99_us": 307.0,
+      "packets_per_second": 295617.2,
+      "idle_rss_bytes": 1851392,
+      "peak_sampled_rss_bytes": 21839872,
+      "round_trips": 1478104,
+      "loaded_latency_observations": 23040,
+      "loaded_latency_retained": 16384,
+      "loss_or_corruption": 0,
+      "full_lifetime_cpu_seconds_per_million_all_verified_payload_forwards": 3.3899420563266407,
+      "loaded_seconds": 10.00012,
+      "status": "passed"
+    },
+    {
+      "phase": "rows",
+      "index": 3,
+      "arm": "candidate",
+      "verified_forwards": 2953008,
+      "cpu_seconds": 10.05184,
+      "loaded_rss_bytes": 21463040,
+      "p99_us": 313.958,
+      "packets_per_second": 294078.6,
+      "idle_rss_bytes": 1851392,
+      "peak_sampled_rss_bytes": 21463040,
+      "round_trips": 1470408,
+      "loaded_latency_observations": 23020,
+      "loaded_latency_retained": 16384,
+      "loss_or_corruption": 0,
+      "full_lifetime_cpu_seconds_per_million_all_verified_payload_forwards": 3.40393253252277,
+      "loaded_seconds": 10.000103,
+      "status": "passed"
+    },
+    {
+      "phase": "rows",
+      "index": 4,
+      "arm": "original",
+      "verified_forwards": 2953856,
+      "cpu_seconds": 10.061988,
+      "loaded_rss_bytes": 32358400,
+      "p99_us": 305.583,
+      "packets_per_second": 294162.9,
+      "idle_rss_bytes": 1851392,
+      "peak_sampled_rss_bytes": 32358400,
+      "round_trips": 1470832,
+      "loaded_latency_observations": 23040,
+      "loaded_latency_retained": 16384,
+      "loss_or_corruption": 0,
+      "full_lifetime_cpu_seconds_per_million_all_verified_payload_forwards": 3.4063908328638903,
+      "loaded_seconds": 10.000119,
+      "status": "passed"
+    },
+    {
+      "phase": "rows",
+      "index": 5,
+      "arm": "original",
+      "verified_forwards": 2959616,
+      "cpu_seconds": 10.055948,
+      "loaded_rss_bytes": 32358400,
+      "p99_us": 320.917,
+      "packets_per_second": 294737.3,
+      "idle_rss_bytes": 1851392,
+      "peak_sampled_rss_bytes": 32358400,
+      "round_trips": 1473712,
+      "loaded_latency_observations": 23040,
+      "loaded_latency_retained": 16384,
+      "loss_or_corruption": 0,
+      "full_lifetime_cpu_seconds_per_million_all_verified_payload_forwards": 3.39772051509385,
+      "loaded_seconds": 10.000173,
+      "status": "passed"
+    },
+    {
+      "phase": "rows",
+      "index": 6,
+      "arm": "candidate",
+      "verified_forwards": 3008208,
+      "cpu_seconds": 10.056485,
+      "loaded_rss_bytes": 21381120,
+      "p99_us": 308.458,
+      "packets_per_second": 299599.3,
+      "idle_rss_bytes": 1867776,
+      "peak_sampled_rss_bytes": 21381120,
+      "round_trips": 1498008,
+      "loaded_latency_observations": 23040,
+      "loaded_latency_retained": 16384,
+      "loss_or_corruption": 0,
+      "full_lifetime_cpu_seconds_per_million_all_verified_payload_forwards": 3.3430151771420062,
+      "loaded_seconds": 10.000075,
+      "status": "passed"
+    },
+    {
+      "phase": "rows",
+      "index": 7,
+      "arm": "candidate",
+      "verified_forwards": 2965392,
+      "cpu_seconds": 10.062591,
+      "loaded_rss_bytes": 21446656,
+      "p99_us": 312.125,
+      "packets_per_second": 295311.7,
+      "idle_rss_bytes": 1851392,
+      "peak_sampled_rss_bytes": 21446656,
+      "round_trips": 1476600,
+      "loaded_latency_observations": 23040,
+      "loaded_latency_retained": 16384,
+      "loss_or_corruption": 0,
+      "full_lifetime_cpu_seconds_per_million_all_verified_payload_forwards": 3.393342600236326,
+      "loaded_seconds": 10.00028,
+      "status": "passed"
+    },
+    {
+      "phase": "rows",
+      "index": 8,
+      "arm": "original",
+      "verified_forwards": 2931824,
+      "cpu_seconds": 10.063958000000001,
+      "loaded_rss_bytes": 33374208,
+      "p99_us": 308.833,
+      "packets_per_second": 291955.4,
+      "idle_rss_bytes": 1851392,
+      "peak_sampled_rss_bytes": 33374208,
+      "round_trips": 1459816,
+      "loaded_latency_observations": 22528,
+      "loaded_latency_retained": 16384,
+      "loss_or_corruption": 0,
+      "full_lifetime_cpu_seconds_per_million_all_verified_payload_forwards": 3.4326610328587255,
+      "loaded_seconds": 10.000267,
+      "status": "passed"
+    }
+  ],
+  "metrics": {
+    "full_lifetime_cpu_seconds_per_million_all_verified_payload_forwards": {
+      "four_ratios": [
+        0.9916256819966532,
+        0.9992783269854406,
+        0.9838994002865087,
+        0.9885457864187496
+      ],
+      "median": 0.9900857342077014,
+      "median_percent_change": -0.9914265792298593,
+      "passed_screen": true
+    },
+    "loaded_rss_bytes": {
+      "four_ratios": [
+        0.7320153761669412,
+        0.6632911392405063,
+        0.660759493670886,
+        0.6426116838487973
+      ],
+      "median": 0.6620253164556962,
+      "median_percent_change": -33.79746835443038,
+      "passed_screen": true
+    },
+    "peak_sampled_rss_bytes": {
+      "four_ratios": [
+        0.7320153761669412,
+        0.6632911392405063,
+        0.660759493670886,
+        0.6426116838487973
+      ],
+      "median": 0.6620253164556962,
+      "median_percent_change": -33.79746835443038,
+      "passed_screen": true
+    },
+    "packets_per_second": {
+      "four_ratios": [
+        1.0181468257262054,
+        0.9997134240925689,
+        1.016496045800786,
+        1.0114959339679965
+      ],
+      "median": 1.0139959898843913,
+      "median_percent_change": 1.3995989884391324,
+      "passed_screen": true
+    },
+    "loaded_round_trip_p99_us": {
+      "four_ratios": [
+        0.8299181435785422,
+        1.0274066292954778,
+        0.9611768775103845,
+        1.0106594826330086
+      ],
+      "median": 0.9859181800716965,
+      "median_percent_change": -1.4081819928303485,
+      "passed_screen": true
+    },
+    "idle_rss_bytes": {
+      "four_ratios": [
+        1.0,
+        1.0,
+        1.008849557522124,
+        1.0
+      ],
+      "median": 1.0,
+      "median_percent_change": 0.0,
+      "passed_screen": true,
+      "scope": "Additional independent replay against the original idle RSS guard; frozen executor did not summarise this field."
+    }
+  },
+  "all_rows_passed": true,
+  "verified_payload_forwards": 23811488,
+  "checks": {
+    "parent_capacity_regression": "one expected failure",
+    "default_tls_library_passed": 69,
+    "portable_runtime_turn_tls_library_passed": 47,
+    "clippy_warnings_denied": "passed",
+    "parent_lifetime_integration_passed": 5,
+    "udp_tcp_tls_wire_cases_passed": 40,
+    "large_datagram_wire_cases_passed": 3,
+    "diagnostic_library_passed": 79
+  },
+  "diagnostic": {
+    "timing_eligible": false,
+    "observer_perturbed": true,
+    "exact_loaded_window": false,
+    "parent_output_capacity_bytes": 8388608,
+    "candidate_connection_output_capacity_bytes": 2097152,
+    "candidate_shared_output_capacity_bytes": 9632,
+    "candidate_total_output_capacity_bytes": 2106784,
+    "candidate_all_verified_round_trips": 1485072,
+    "candidate_capacity_growth_events": 4,
+    "parent_capacity_growth_events": 1024,
+    "candidate_pending_bytes": 0,
+    "candidate_blocked_or_yielded_flushes": 0
+  },
+  "acceptance": {
+    "cpu_and_rss_ratio": {
+      "median_max": 1.0,
+      "each_pair_max": 1.03
+    },
+    "saturated_throughput_ratio": {
+      "median_min": 0.99,
+      "each_pair_min": 0.97
+    },
+    "p99_ratio": {
+      "median_max": 1.0,
+      "each_pair_max": 1.05
+    },
+    "memory_optimisation_loaded_rss_ratio_median_max": 0.97,
+    "delivery": "unchanged bytes, source, sequence, latency coverage, finite quota, retention and shutdown gates",
+    "equal_load_latency_qualified": false,
+    "broader_adoption_qualified": false
+  },
+  "limitations": [
+    "Four-pair descriptive results; no statistical-significance claim.",
+    "P99 improved in two pairs and worsened in two; no robust tail or equal-load ranking.",
+    "No fresh coturn comparison.",
+    "RSS is sampled process residency, excluding kernel memory; individual RSS samples were not retained.",
+    "The cache-inclusive capacity diagnostic is observer-perturbed and separate from uninstrumented timing.",
+    "Ordinary desktop processes remained; host admission was point-in-time, not continuous proof of isolation.",
+    "These are selected non-sensitive measurement fields, not a complete raw benchmark transcript.",
+    "The benchmark runner and exact loader are not bundled; hashes identify the retained original artifacts."
+  ]
+}

@@ -1,0 +1,1192 @@
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -20,12 +20,12 @@
+ 
+ [features]
+ default = ["runtime", "turn", "connected-udp"]
+-runtime = ["dep:mio", "dep:getrandom"]
++runtime = ["dep:mio", "dep:getrandom", "dep:socket2"]
+ turn = ["dep:base64", "dep:crc32fast", "dep:hmac", "dep:md-5", "dep:sha1"]
+ tls = ["runtime", "turn", "dep:rustls", "dep:rustls-pemfile"]
+ wasm = ["turn", "dep:wasm-bindgen"]
+ direct-index = ["runtime", "turn"]
+-connected-udp = ["direct-index", "dep:socket2"]
++connected-udp = ["direct-index"]
+ 
+ [lib]
+ crate-type = ["rlib", "cdylib"]
+--- a/src/turn.rs
++++ b/src/turn.rs
+@@ -23,6 +23,9 @@
+ const TLS: Token = Token(2);
+ const MAX_PACKET: usize = 65_536;
+ const HEADROOM: usize = 64;
++// Per-socket floor for one valid UDP datagram, never a global queue setting.
++const MIN_UDP_SEND_BUFFER: usize = MAX_PACKET;
++const UDP_SEND_BUFFER_DIAGNOSTIC_ENV: &str = "SPRY_DIAGNOSTIC_UDP_SEND_BUFFER_FLOOR";
+ const MAX_QUEUE: usize = 131_072;
+ // Keep ordinary control replies admissible when relayed UDP fills the queue.
+ // Control traffic retains the full queue cap and its existing close policy.
+@@ -31,6 +34,48 @@
+ const STREAM_READS_PER_TURN: usize = 16;
+ const STREAM_BYTES_PER_TURN: usize = MAX_QUEUE;
+ const STREAM_FRAMES_PER_TURN: usize = 64;
++// Per flush, including TLS plaintext and ciphertext work; not a poll-wide limit.
++const STREAM_WRITES_PER_FLUSH: usize = 16;
++const STREAM_BYTES_PER_FLUSH: usize = MAX_QUEUE;
++// Best-effort accepted-prefix drain after read EOF; progress never extends it.
++const STREAM_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
++// Only plain TCP peer returns coalesce, within this receive dispatch. These
++// bounds do not change the existing UDP read-until-WouldBlock scheduling.
++const TCP_RETURN_BATCH_FRAMES: usize = 16;
++const TCP_RETURN_BATCH_BYTES: usize = 16_384;
++
++struct TcpReturnBatch {
++    enabled: bool,
++    frames: usize,
++    bytes: usize,
++}
++
++impl TcpReturnBatch {
++    fn new(enabled: bool) -> Self {
++        Self {
++            enabled,
++            frames: 0,
++            bytes: 0,
++        }
++    }
++
++    fn would_exceed(&self, bytes: usize) -> bool {
++        self.frames != 0
++            && (self.frames >= TCP_RETURN_BATCH_FRAMES
++                || bytes > TCP_RETURN_BATCH_BYTES.saturating_sub(self.bytes))
++    }
++
++    fn full(&self) -> bool {
++        self.frames >= TCP_RETURN_BATCH_FRAMES || self.bytes >= TCP_RETURN_BATCH_BYTES
++    }
++
++    fn clear(&mut self) -> bool {
++        let pending = self.frames != 0;
++        self.frames = 0;
++        self.bytes = 0;
++        pending
++    }
++}
+ 
+ fn local_bridge_address(ip: IpAddr) -> bool {
+     matches!(ip, IpAddr::V4(v) if v.octets()[0] == 127 && (64..=127).contains(&v.octets()[1]))
+@@ -331,8 +376,14 @@
+             }
+             assert_eq!(server.pending_streams.len(), 1);
+             server.close(token);
+-            assert!(server.pending_streams.is_empty());
++            assert_eq!(server.pending_streams.len(), 1, "retired FIFO tombstone");
+             server.queue_stream(token);
++            assert_eq!(
++                server.pending_streams.len(),
++                1,
++                "closed token cannot requeue"
++            );
++            server.prune_pending_streams();
+             assert!(server.pending_streams.is_empty());
+             // A stale token is harmless even if already dequeued elsewhere.
+             server.pending_streams.push_back(token);
+@@ -1121,6 +1172,107 @@
+     Yielded,
+ }
+ 
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++enum StreamFlush {
++    Drained,
++    Blocked,
++    #[cfg(feature = "tls")]
++    AwaitingInput,
++    Yielded,
++}
++
++impl StreamFlush {
++    fn writable(self) -> bool {
++        matches!(self, Self::Blocked | Self::Yielded)
++    }
++}
++
++struct WriteBudget {
++    attempts: usize,
++    bytes: usize,
++    limited: bool,
++}
++
++impl WriteBudget {
++    fn new() -> Self {
++        Self {
++            attempts: STREAM_WRITES_PER_FLUSH,
++            bytes: STREAM_BYTES_PER_FLUSH,
++            limited: false,
++        }
++    }
++
++    fn take(&mut self) -> bool {
++        if self.attempts == 0 || self.bytes == 0 {
++            self.limited = true;
++            return false;
++        }
++        self.attempts -= 1;
++        true
++    }
++
++    fn blocked(&self) -> StreamFlush {
++        if self.limited {
++            StreamFlush::Yielded
++        } else {
++            StreamFlush::Blocked
++        }
++    }
++}
++
++struct LimitedWriter<'a, W> {
++    socket: &'a mut W,
++    budget: &'a mut WriteBudget,
++}
++
++impl<W: Write> Write for LimitedWriter<'_, W> {
++    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
++        if bytes.is_empty() {
++            return Ok(0);
++        }
++        if !self.budget.take() {
++            return Err(io::ErrorKind::WouldBlock.into());
++        }
++        let n = self
++            .socket
++            .write(&bytes[..bytes.len().min(self.budget.bytes)])?;
++        self.budget.bytes -= n;
++        Ok(n)
++    }
++
++    fn write_vectored(&mut self, bytes: &[io::IoSlice<'_>]) -> io::Result<usize> {
++        if bytes.iter().all(|slice| slice.is_empty()) {
++            return Ok(0);
++        }
++        if !self.budget.take() {
++            return Err(io::ErrorKind::WouldBlock.into());
++        }
++        // Match rustls's at-most-64-slice write without allocating or allowing
++        // a vectored syscall to bypass the aggregate byte allowance.
++        let mut slices: [io::IoSlice<'_>; 64] = std::array::from_fn(|_| io::IoSlice::new(&[]));
++        let mut count = 0;
++        let mut remaining = self.budget.bytes;
++        for slice in bytes {
++            if remaining == 0 || count == slices.len() {
++                break;
++            }
++            if !slice.is_empty() {
++                let n = slice.len().min(remaining);
++                slices[count] = io::IoSlice::new(&slice[..n]);
++                count += 1;
++                remaining -= n;
++            }
++        }
++        let n = self.socket.write_vectored(&slices[..count])?;
++        self.budget.bytes -= n;
++        Ok(n)
++    }
++
++    fn flush(&mut self) -> io::Result<()> {
++        self.socket.flush()
++    }
++}
++
+ struct StreamBudget {
+     reads: usize,
+     bytes: usize,
+@@ -1153,11 +1305,15 @@
+     output: Vec<u8>,
+     written: usize,
+     writable_interest: bool,
++    readable_interest: bool,
+     queued: bool,
++    drain_until: Option<Instant>,
+     last_active: Instant,
+     created: Instant,
+     #[cfg(feature = "tls")]
+     tls: Option<rustls::ServerConnection>,
++    #[cfg(feature = "tls")]
++    tls_close_sent: bool,
+ }
+ 
+ impl Connection {
+@@ -1167,16 +1323,19 @@
+         token: Token,
+         pending: bool,
+     ) -> io::Result<()> {
+-        // Read interest stays enabled. Re-register only when backpressure
+-        // changes write interest, rather than making a kernel call per packet.
+-        if self.writable_interest != pending {
+-            let interest = if pending {
++        let readable = self.drain_until.is_none();
++        // EOF disables reads even if write interest was already enabled.
++        if self.writable_interest != pending || self.readable_interest != readable {
++            let interest = if !readable {
++                Interest::WRITABLE
++            } else if pending {
+                 Interest::READABLE | Interest::WRITABLE
+             } else {
+                 Interest::READABLE
+             };
+             registry.reregister(&mut self.socket, token, interest)?;
+             self.writable_interest = pending;
++            self.readable_interest = readable;
+         }
+         Ok(())
+     }
+@@ -1269,20 +1428,73 @@
+         }
+     }
+ 
+-    fn flush(&mut self) -> io::Result<bool> {
++    fn flush(&mut self) -> io::Result<StreamFlush> {
++        let mut budget = WriteBudget::new();
++        #[cfg(feature = "tls")]
++        if let Some(tls) = &mut self.tls {
++            loop {
++                while self.written < self.output.len() {
++                    if !budget.take() {
++                        return Ok(StreamFlush::Yielded);
++                    }
++                    let end = self.output.len().min(self.written + budget.bytes);
++                    match tls.writer().write(&self.output[self.written..end]) {
++                        Ok(0) => break,
++                        Ok(n) => {
++                            self.written += n;
++                            budget.bytes -= n;
++                        }
++                        Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
++                        Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
++                        Err(e) => return Err(e),
++                    }
++                }
++                if self.written == self.output.len() {
++                    self.output.clear();
++                    self.written = 0;
++                }
++                let mut progressed = false;
++                while tls.wants_write() {
++                    let mut writer = LimitedWriter {
++                        socket: &mut self.socket,
++                        budget: &mut budget,
++                    };
++                    match tls.write_tls(&mut writer) {
++                        Ok(0) => return Err(io::ErrorKind::WriteZero.into()),
++                        Ok(_) => progressed = true,
++                        Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
++                            return Ok(budget.blocked());
++                        }
++                        Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
++                        Err(e) => return Err(e),
++                    }
++                }
++                if self.output.is_empty() {
++                    if self.drain_until.is_some() && !self.tls_close_sent {
++                        // Queue the alert only after all accepted application
++                        // bytes, never before plaintext still outside rustls.
++                        tls.send_close_notify();
++                        self.tls_close_sent = true;
++                        continue;
++                    }
++                    return Ok(StreamFlush::Drained);
++                }
++                if !progressed {
++                    return Ok(StreamFlush::AwaitingInput);
++                }
++                // Ciphertext writes freed plaintext capacity. Retry here or
++                // explicitly yield; an unchanged WRITABLE interest is no edge.
++            }
++        }
+         while self.written < self.output.len() {
+-            #[cfg(feature = "tls")]
+-            let result = if let Some(tls) = &mut self.tls {
+-                tls.writer().write(&self.output[self.written..])
+-            } else {
+-                self.socket.write(&self.output[self.written..])
++            let mut writer = LimitedWriter {
++                socket: &mut self.socket,
++                budget: &mut budget,
+             };
+-            #[cfg(not(feature = "tls"))]
+-            let result = self.socket.write(&self.output[self.written..]);
+-            match result {
+-                Ok(0) => break,
++            match writer.write(&self.output[self.written..]) {
++                Ok(0) => return Err(io::ErrorKind::WriteZero.into()),
+                 Ok(n) => self.written += n,
+-                Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
++                Err(e) if e.kind() == io::ErrorKind::WouldBlock => return Ok(budget.blocked()),
+                 Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                 Err(e) => return Err(e),
+             }
+@@ -1291,20 +1503,7 @@
+             self.output.clear();
+             self.written = 0;
+         }
+-        #[cfg(feature = "tls")]
+-        if let Some(tls) = &mut self.tls {
+-            while tls.wants_write() {
+-                match tls.write_tls(&mut self.socket) {
+-                    Ok(0) => break,
+-                    Ok(_) => (),
+-                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
+-                    Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+-                    Err(e) => return Err(e),
+-                }
+-            }
+-            return Ok(!self.output.is_empty() || tls.wants_write());
+-        }
+-        Ok(!self.output.is_empty())
++        Ok(StreamFlush::Drained)
+     }
+ }
+ 
+@@ -1329,12 +1528,174 @@
+     next_relay_port: u16,
+     connections: HashMap<Token, Connection>,
+     pending_streams: VecDeque<Token>,
++    stream_prune_needed: bool,
++    drain_at: Option<Instant>,
++    drain_at_dirty: bool,
+     next_token: usize,
+     nonces: auth::Nonces,
+     requests: Bucket,
+     sweep_at: Instant,
+     input: Vec<u8>,
+     stats: Stats,
++    udp_buffer_diagnostics: UdpBufferDiagnostics,
++}
++
++// Construction-time checks only. Preserve a larger host default, and refuse a
++// clamped/failed increase rather than admitting a relay unable to send one
++// otherwise valid datagram. This does not enlarge IP/UDP length limits.
++fn ensure_min_udp_send_buffer(
++    mut get: impl FnMut() -> io::Result<usize>,
++    mut set: impl FnMut(usize) -> io::Result<()>,
++) -> io::Result<()> {
++    if get()? < MIN_UDP_SEND_BUFFER {
++        set(MIN_UDP_SEND_BUFFER)?;
++        if get()? < MIN_UDP_SEND_BUFFER {
++            return Err(io::Error::other(
++                "UDP send buffer below required datagram capacity",
++            ));
++        }
++    }
++    Ok(())
++}
++
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++enum UdpSendBufferMode {
++    Floor,
++    Native,
++}
++
++fn udp_send_buffer_mode(value: Option<&std::ffi::OsStr>) -> io::Result<UdpSendBufferMode> {
++    match value.map(std::ffi::OsStr::to_str) {
++        None | Some(Some("on")) => Ok(UdpSendBufferMode::Floor),
++        Some(Some("off")) => Ok(UdpSendBufferMode::Native),
++        _ => Err(io::Error::new(
++            io::ErrorKind::InvalidInput,
++            "SPRY_DIAGNOSTIC_UDP_SEND_BUFFER_FLOOR must be on or off",
++        )),
++    }
++}
++
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++struct UdpBufferFact {
++    mode: UdpSendBufferMode,
++    role: &'static str,
++    socket_ordinal: usize,
++    send_before: Option<usize>,
++    receive_before: Option<usize>,
++    send_after: Option<usize>,
++    receive_after: Option<usize>,
++}
++
++fn inspect_udp_send_buffer(
++    mode: UdpSendBufferMode,
++    role: &'static str,
++    socket_ordinal: usize,
++    mut get_send: impl FnMut() -> io::Result<usize>,
++    mut set_send: impl FnMut(usize) -> io::Result<()>,
++    mut get_receive: impl FnMut() -> io::Result<usize>,
++    emit: impl FnOnce(&UdpBufferFact, &io::Result<()>) -> io::Result<()>,
++) -> io::Result<()> {
++    let mut fact = UdpBufferFact {
++        mode,
++        role,
++        socket_ordinal,
++        send_before: None,
++        receive_before: None,
++        send_after: None,
++        receive_after: None,
++    };
++    let configured: io::Result<()> = (|| {
++        fact.send_before = Some(get_send()?);
++        fact.receive_before = Some(get_receive()?);
++        if mode == UdpSendBufferMode::Floor {
++            ensure_min_udp_send_buffer(&mut get_send, &mut set_send)?;
++        }
++        Ok(())
++    })();
++    // These are observations, including after a refused preparation. An
++    // earlier failure remains a failure even if an observation succeeds.
++    let send_after = get_send();
++    fact.send_after = send_after.as_ref().ok().copied();
++    let receive_after = get_receive();
++    fact.receive_after = receive_after.as_ref().ok().copied();
++    let result = configured
++        .and(send_after.map(|_| ()))
++        .and(receive_after.map(|_| ()));
++    let logged = emit(&fact, &result);
++    result.and(logged)
++}
++
++fn log_udp_buffer_fact(fact: &UdpBufferFact, result: &io::Result<()>) -> io::Result<()> {
++    fn number(value: Option<impl std::fmt::Display>) -> String {
++        value.map_or_else(|| "null".to_owned(), |value| value.to_string())
++    }
++    let mode = match fact.mode {
++        UdpSendBufferMode::Floor => "floor",
++        UdpSendBufferMode::Native => "native",
++    };
++    let error = result.as_ref().err();
++    let kind = error.map_or_else(|| "none".to_owned(), |error| format!("{:?}", error.kind()));
++    writeln!(
++        io::stderr().lock(),
++        "{{\"event\":\"spry_udp_buffer_diagnostic\",\"mode\":\"{}\",\"role\":\"{}\",\"socket_ordinal\":{},\"send_before\":{},\"receive_before\":{},\"send_after\":{},\"receive_after\":{},\"ok\":{},\"error_kind\":\"{}\",\"os_error\":{}}}",
++        mode,
++        fact.role,
++        fact.socket_ordinal,
++        number(fact.send_before),
++        number(fact.receive_before),
++        number(fact.send_after),
++        number(fact.receive_after),
++        result.is_ok(),
++        kind,
++        number(error.and_then(io::Error::raw_os_error)),
++    )
++}
++
++struct UdpBufferDiagnostics {
++    mode: UdpSendBufferMode,
++    constructed: usize,
++    selected: bool,
++}
++
++impl UdpBufferDiagnostics {
++    fn from_value(value: Option<&std::ffi::OsStr>) -> io::Result<Self> {
++        Ok(Self {
++            mode: udp_send_buffer_mode(value)?,
++            constructed: 0,
++            selected: value.is_some(),
++        })
++    }
++
++    fn emit_if_selected(&self, emit: impl FnOnce() -> io::Result<()>) -> io::Result<()> {
++        if self.selected { emit() } else { Ok(()) }
++    }
++
++    fn prepare(&mut self, socket: &UdpSocket, role: &'static str) -> io::Result<()> {
++        self.constructed = self
++            .constructed
++            .checked_add(1)
++            .ok_or_else(|| io::Error::other("diagnostic UDP socket count overflow"))?;
++        let socket = socket2::SockRef::from(socket);
++        inspect_udp_send_buffer(
++            self.mode,
++            role,
++            self.constructed,
++            || socket.send_buffer_size(),
++            |bytes| socket.set_send_buffer_size(bytes),
++            || socket.recv_buffer_size(),
++            |fact, result| self.emit_if_selected(|| log_udp_buffer_fact(fact, result)),
++        )
++    }
++}
++
++fn bind_udp_socket(
++    address: SocketAddr,
++    diagnostics: &mut UdpBufferDiagnostics,
++    role: &'static str,
++) -> io::Result<UdpSocket> {
++    let socket = UdpSocket::bind(address)?;
++    diagnostics.prepare(&socket, role)?;
++    Ok(socket)
+ }
+ 
+ pub fn unix_time() -> u64 {
+@@ -1353,7 +1714,10 @@
+ }
+ 
+ impl Server {
+-    fn bind_listener(address: SocketAddr) -> io::Result<UdpSocket> {
++    fn bind_listener(
++        address: SocketAddr,
++        diagnostics: &mut UdpBufferDiagnostics,
++    ) -> io::Result<UdpSocket> {
+         #[cfg(all(feature = "connected-udp", unix))]
+         {
+             let socket = socket2::Socket::new(
+@@ -1364,16 +1728,18 @@
+             socket.set_reuse_port(true)?;
+             socket.set_nonblocking(true)?;
+             socket.bind(&address.into())?;
+-            Ok(UdpSocket::from_std(socket.into()))
++            let socket = UdpSocket::from_std(socket.into());
++            diagnostics.prepare(&socket, "listener")?;
++            Ok(socket)
+         }
+         #[cfg(not(all(feature = "connected-udp", unix)))]
+         {
+-            UdpSocket::bind(address)
++            bind_udp_socket(address, diagnostics, "listener")
+         }
+     }
+ 
+     #[cfg(feature = "connected-udp")]
+-    fn connected_client(&self, client: Client, token: Token) -> Option<UdpSocket> {
++    fn connected_client(&mut self, client: Client, token: Token) -> Option<UdpSocket> {
+         #[cfg(unix)]
+         {
+             let Client::Datagram(peer) = client else {
+@@ -1396,6 +1762,10 @@
+             socket.bind(&address.into()).ok()?;
+             socket.connect(&peer.into()).ok()?;
+             let mut socket = UdpSocket::from_std(socket.into());
++            // Failure retains the already verified listener fallback.
++            self.udp_buffer_diagnostics
++                .prepare(&socket, "connected-client")
++                .ok()?;
+             self.poll
+                 .registry()
+                 .register(&mut socket, Token(token.0 | 2), Interest::READABLE)
+@@ -1527,8 +1897,11 @@
+                 "local peer bridging requires loopback TLS",
+             ));
+         }
++        let diagnostic_value = std::env::var_os(UDP_SEND_BUFFER_DIAGNOSTIC_ENV);
++        let mut udp_buffer_diagnostics =
++            UdpBufferDiagnostics::from_value(diagnostic_value.as_deref())?;
+         let poll = Poll::new()?;
+-        let mut listener = Self::bind_listener(config.listen)?;
++        let mut listener = Self::bind_listener(config.listen, &mut udp_buffer_diagnostics)?;
+         poll.registry()
+             .register(&mut listener, UDP, Interest::READABLE)?;
+         let mut tcp = TcpListener::bind(listener.local_addr()?)?;
+@@ -1561,6 +1934,9 @@
+             next_relay_port,
+             connections: HashMap::new(),
+             pending_streams: VecDeque::new(),
++            stream_prune_needed: false,
++            drain_at: None,
++            drain_at_dirty: false,
+             next_token: 3,
+             nonces: auth::Nonces::new()
+                 .map_err(|_| io::Error::other("OS randomness unavailable"))?,
+@@ -1568,6 +1944,7 @@
+             sweep_at: now + SWEEP_INTERVAL,
+             input: vec![0; MAX_PACKET + HEADROOM],
+             stats: Stats::default(),
++            udp_buffer_diagnostics,
+         })
+     }
+ 
+@@ -1639,9 +2016,13 @@
+     }
+ 
+     pub fn poll_once(&mut self, timeout: Duration) -> io::Result<()> {
++        self.refresh_drain_at();
+         let mut events = std::mem::replace(&mut self.events, Events::with_capacity(0));
+         let wait = if self.pending_streams.is_empty() {
+-            timeout.min(self.sweep_at.saturating_duration_since(Instant::now()))
++            let now = Instant::now();
++            let wait = timeout.min(self.sweep_at.saturating_duration_since(now));
++            self.drain_at
++                .map_or(wait, |at| wait.min(at.saturating_duration_since(now)))
+         } else {
+             Duration::ZERO
+         };
+@@ -1685,14 +2066,19 @@
+             };
+             if let Some(conn) = self.connections.get_mut(&token) {
+                 conn.queued = false;
+-            }
+-            self.stream(token, &mut input);
++                self.stream(token, &mut input);
++            }
+         }
+         self.input = input;
+         self.events = events;
+-        if Instant::now() >= self.sweep_at {
++        let now = Instant::now();
++        if now >= self.sweep_at || self.drain_at.is_some_and(|at| now >= at) {
+             self.sweep();
+         }
++        // Closing a queued member is O(1); retire stale FIFO entries once
++        // after this dispatch and sweep batch, before the next poll.
++        self.prune_pending_streams();
++        self.refresh_drain_at();
+         Ok(())
+     }
+ 
+@@ -1703,6 +2089,16 @@
+     /// Returns whether the whole packet was accepted. UDP relay overload drops
+     /// the new packet; it must not truncate queued stream frames or allocations.
+     fn send_client_packet(&mut self, client: Client, bytes: &[u8], relay_payload: bool) -> bool {
++        self.send_client_packet_inner(client, bytes, relay_payload, false)
++    }
++
++    fn send_client_packet_inner(
++        &mut self,
++        client: Client,
++        bytes: &[u8],
++        relay_payload: bool,
++        defer_tcp_return: bool,
++    ) -> bool {
+         match client {
+             Client::Datagram(peer) => {
+                 #[cfg(feature = "connected-udp")]
+@@ -1731,6 +2127,12 @@
+                     }
+                     return false;
+                 };
++                if conn.drain_until.is_some() {
++                    if relay_payload {
++                        self.stats.dropped_packets += 1;
++                    }
++                    return false;
++                }
+                 let pending = conn.output.len() - conn.written;
+                 if relay_payload
+                     && bytes.len() > (MAX_QUEUE - STREAM_CONTROL_RESERVE).saturating_sub(pending)
+@@ -1738,18 +2140,11 @@
+                     self.stats.dropped_packets += 1;
+                     return false;
+                 }
+-                let result = conn.queue(bytes).and_then(|()| conn.flush());
+-                let accepted = match result {
+-                    Ok(pending) => {
+-                        if conn
+-                            .update_interest(self.poll.registry(), token, pending)
+-                            .is_err()
+-                        {
+-                            self.close(token);
+-                            false
+-                        } else {
+-                            true
+-                        }
++                let accepted = match conn.queue(bytes) {
++                    Ok(()) if defer_tcp_return => true,
++                    Ok(()) => {
++                        self.flush_stream(token);
++                        self.connections.contains_key(&token)
+                     }
+                     Err(_) => {
+                         self.close(token);
+@@ -1825,13 +2220,37 @@
+                     output: Vec::with_capacity(4096),
+                     written: 0,
+                     writable_interest: false,
++                    readable_interest: true,
+                     queued: false,
++                    drain_until: None,
+                     last_active: now,
+                     created: now,
+                     #[cfg(feature = "tls")]
+                     tls,
++                    #[cfg(feature = "tls")]
++                    tls_close_sent: false,
+                 },
+             );
++        }
++    }
++
++    fn prune_pending_streams(&mut self) {
++        if std::mem::take(&mut self.stream_prune_needed) {
++            let connections = &self.connections;
++            self.pending_streams
++                .retain(|token| connections.get(token).is_some_and(|conn| conn.queued));
++        }
++    }
++
++    fn refresh_drain_at(&mut self) {
++        if std::mem::take(&mut self.drain_at_dirty) {
++            // Invalidated only when the cached earliest member closes. Batch
++            // all retirements; the ordinary poll path does not scan connections.
++            self.drain_at = self
++                .connections
++                .values()
++                .filter_map(|conn| conn.drain_until)
++                .min();
+         }
+     }
+ 
+@@ -1846,6 +2265,16 @@
+     }
+ 
+     fn stream(&mut self, token: Token, scratch: &mut [u8]) {
++        if let Some(conn) = self.connections.get(&token) {
++            if let Some(deadline) = conn.drain_until {
++                if Instant::now() >= deadline {
++                    self.close(token);
++                } else {
++                    self.flush_stream(token);
++                }
++                return;
++            }
++        }
+         let mut budget = StreamBudget::new();
+         let mut yielded = false;
+         loop {
+@@ -1892,36 +2321,55 @@
+                         yielded = true;
+                         break;
+                     }
+-                    Ok(StreamRead::Closed) | Err(_) => {
++                    Ok(StreamRead::Closed) => {
++                        let deadline = Instant::now() + STREAM_DRAIN_TIMEOUT;
++                        conn.drain_until = Some(deadline);
++                        conn.input.clear();
++                        conn.input_offset = 0;
++                        self.drain_at = Some(self.drain_at.map_or(deadline, |at| at.min(deadline)));
++                        // Freeze the accepted response prefix. The allocation
++                        // is no longer available to replenish it from peers.
++                        self.remove_allocation(Client::Stream(token));
++                        break;
++                    }
++                    Err(_) => {
+                         self.close(token);
+                         return;
+                     }
+                 }
+             }
+         }
++        self.flush_stream(token);
++        if yielded {
++            self.queue_stream(token);
++        }
++    }
++
++    fn flush_stream(&mut self, token: Token) {
+         if let Some(conn) = self.connections.get_mut(&token) {
+             match conn.flush() {
+-                Ok(pending) => {
++                Ok(StreamFlush::Drained) if conn.drain_until.is_some() => self.close(token),
++                Ok(state) => {
+                     if conn
+-                        .update_interest(self.poll.registry(), token, pending)
++                        .update_interest(self.poll.registry(), token, state.writable())
+                         .is_err()
+                     {
+                         self.close(token);
++                    } else if state == StreamFlush::Yielded {
++                        self.queue_stream(token);
+                     }
+                 }
+                 Err(_) => self.close(token),
+             }
+-        }
+-        if yielded {
+-            self.queue_stream(token);
+         }
+     }
+ 
+     fn close(&mut self, token: Token) {
+         if let Some(mut conn) = self.connections.remove(&token) {
+             if conn.queued {
+-                self.pending_streams.retain(|queued| *queued != token);
+-            }
++                self.stream_prune_needed = true;
++            }
++            self.drain_at_dirty |= conn.drain_until.is_some() && conn.drain_until == self.drain_at;
+             let _ = self.poll.registry().deregister(&mut conn.socket);
+         }
+         self.remove_allocation(Client::Stream(token));
+@@ -1959,6 +2407,9 @@
+             .connections
+             .iter()
+             .filter_map(|(t, c)| {
++                if let Some(deadline) = c.drain_until {
++                    return (deadline <= now).then_some(*t);
++                }
+                 let active = self.allocations.contains_key(&Client::Stream(*t));
+                 ((!active && now.duration_since(c.created) > Duration::from_secs(15))
+                     || now.duration_since(c.last_active) > Duration::from_secs(600))
+@@ -2302,7 +2753,11 @@
+                 if self.relay_ports.contains(&mapping.local_port) {
+                     continue;
+                 }
+-                match UdpSocket::bind(SocketAddr::new(self.config.relay_ip, mapping.local_port)) {
++                match bind_udp_socket(
++                    SocketAddr::new(self.config.relay_ip, mapping.local_port),
++                    &mut self.udp_buffer_diagnostics,
++                    "relay",
++                ) {
+                     Ok(socket) => return Ok(socket),
+                     Err(error) if error.kind() == io::ErrorKind::AddrInUse => continue,
+                     Err(error) => return Err(error),
+@@ -2314,7 +2769,11 @@
+             ));
+         }
+         let Some((first, last)) = self.config.relay_port_range else {
+-            return UdpSocket::bind(SocketAddr::new(self.config.relay_ip, 0));
++            return bind_udp_socket(
++                SocketAddr::new(self.config.relay_ip, 0),
++                &mut self.udp_buffer_diagnostics,
++                "relay",
++            );
+         };
+         // Rotate through the bounded range once. Occupied host ports are skipped,
+         // but neither capacity exhaustion nor a bind error widens the range.
+@@ -2324,7 +2783,11 @@
+             if self.relay_ports.contains(&port) {
+                 continue;
+             }
+-            match UdpSocket::bind(SocketAddr::new(self.config.relay_ip, port)) {
++            match bind_udp_socket(
++                SocketAddr::new(self.config.relay_ip, port),
++                &mut self.udp_buffer_diagnostics,
++                "relay",
++            ) {
+                 Ok(socket) => return Ok(socket),
+                 Err(error) if error.kind() == io::ErrorKind::AddrInUse => continue,
+                 Err(error) => return Err(error),
+@@ -2619,10 +3082,86 @@
+         }
+     }
+ 
++    fn flush_peer_batch(&mut self, client: Client, batch: &mut TcpReturnBatch) {
++        if batch.clear() {
++            if let Client::Stream(token) = client {
++                self.flush_stream(token);
++            }
++        }
++    }
++
++    fn send_peer_packet(
++        &mut self,
++        client: Client,
++        bytes: &[u8],
++        batch: &mut TcpReturnBatch,
++    ) -> bool {
++        if !batch.enabled || bytes.len() > TCP_RETURN_BATCH_BYTES {
++            self.flush_peer_batch(client, batch);
++            return self.send_client_packet(client, bytes, true);
++        }
++        if batch.would_exceed(bytes.len()) {
++            self.flush_peer_batch(client, batch);
++        }
++        // Catch up only writes deferred by THIS dispatch. An empty batch must
++        // preserve the established full-queue drop-without-write behaviour.
++        if batch.frames != 0 {
++            if let Client::Stream(token) = client {
++                if self.connections.get(&token).is_some_and(|conn| {
++                    conn.drain_until.is_none()
++                        && bytes.len()
++                            > (MAX_QUEUE - STREAM_CONTROL_RESERVE)
++                                .saturating_sub(conn.output.len() - conn.written)
++                }) {
++                    self.flush_peer_batch(client, batch);
++                }
++            }
++        }
++        let accepted = self.send_client_packet_inner(client, bytes, true, true);
++        if accepted {
++            batch.frames += 1;
++            batch.bytes += bytes.len();
++            if batch.full() {
++                self.flush_peer_batch(client, batch);
++                if let Client::Stream(token) = client {
++                    return self.connections.contains_key(&token);
++                }
++            }
++        }
++        accepted
++    }
++
++    fn peer_return_batch(&self, client: Client) -> TcpReturnBatch {
++        let coalesce = match client {
++            Client::Stream(token) => self.connections.get(&token).is_some_and(|conn| {
++                #[cfg(feature = "tls")]
++                if conn.tls.is_some() {
++                    return false;
++                }
++                conn.drain_until.is_none()
++            }),
++            Client::Datagram(_) => false,
++        };
++        TcpReturnBatch::new(coalesce)
++    }
++
+     fn receive_peer(&mut self, token: Token, input: &mut [u8]) {
+         let Some(client) = self.relays.get(&token).copied() else {
+             return;
+         };
++        let mut batch = self.peer_return_batch(client);
++        self.receive_peer_packets(client, input, &mut batch);
++        // This outer boundary covers every return from the UDP drain, including
++        // expiry, socket errors and WouldBlock. No timer or next edge is needed.
++        self.flush_peer_batch(client, &mut batch);
++    }
++
++    fn receive_peer_packets(
++        &mut self,
++        client: Client,
++        input: &mut [u8],
++        batch: &mut TcpReturnBatch,
++    ) {
+         loop {
+             let now = Instant::now();
+             let Some(a) = self
+@@ -2636,7 +3175,10 @@
+             // packets prepend their framing without copying the media payload.
+             let (n, peer) = match a.socket.recv_from(&mut input[HEADROOM..]) {
+                 Ok(value) => value,
+-                Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
++                Err(e) if e.kind() == io::ErrorKind::Interrupted => {
++                    self.flush_peer_batch(client, batch);
++                    continue;
++                }
+                 Err(_) => return,
+             };
+             if !a
+@@ -2646,6 +3188,7 @@
+                 || !a.bandwidth.take(n, now)
+             {
+                 self.stats.dropped_packets += 1;
++                self.flush_peer_batch(client, batch);
+                 continue;
+             }
+             if let Some(c) = a
+@@ -2662,17 +3205,20 @@
+                     HEADROOM + n
+                 };
+                 input[HEADROOM + n..end].fill(0);
+-                if !self.send_client_packet(client, &input[begin..end], true) {
++                if !self.send_peer_packet(client, &input[begin..end], batch) {
++                    self.flush_peer_batch(client, batch);
+                     continue;
+                 }
+             } else {
+                 // Data indications also use the reserved prefix of this buffer.
+                 if n > 65_440 {
+                     self.stats.dropped_packets += 1;
++                    self.flush_peer_batch(client, batch);
+                     continue;
+                 }
+                 let mut transaction = [0; 12];
+                 if getrandom::fill(&mut transaction).is_err() {
++                    self.flush_peer_batch(client, batch);
+                     continue;
+                 }
+                 let (address, address_len) = address_value(peer, &transaction);
+@@ -2690,7 +3236,8 @@
+                 output[data_start - 4..data_start - 2].copy_from_slice(&DATA.to_be_bytes());
+                 output[data_start - 2..data_start].copy_from_slice(&(n as u16).to_be_bytes());
+                 output[data_start + n..len].fill(0);
+-                if !self.send_client_packet(client, &output[..len], true) {
++                if !self.send_peer_packet(client, &output[..len], batch) {
++                    self.flush_peer_batch(client, batch);
+                     continue;
+                 }
+             }
+@@ -2699,3 +3246,192 @@
+         }
+     }
+ }
++
++#[cfg(test)]
++mod udp_buffer_diagnostic_tests {
++    use super::*;
++    use std::cell::{Cell, RefCell};
++    use std::ffi::OsStr;
++
++    fn assert_selected_logging(value: Option<&OsStr>, mode: UdpSendBufferMode, expected: u32) {
++        let diagnostics = UdpBufferDiagnostics::from_value(value).unwrap();
++        assert_eq!(diagnostics.mode, mode);
++        let emitted = Cell::new(0);
++        diagnostics
++            .emit_if_selected(|| {
++                emitted.set(emitted.get() + 1);
++                Ok(())
++            })
++            .unwrap();
++        assert_eq!(emitted.get(), expected);
++        let failed =
++            diagnostics.emit_if_selected(|| Err(io::Error::other("selected logging refusal")));
++        assert_eq!(failed.is_err(), expected != 0);
++    }
++
++    #[test]
++    fn udp_buffer_diagnostic_defaults_to_the_existing_floor() {
++        assert_selected_logging(None, UdpSendBufferMode::Floor, 0);
++        assert_eq!(
++            udp_send_buffer_mode(None).unwrap(),
++            UdpSendBufferMode::Floor
++        );
++    }
++
++    #[test]
++    fn udp_buffer_diagnostic_on_selects_the_existing_floor() {
++        assert_selected_logging(Some(OsStr::new("on")), UdpSendBufferMode::Floor, 1);
++        assert_eq!(
++            udp_send_buffer_mode(Some(OsStr::new("on"))).unwrap(),
++            UdpSendBufferMode::Floor
++        );
++    }
++
++    #[test]
++    fn udp_buffer_diagnostic_off_selects_native_without_an_environment_mutation() {
++        assert_selected_logging(Some(OsStr::new("off")), UdpSendBufferMode::Native, 1);
++        assert_eq!(
++            udp_send_buffer_mode(Some(OsStr::new("off"))).unwrap(),
++            UdpSendBufferMode::Native
++        );
++    }
++
++    #[test]
++    fn udp_buffer_diagnostic_refuses_malformed_values() {
++        for value in ["", "ON", "OFF", " on", "off ", "0", "1", "true", "native"] {
++            assert_eq!(
++                udp_send_buffer_mode(Some(OsStr::new(value)))
++                    .unwrap_err()
++                    .kind(),
++                io::ErrorKind::InvalidInput
++            );
++        }
++    }
++
++    #[cfg(unix)]
++    #[test]
++    fn udp_buffer_diagnostic_refuses_non_unicode_values() {
++        use std::os::unix::ffi::OsStrExt;
++        assert_eq!(
++            udp_send_buffer_mode(Some(OsStr::from_bytes(&[0xff])))
++                .unwrap_err()
++                .kind(),
++            io::ErrorKind::InvalidInput
++        );
++    }
++
++    fn probe(
++        mode: UdpSendBufferMode,
++        initial: usize,
++        clamp: usize,
++        refuse_set: bool,
++    ) -> (io::Result<()>, UdpBufferFact, Vec<usize>) {
++        let send = Cell::new(initial);
++        let sets = RefCell::new(Vec::new());
++        let mut record = None;
++        let result = inspect_udp_send_buffer(
++            mode,
++            "relay",
++            7,
++            || Ok(send.get()),
++            |value| {
++                sets.borrow_mut().push(value);
++                if refuse_set {
++                    return Err(io::ErrorKind::PermissionDenied.into());
++                }
++                send.set(value.min(clamp));
++                Ok(())
++            },
++            || Ok(786_896),
++            |fact, result| {
++                record = Some((*fact, result.is_ok()));
++                Ok(())
++            },
++        );
++        let (fact, emitted_ok) = record.unwrap();
++        assert_eq!(emitted_ok, result.is_ok());
++        (result, fact, sets.into_inner())
++    }
++
++    #[test]
++    fn udp_buffer_diagnostic_both_modes_emit_actual_values_without_shrinking() {
++        for (mode, initial, after, expected_sets) in [
++            (UdpSendBufferMode::Floor, 9_216, 65_536, vec![65_536]),
++            (UdpSendBufferMode::Native, 9_216, 9_216, vec![]),
++            (UdpSendBufferMode::Floor, 1_048_576, 1_048_576, vec![]),
++        ] {
++            let (result, fact, sets) = probe(mode, initial, usize::MAX, false);
++            result.unwrap();
++            assert_eq!(fact.mode, mode);
++            assert_eq!(fact.role, "relay");
++            assert_eq!(fact.socket_ordinal, 7);
++            assert_eq!(fact.send_before, Some(initial));
++            assert_eq!(fact.send_after, Some(after));
++            assert_eq!(fact.receive_before, Some(786_896));
++            assert_eq!(fact.receive_after, Some(786_896));
++            assert_eq!(sets, expected_sets);
++        }
++    }
++
++    #[test]
++    fn udp_buffer_diagnostic_refusal_still_emits_the_actual_after_state() {
++        for (clamp, refuse_set, after, kind) in [
++            (32_768, false, 32_768, io::ErrorKind::Other),
++            (usize::MAX, true, 9_216, io::ErrorKind::PermissionDenied),
++        ] {
++            let (result, fact, sets) = probe(UdpSendBufferMode::Floor, 9_216, clamp, refuse_set);
++            assert_eq!(result.unwrap_err().kind(), kind);
++            assert_eq!(fact.send_after, Some(after));
++            assert_eq!(fact.receive_after, Some(786_896));
++            assert_eq!(sets, [65_536]);
++        }
++    }
++
++    #[test]
++    fn udp_buffer_diagnostic_post_observation_cannot_clear_an_initial_failure() {
++        let calls = Cell::new(0);
++        let mut record = None;
++        let result = inspect_udp_send_buffer(
++            UdpSendBufferMode::Native,
++            "listener",
++            1,
++            || {
++                calls.set(calls.get() + 1);
++                if calls.get() == 1 {
++                    Err(io::ErrorKind::PermissionDenied.into())
++                } else {
++                    Ok(9_216)
++                }
++            },
++            |_| panic!("native mode must not change a socket option"),
++            || Ok(786_896),
++            |fact, result| {
++                record = Some(*fact);
++                assert!(result.is_err());
++                Ok(())
++            },
++        );
++        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::PermissionDenied);
++        let fact = record.unwrap();
++        assert_eq!(fact.send_before, None);
++        assert_eq!(fact.send_after, Some(9_216));
++        assert_eq!(fact.receive_after, Some(786_896));
++    }
++
++    #[test]
++    fn udp_buffer_diagnostic_log_failure_is_not_a_silent_success() {
++        let result = inspect_udp_send_buffer(
++            UdpSendBufferMode::Native,
++            "listener",
++            1,
++            || Ok(9_216),
++            |_| panic!("native mode must not change a socket option"),
++            || Ok(786_896),
++            |_, result| {
++                assert!(result.is_ok());
++                Err(io::ErrorKind::BrokenPipe.into())
++            },
++        );
++        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::BrokenPipe);
++    }
++}

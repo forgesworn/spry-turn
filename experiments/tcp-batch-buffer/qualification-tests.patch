@@ -1,0 +1,1485 @@
+--- a/src/turn.rs
++++ b/src/turn.rs
+@@ -123,46 +123,6 @@
+ #[cfg(test)]
+ mod policy_tests {
+     use super::*;
+-
+-    fn drive_until(server: &mut Server, ready: impl Fn(&Server) -> bool) {
+-        let deadline = Instant::now() + Duration::from_secs(2);
+-        while !ready(server) && Instant::now() < deadline {
+-            server.poll_once(Duration::from_millis(10)).unwrap();
+-        }
+-        assert!(ready(server), "stream did not progress before the deadline");
+-    }
+-
+-    fn accept_stream(server: &mut Server) {
+-        let connections = server.connections.len();
+-        drive_until(server, |server| server.connections.len() > connections);
+-    }
+-
+-    fn wait_for_queued(server: &Server, token: Token, bytes: usize) {
+-        let mut queued = vec![0; bytes];
+-        let deadline = Instant::now() + Duration::from_secs(2);
+-        let mut received = 0;
+-        while received < bytes && Instant::now() < deadline {
+-            match server.connections[&token].socket.peek(&mut queued) {
+-                Ok(n) => received = n,
+-                Err(error) if error.kind() == io::ErrorKind::WouldBlock => (),
+-                Err(error) => panic!("peek failed: {error}"),
+-            }
+-            std::thread::yield_now();
+-        }
+-        assert_eq!(received, bytes, "the valid burst is fully queued");
+-    }
+-
+-    fn binding_response(client: &mut std::net::TcpStream, transaction: [u8; 12]) {
+-        let mut header = [0; 20];
+-        client.read_exact(&mut header).unwrap();
+-        let len = usize::from(u16::from_be_bytes([header[2], header[3]]));
+-        let mut bytes = vec![0; 20 + len];
+-        bytes[..20].copy_from_slice(&header);
+-        client.read_exact(&mut bytes[20..]).unwrap();
+-        let response = Message::parse(&bytes).unwrap();
+-        assert_eq!((response.method, response.class), (BINDING, 2));
+-        assert_eq!(response.transaction, transaction);
+-    }
+ 
+     fn batch_output_fixture(count: usize) -> (Server, Vec<std::net::TcpStream>, Vec<Token>) {
+         let mut config = Config::local(vec![1; 32]);
+@@ -489,6 +449,1435 @@
+         }
+         assert!(server.tcp_return_output.is_empty());
+         assert_eq!(server.stats.forwarded_packets, 0);
++    }
++
++    #[cfg(all(feature = "connected-udp", unix))]
++    fn coalescing_loopback() -> (Server, std::net::TcpStream, Token) {
++        let mut config = Config::local(vec![1; 32]);
++        config.listen.set_port(0);
++        let mut server = Server::bind(config).unwrap();
++        let socket = socket2::Socket::new(
++            socket2::Domain::IPV4,
++            socket2::Type::STREAM,
++            Some(socket2::Protocol::TCP),
++        )
++        .unwrap();
++        socket.set_recv_buffer_size(1_048_576).unwrap();
++        socket
++            .connect_timeout(&server.local_addr().unwrap().into(), Duration::from_secs(2))
++            .unwrap();
++        let client: std::net::TcpStream = socket.into();
++        client.set_nonblocking(true).unwrap();
++        accept_stream(&mut server);
++        let token = *server.connections.keys().next().unwrap();
++        socket2::SockRef::from(&server.connections[&token].socket)
++            .set_send_buffer_size(1_048_576)
++            .unwrap();
++        (server, client, token)
++    }
++
++    fn coalescing_frame(sequence: u8, payload_bytes: usize) -> Vec<u8> {
++        let mut bytes = vec![sequence; (4 + payload_bytes + 3) & !3];
++        bytes[..2].copy_from_slice(&0x4000_u16.to_be_bytes());
++        bytes[2..4].copy_from_slice(&(payload_bytes as u16).to_be_bytes());
++        bytes[4 + payload_bytes..].fill(0);
++        bytes
++    }
++
++    #[cfg(all(feature = "connected-udp", unix))]
++    fn coalescing_read(server: &mut Server, client: &mut std::net::TcpStream, expected: &[u8]) {
++        let deadline = Instant::now() + Duration::from_secs(5);
++        let mut received = Vec::new();
++        let mut scratch = [0; 16_384];
++        while received.len() < expected.len() && Instant::now() < deadline {
++            match client.read(&mut scratch) {
++                Ok(0) => panic!("accepted prefix closed before complete delivery"),
++                Ok(n) => received.extend_from_slice(&scratch[..n]),
++                Err(error) if error.kind() == io::ErrorKind::WouldBlock => (),
++                Err(error) => panic!("coalesced read: {error}"),
++            }
++            server.poll_once(Duration::from_millis(1)).unwrap();
++        }
++        assert_eq!(received, expected, "every accepted byte remains ordered");
++    }
++
++    #[test]
++    fn coalescing_limits_are_finite_and_reset_together() {
++        let mut batch = TcpReturnBatch::new(true);
++        assert!(!batch.would_exceed(1));
++        batch.frames = TCP_RETURN_BATCH_FRAMES - 1;
++        batch.bytes = TCP_RETURN_BATCH_BYTES - 4;
++        assert!(!batch.would_exceed(4));
++        assert!(batch.would_exceed(5));
++        batch.frames += 1;
++        assert!(batch.full());
++        assert!(batch.would_exceed(1));
++        assert!(batch.clear());
++        assert_eq!((batch.frames, batch.bytes), (0, 0));
++        assert!(!batch.clear());
++    }
++
++    #[test]
++    #[cfg(all(feature = "connected-udp", unix))]
++    fn coalescing_retains_ordered_frames_until_explicit_dispatch_flush() {
++        let (mut server, mut client, token) = coalescing_loopback();
++        let key = Client::Stream(token);
++        let mut batch = TcpReturnBatch::new(true);
++        let mut expected = Vec::new();
++        for sequence in 0..8 {
++            let bytes = coalescing_frame(sequence, 160);
++            assert!(server.send_peer_packet(key, &bytes, &mut batch));
++            expected.extend_from_slice(&bytes);
++        }
++        assert_eq!(batch.frames, 8);
++        assert_eq!(server.connections[&token].output, expected);
++        assert_eq!(server.connections[&token].written, 0);
++        assert_eq!(
++            client.peek(&mut [0]).unwrap_err().kind(),
++            io::ErrorKind::WouldBlock,
++            "a small batch has not issued a socket write yet"
++        );
++        server.flush_peer_batch(key, &mut batch);
++        assert_eq!((batch.frames, batch.bytes), (0, 0));
++        coalescing_read(&mut server, &mut client, &expected);
++        assert!(server.connections[&token].output.is_empty());
++    }
++
++    #[test]
++    #[cfg(all(feature = "connected-udp", unix))]
++    fn coalescing_frame_byte_and_large_frame_boundaries_flush_without_a_timer() {
++        let (mut server, mut client, token) = coalescing_loopback();
++        let key = Client::Stream(token);
++        let mut batch = TcpReturnBatch::new(true);
++        let mut expected = Vec::new();
++        for sequence in 0..TCP_RETURN_BATCH_FRAMES {
++            let bytes = coalescing_frame(sequence as u8, 16);
++            assert!(server.send_peer_packet(key, &bytes, &mut batch));
++            expected.extend_from_slice(&bytes);
++        }
++        assert_eq!((batch.frames, batch.bytes), (0, 0));
++        coalescing_read(&mut server, &mut client, &expected);
++
++        // Each framed packet fits the byte limit, while their sum exceeds it.
++        let first = coalescing_frame(17, TCP_RETURN_BATCH_BYTES - 12);
++        let second = coalescing_frame(18, 16);
++        assert!(server.send_peer_packet(key, &first, &mut batch));
++        assert!(server.send_peer_packet(key, &second, &mut batch));
++        assert_eq!((batch.frames, batch.bytes), (1, second.len()));
++        server.flush_peer_batch(key, &mut batch);
++        coalescing_read(&mut server, &mut client, &[first, second].concat());
++
++        let large = coalescing_frame(19, TCP_RETURN_BATCH_BYTES);
++        assert!(large.len() > TCP_RETURN_BATCH_BYTES);
++        assert!(server.send_peer_packet(key, &large, &mut batch));
++        assert_eq!((batch.frames, batch.bytes), (0, 0));
++        coalescing_read(&mut server, &mut client, &large);
++    }
++
++    #[test]
++    #[cfg(all(feature = "connected-udp", unix))]
++    fn coalescing_flushes_before_admission_instead_of_dropping_a_sendable_frame() {
++        let (mut server, mut client, token) = coalescing_loopback();
++        let key = Client::Stream(token);
++        let first = coalescing_frame(1, 160);
++        let prefix = vec![0x5a; MAX_QUEUE - STREAM_CONTROL_RESERVE - first.len() - 8];
++        server
++            .connections
++            .get_mut(&token)
++            .unwrap()
++            .queue(&prefix)
++            .unwrap();
++        let frame = coalescing_frame(2, 160);
++        let mut batch = TcpReturnBatch::new(true);
++        assert!(server.send_peer_packet(key, &first, &mut batch));
++        assert_eq!(
++            batch.frames, 1,
++            "this dispatch really deferred an accepted frame"
++        );
++        assert!(
++            frame.len() > 8,
++            "the newly deferred frame leaves too little room"
++        );
++        assert!(server.send_peer_packet(key, &frame, &mut batch));
++        assert_eq!(server.stats.dropped_packets, 0);
++        server.flush_peer_batch(key, &mut batch);
++        coalescing_read(&mut server, &mut client, &[prefix, first, frame].concat());
++    }
++
++    #[test]
++    #[cfg(all(feature = "connected-udp", unix))]
++    fn coalescing_real_wouldblock_keeps_atomic_frames_and_control_reserve() {
++        // This shared fixture observes a real socket WouldBlock, independently
++        // of output interest or a synthetic write-budget yield.
++        let (mut server, mut client, token, accepted) = backpressured_stream();
++        let key = Client::Stream(token);
++        let conn = server.connections.get_mut(&token).unwrap();
++        let pending = conn.output.len() - conn.written;
++        assert!(pending > 0);
++        let fill = MAX_QUEUE - STREAM_CONTROL_RESERVE - pending;
++        conn.queue(&vec![0x5a; fill]).unwrap();
++        let mut expected = vec![0x5a; accepted + fill];
++        let frame = coalescing_frame(7, 160);
++        let mut batch = TcpReturnBatch::new(true);
++        // The kernel may make legitimate progress after the witnessed block.
++        // Either outcome must admit the entire frame or none of it.
++        let frame_accepted = server.send_peer_packet(key, &frame, &mut batch);
++        if frame_accepted {
++            expected.extend_from_slice(&frame);
++        }
++        server.flush_peer_batch(key, &mut batch);
++        assert!(server.connections.contains_key(&token));
++        assert_eq!(server.stats.dropped_packets, u64::from(!frame_accepted));
++        let conn = &server.connections[&token];
++        assert!(conn.output.len() - conn.written <= MAX_QUEUE - STREAM_CONTROL_RESERVE);
++        server.send_client(key, b"ctrl");
++        expected.extend_from_slice(b"ctrl");
++        assert!(server.connections.contains_key(&token));
++        socket2::SockRef::from(&server.connections[&token].socket)
++            .set_send_buffer_size(1_048_576)
++            .unwrap();
++        coalescing_read(&mut server, &mut client, &expected);
++    }
++
++    #[test]
++    fn coalescing_partial_writes_resume_the_exact_tail_after_writer_wouldblock() {
++        struct Partial {
++            bytes: Vec<u8>,
++            allowance: usize,
++        }
++        impl Write for Partial {
++            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
++                if self.allowance == 0 {
++                    return Err(io::ErrorKind::WouldBlock.into());
++                }
++                let n = bytes.len().min(self.allowance).min(7);
++                self.bytes.extend_from_slice(&bytes[..n]);
++                self.allowance -= n;
++                Ok(n)
++            }
++            fn flush(&mut self) -> io::Result<()> {
++                Ok(())
++            }
++        }
++        let expected = [coalescing_frame(1, 16), coalescing_frame(2, 16)].concat();
++        let mut socket = Partial {
++            bytes: Vec::new(),
++            allowance: 11,
++        };
++        let mut budget = WriteBudget::new();
++        let mut writer = LimitedWriter {
++            socket: &mut socket,
++            budget: &mut budget,
++        };
++        let first = writer.write(&expected).unwrap();
++        let second = writer.write(&expected[first..]).unwrap();
++        assert_eq!((first, second), (7, 4));
++        assert_eq!(
++            writer.write(&expected[11..]).unwrap_err().kind(),
++            io::ErrorKind::WouldBlock
++        );
++        assert_eq!(budget.blocked(), StreamFlush::Blocked);
++        assert_eq!(socket.bytes, expected[..11]);
++        socket.allowance = usize::MAX;
++        let mut offset = 11;
++        while offset < expected.len() {
++            let mut writer = LimitedWriter {
++                socket: &mut socket,
++                budget: &mut budget,
++            };
++            offset += writer.write(&expected[offset..]).unwrap();
++        }
++        assert_eq!(socket.bytes, expected);
++    }
++
++    #[test]
++    #[cfg(all(feature = "connected-udp", unix))]
++    fn coalescing_control_response_flushes_immediately_after_the_accepted_prefix() {
++        let (mut server, mut client, token) = coalescing_loopback();
++        let key = Client::Stream(token);
++        let mut batch = TcpReturnBatch::new(true);
++        let prefix = coalescing_frame(3, 160);
++        assert!(server.send_peer_packet(key, &prefix, &mut batch));
++        server.send_client(key, b"ctrl");
++        coalescing_read(
++            &mut server,
++            &mut client,
++            &[prefix, b"ctrl".to_vec()].concat(),
++        );
++        assert!(server.connections[&token].output.is_empty());
++        server.flush_peer_batch(key, &mut batch);
++        assert!(
++            server.pending_streams.is_empty(),
++            "no empty-batch busy continuation"
++        );
++    }
++
++    #[test]
++    #[cfg(all(feature = "connected-udp", unix))]
++    fn coalescing_eof_delivers_the_exact_accepted_prefix_and_rejects_new_returns() {
++        let (mut server, mut client, token) = coalescing_loopback();
++        let key = Client::Stream(token);
++        let mut batch = TcpReturnBatch::new(true);
++        let prefix = coalescing_frame(9, 1200);
++        assert!(server.send_peer_packet(key, &prefix, &mut batch));
++        assert_eq!(server.connections[&token].output, prefix);
++        client.shutdown(std::net::Shutdown::Write).unwrap();
++        wait_for_stream_eof(&server, token);
++        server.stream(token, &mut [0; 1024]);
++        assert!(!server.send_peer_packet(key, &coalescing_frame(10, 160), &mut batch));
++        server.flush_peer_batch(key, &mut batch);
++        let deadline = Instant::now() + Duration::from_secs(3);
++        let mut received = Vec::new();
++        let mut eof = false;
++        let mut scratch = [0; 4096];
++        while !eof && Instant::now() < deadline {
++            match client.read(&mut scratch) {
++                Ok(0) => eof = true,
++                Ok(n) => received.extend_from_slice(&scratch[..n]),
++                Err(e) if e.kind() == io::ErrorKind::WouldBlock => (),
++                Err(e) => panic!("EOF drain: {e}"),
++            }
++            server.poll_once(Duration::from_millis(1)).unwrap();
++        }
++        assert!(eof);
++        assert_eq!(received, prefix);
++        assert!(!server.connections.contains_key(&token));
++        assert!(server.pending_streams.is_empty());
++    }
++
++    #[test]
++    #[cfg(all(feature = "connected-udp", unix))]
++    fn coalescing_udp_dispatch_flushes_at_wouldblock_for_both_framing_paths() {
++        for channel in [None, Some(0x4000_u16)] {
++            let (mut server, mut client, token) = coalescing_loopback();
++            let key = Client::Stream(token);
++            let peer = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
++            let peer_address = peer.local_addr().unwrap();
++            let relay_socket = UdpSocket::bind("127.0.0.1:0".parse().unwrap()).unwrap();
++            let address = relay_socket.local_addr().unwrap();
++            let relay_token = server.relays.reserve(key);
++            let expires = Instant::now() + Duration::from_secs(60);
++            server.allocations.insert(
++                key,
++                Allocation {
++                    socket: relay_socket,
++                    client_socket: None,
++                    token: relay_token,
++                    bound_address: address,
++                    advertised_address: address,
++                    username: "generated-coalescing-fixture".into(),
++                    transaction: [1; 12],
++                    expires,
++                    permissions: vec![Permission {
++                        ip: peer_address.ip(),
++                        expires,
++                    }],
++                    channels: channel
++                        .map(|number| Channel {
++                            number,
++                            peer: peer_address,
++                            expires,
++                        })
++                        .into_iter()
++                        .collect(),
++                    bandwidth: Bucket::new(64 * 1024 * 1024, 128 * 1024 * 1024, Instant::now()),
++                },
++            );
++            for sequence in 0..4_u8 {
++                assert_eq!(peer.send_to(&[sequence; 16], address).unwrap(), 16);
++            }
++            let queued_by = Instant::now() + Duration::from_secs(2);
++            loop {
++                match server.allocations[&key].socket.peek_from(&mut [0; 16]) {
++                    Ok((16, from)) => {
++                        assert_eq!(from, peer_address);
++                        break;
++                    }
++                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
++                        assert!(Instant::now() < queued_by);
++                        std::thread::yield_now();
++                    }
++                    result => panic!("generated UDP prefix: {result:?}"),
++                }
++            }
++            let mut scratch = vec![0; MAX_PACKET + HEADROOM];
++            server.receive_peer(relay_token, &mut scratch);
++            assert_eq!(
++                (server.stats.forwarded_packets, server.stats.forwarded_bytes),
++                (4, 64)
++            );
++            assert!(
++                server.connections[&token].output.is_empty(),
++                "dispatch exit flushes its short batch"
++            );
++            let bytes_per_frame = if channel.is_some() { 20 } else { 52 };
++            client.set_nonblocking(false).unwrap();
++            client
++                .set_read_timeout(Some(Duration::from_secs(2)))
++                .unwrap();
++            let mut received = vec![0; 4 * bytes_per_frame];
++            client.read_exact(&mut received).unwrap();
++            for (sequence, frame) in received.chunks_exact(bytes_per_frame).enumerate() {
++                if let Some(number) = channel {
++                    assert_eq!(
++                        wire::channel(frame),
++                        Some((number, &[sequence as u8; 16][..]))
++                    );
++                } else {
++                    let message = Message::parse(frame).unwrap();
++                    assert_eq!((message.method, message.class), (DATA_METHOD, 1));
++                    assert_eq!(message.address(PEER), Some(peer_address));
++                    assert_eq!(message.attr(DATA), Some(&[sequence as u8; 16][..]));
++                }
++            }
++        }
++    }
++
++    #[test]
++    #[cfg(all(feature = "connected-udp", unix))]
++    fn coalescing_empty_batch_full_queue_preserves_drop_without_a_write() {
++        let (mut server, mut client, token) = coalescing_loopback();
++        let prefix = vec![0x5a; MAX_QUEUE - STREAM_CONTROL_RESERVE];
++        server
++            .connections
++            .get_mut(&token)
++            .unwrap()
++            .queue(&prefix)
++            .unwrap();
++        let before = server.connections[&token].output.clone();
++        let mut batch = server.peer_return_batch(Client::Stream(token));
++        assert_eq!(batch.frames, 0);
++        assert!(!server.send_peer_packet(
++            Client::Stream(token),
++            &coalescing_frame(1, 160),
++            &mut batch
++        ));
++        let conn = &server.connections[&token];
++        assert_eq!((&conn.output, conn.written), (&before, 0));
++        assert_eq!(server.stats.dropped_packets, 1);
++        server.flush_peer_batch(Client::Stream(token), &mut batch);
++        assert_eq!(server.connections[&token].written, 0);
++        assert_eq!(
++            client.peek(&mut [0]).unwrap_err().kind(),
++            io::ErrorKind::WouldBlock
++        );
++        // Complete the deliberately held prefix through the original control
++        // path; this artificial application queue did not require kernel WB.
++        server.send_client(Client::Stream(token), b"ctrl");
++        coalescing_read(
++            &mut server,
++            &mut client,
++            &[prefix, b"ctrl".to_vec()].concat(),
++        );
++    }
++
++    #[test]
++    #[cfg(all(feature = "connected-udp", unix))]
++    fn coalescing_hard_write_error_closes_without_claiming_queued_bytes_delivered() {
++        let (mut server, client, token) = coalescing_loopback();
++        let key = Client::Stream(token);
++        let mut batch = server.peer_return_batch(key);
++        let prefix = coalescing_frame(7, 1200);
++        assert!(server.send_peer_packet(key, &prefix, &mut batch));
++        assert_eq!(server.connections[&token].output, prefix);
++        assert_eq!(server.connections[&token].written, 0);
++        assert_eq!(
++            client.peek(&mut [0]).unwrap_err().kind(),
++            io::ErrorKind::WouldBlock
++        );
++        // A deliberate peer reset happens AFTER local queue acceptance and
++        // BEFORE a write. Queue acceptance is not a delivery acknowledgement.
++        socket2::SockRef::from(&client)
++            .set_linger(Some(Duration::ZERO))
++            .unwrap();
++        drop(client);
++        let deadline = Instant::now() + Duration::from_secs(2);
++        loop {
++            match server
++                .connections
++                .get_mut(&token)
++                .unwrap()
++                .socket
++                .read(&mut [0])
++            {
++                Err(e) if e.kind() == io::ErrorKind::ConnectionReset => break,
++                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
++                    assert!(
++                        Instant::now() < deadline,
++                        "actual peer reset was not observed"
++                    );
++                    std::thread::yield_now();
++                }
++                result => panic!("expected actual reset, got {result:?}"),
++            }
++        }
++        server.flush_peer_batch(key, &mut batch);
++        assert!(!server.connections.contains_key(&token));
++        assert_eq!((batch.frames, batch.bytes), (0, 0));
++        assert!(!server.send_peer_packet(key, &coalescing_frame(8, 160), &mut batch));
++        assert!(server.pending_streams.is_empty());
++    }
++
++    #[test]
++    #[cfg(all(feature = "connected-udp", unix))]
++    fn coalescing_plain_tcp_nodelay_and_excluded_transport_gates_are_preserved() {
++        let (mut server, _client, token) = coalescing_loopback();
++        let key = Client::Stream(token);
++        assert!(server.connections[&token].socket.nodelay().unwrap());
++        assert!(server.peer_return_batch(key).enabled);
++        assert!(
++            !server
++                .peer_return_batch(Client::Datagram("127.0.0.1:1".parse().unwrap()))
++                .enabled
++        );
++        assert!(
++            !server
++                .peer_return_batch(Client::Stream(Token(usize::MAX)))
++                .enabled
++        );
++        server.connections.get_mut(&token).unwrap().drain_until =
++            Some(Instant::now() + STREAM_DRAIN_TIMEOUT);
++        assert!(!server.peer_return_batch(key).enabled);
++        server.connections.get_mut(&token).unwrap().drain_until = None;
++        #[cfg(feature = "tls")]
++        {
++            #[derive(Debug)]
++            struct NoCertificate;
++            impl rustls::server::ResolvesServerCert for NoCertificate {
++                fn resolve(
++                    &self,
++                    _: rustls::server::ClientHello<'_>,
++                ) -> Option<Arc<rustls::sign::CertifiedKey>> {
++                    None
++                }
++            }
++            let config = rustls::ServerConfig::builder()
++                .with_no_client_auth()
++                .with_cert_resolver(Arc::new(NoCertificate));
++            server.connections.get_mut(&token).unwrap().tls =
++                Some(rustls::ServerConnection::new(Arc::new(config)).unwrap());
++            assert!(
++                !server.peer_return_batch(key).enabled,
++                "TLS stays on its original immediate path"
++            );
++        }
++    }
++
++    #[test]
++    fn udp_send_floor_preserves_exact_or_larger_defaults() {
++        use std::cell::Cell;
++        for initial in [MIN_UDP_SEND_BUFFER, MIN_UDP_SEND_BUFFER * 4] {
++            let reads = Cell::new(0);
++            ensure_min_udp_send_buffer(
++                || {
++                    reads.set(reads.get() + 1);
++                    Ok(initial)
++                },
++                |_| panic!("must not shrink an adequate host default"),
++            )
++            .unwrap();
++            assert_eq!(reads.get(), 1);
++        }
++    }
++
++    #[test]
++    fn udp_send_floor_increases_then_verifies_small_default() {
++        use std::cell::Cell;
++        let actual = Cell::new(9216);
++        let reads = Cell::new(0);
++        let writes = Cell::new(0);
++        ensure_min_udp_send_buffer(
++            || {
++                reads.set(reads.get() + 1);
++                Ok(actual.get())
++            },
++            |bytes| {
++                assert_eq!(bytes, 65_536);
++                writes.set(writes.get() + 1);
++                actual.set(bytes);
++                Ok(())
++            },
++        )
++        .unwrap();
++        assert_eq!(
++            (reads.get(), writes.get(), actual.get()),
++            (2, 1, MIN_UDP_SEND_BUFFER)
++        );
++    }
++
++    #[test]
++    fn udp_send_floor_initial_getter_failure_is_visible() {
++        let error = ensure_min_udp_send_buffer(
++            || Err(io::ErrorKind::PermissionDenied.into()),
++            |_| panic!("a failed getter cannot justify a setter"),
++        )
++        .unwrap_err();
++        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
++    }
++
++    #[test]
++    fn udp_send_floor_setter_failure_is_visible() {
++        let error = ensure_min_udp_send_buffer(
++            || Ok(9216),
++            |_| Err(io::ErrorKind::PermissionDenied.into()),
++        )
++        .unwrap_err();
++        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
++    }
++
++    #[test]
++    fn udp_send_floor_verification_getter_failure_is_visible() {
++        use std::cell::Cell;
++        let calls = Cell::new(0);
++        let error = ensure_min_udp_send_buffer(
++            || {
++                calls.set(calls.get() + 1);
++                if calls.get() == 1 {
++                    Ok(9216)
++                } else {
++                    Err(io::ErrorKind::PermissionDenied.into())
++                }
++            },
++            |_| Ok(()),
++        )
++        .unwrap_err();
++        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
++        assert_eq!(calls.get(), 2);
++    }
++
++    #[test]
++    fn udp_send_floor_clamped_increase_is_refused() {
++        use std::cell::Cell;
++        let writes = Cell::new(0);
++        let error = ensure_min_udp_send_buffer(
++            || Ok(9216),
++            |bytes| {
++                assert_eq!(bytes, MIN_UDP_SEND_BUFFER);
++                writes.set(writes.get() + 1);
++                Ok(())
++            },
++        )
++        .unwrap_err();
++        assert_eq!(writes.get(), 1);
++        assert_eq!(error.kind(), io::ErrorKind::Other);
++    }
++
++    #[test]
++    fn udp_send_floor_is_applied_to_listener_and_relay_constructors() {
++        for address in ["127.0.0.1:0", "[::1]:0"] {
++            let address = address.parse().unwrap();
++            let mut diagnostics = UdpBufferDiagnostics {
++                mode: UdpSendBufferMode::Floor,
++                constructed: 0,
++                selected: false,
++            };
++            let listener = Server::bind_listener(address, &mut diagnostics).unwrap();
++            assert!(
++                socket2::SockRef::from(&listener)
++                    .send_buffer_size()
++                    .unwrap()
++                    >= MIN_UDP_SEND_BUFFER
++            );
++            let relay = bind_udp_socket(address, &mut diagnostics, "relay").unwrap();
++            assert!(
++                socket2::SockRef::from(&relay).send_buffer_size().unwrap() >= MIN_UDP_SEND_BUFFER
++            );
++        }
++    }
++
++    #[cfg(all(feature = "connected-udp", unix))]
++    #[test]
++    fn udp_send_floor_is_applied_to_connected_client_constructor() {
++        let mut config = Config::local(vec![1; 32]);
++        config.listen.set_port(0);
++        let mut server = Server::bind(config).unwrap();
++        let peer = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
++        let connected = server
++            .connected_client(Client::Datagram(peer.local_addr().unwrap()), Token(4))
++            .unwrap();
++        assert!(
++            socket2::SockRef::from(&connected)
++                .send_buffer_size()
++                .unwrap()
++                >= MIN_UDP_SEND_BUFFER
++        );
++    }
++
++    fn drive_until(server: &mut Server, ready: impl Fn(&Server) -> bool) {
++        let deadline = Instant::now() + Duration::from_secs(2);
++        while !ready(server) && Instant::now() < deadline {
++            server.poll_once(Duration::from_millis(10)).unwrap();
++        }
++        assert!(ready(server), "stream did not progress before the deadline");
++    }
++
++    fn accept_stream(server: &mut Server) {
++        let connections = server.connections.len();
++        drive_until(server, |server| server.connections.len() > connections);
++    }
++
++    fn wait_for_queued(server: &Server, token: Token, bytes: usize) {
++        let mut queued = vec![0; bytes];
++        let deadline = Instant::now() + Duration::from_secs(2);
++        let mut received = 0;
++        while received < bytes && Instant::now() < deadline {
++            match server.connections[&token].socket.peek(&mut queued) {
++                Ok(n) => received = n,
++                Err(error) if error.kind() == io::ErrorKind::WouldBlock => (),
++                Err(error) => panic!("peek failed: {error}"),
++            }
++            std::thread::yield_now();
++        }
++        assert_eq!(received, bytes, "the valid burst is fully queued");
++    }
++
++    fn binding_response(client: &mut std::net::TcpStream, transaction: [u8; 12]) {
++        let mut header = [0; 20];
++        client.read_exact(&mut header).unwrap();
++        let len = usize::from(u16::from_be_bytes([header[2], header[3]]));
++        let mut bytes = vec![0; 20 + len];
++        bytes[..20].copy_from_slice(&header);
++        client.read_exact(&mut bytes[20..]).unwrap();
++        let response = Message::parse(&bytes).unwrap();
++        assert_eq!((response.method, response.class), (BINDING, 2));
++        assert_eq!(response.transaction, transaction);
++    }
++
++    #[cfg(all(feature = "tls", feature = "connected-udp", unix))]
++    struct TlsFiles(std::path::PathBuf);
++
++    #[cfg(all(feature = "tls", feature = "connected-udp", unix))]
++    impl Drop for TlsFiles {
++        fn drop(&mut self) {
++            if let Err(error) = std::fs::remove_dir_all(&self.0) {
++                assert!(
++                    std::thread::panicking(),
++                    "TLS fixture cleanup failed: {error}"
++                );
++                eprintln!("TLS fixture cleanup failed: {error}");
++            }
++        }
++    }
++
++    #[cfg(all(feature = "tls", feature = "connected-udp", unix))]
++    fn tls_loopback() -> (
++        TlsFiles,
++        Server,
++        rustls::StreamOwned<rustls::ClientConnection, std::net::TcpStream>,
++        Token,
++    ) {
++        use std::{os::unix::fs::PermissionsExt, process::Stdio};
++
++        let mut random = [0; 8];
++        getrandom::fill(&mut random).unwrap();
++        let path = std::env::temp_dir().join(format!(
++            "spry-turn-tls-test-{}-{:016x}",
++            std::process::id(),
++            u64::from_ne_bytes(random)
++        ));
++        std::fs::create_dir(&path).unwrap();
++        let files = TlsFiles(path);
++        std::fs::set_permissions(&files.0, std::fs::Permissions::from_mode(0o700)).unwrap();
++        let cert = files.0.join("cert.pem");
++        let key = files.0.join("key.pem");
++        let mut child = std::process::Command::new("openssl")
++            .args([
++                "req",
++                "-x509",
++                "-newkey",
++                "rsa:2048",
++                "-nodes",
++                "-days",
++                "1",
++                "-subj",
++                "/CN=localhost",
++                "-addext",
++                "subjectAltName=DNS:localhost,IP:127.0.0.1",
++                "-addext",
++                "basicConstraints=critical,CA:FALSE",
++                "-addext",
++                "extendedKeyUsage=serverAuth",
++                "-keyout",
++            ])
++            .arg(&key)
++            .arg("-out")
++            .arg(&cert)
++            .stdout(Stdio::null())
++            .stderr(Stdio::null())
++            .spawn()
++            .unwrap();
++        let deadline = Instant::now() + Duration::from_secs(10);
++        let status = loop {
++            match child.try_wait() {
++                Ok(Some(status)) => break status,
++                Ok(None) if Instant::now() < deadline => {
++                    std::thread::sleep(Duration::from_millis(10));
++                }
++                result => {
++                    let _ = child.kill();
++                    let _ = child.wait();
++                    panic!("bounded test certificate generation failed: {result:?}");
++                }
++            }
++        };
++        assert!(status.success());
++        let certs =
++            rustls_pemfile::certs(&mut io::BufReader::new(std::fs::File::open(cert).unwrap()))
++                .collect::<Result<Vec<_>, _>>()
++                .unwrap();
++        let key =
++            rustls_pemfile::private_key(&mut io::BufReader::new(std::fs::File::open(key).unwrap()))
++                .unwrap()
++                .unwrap();
++        let mut roots = rustls::RootCertStore::empty();
++        for cert in &certs {
++            roots.add(cert.clone()).unwrap();
++        }
++        let tls = rustls::ServerConfig::builder()
++            .with_no_client_auth()
++            .with_single_cert(certs, key)
++            .unwrap();
++        let mut config = Config::local(vec![1; 32]);
++        config.listen.set_port(0);
++        config.tls = Some(("127.0.0.1:0".parse().unwrap(), Arc::new(tls)));
++        let mut server = Server::bind(config).unwrap();
++        let socket = std::net::TcpStream::connect(
++            server.tls_listener.as_ref().unwrap().local_addr().unwrap(),
++        )
++        .unwrap();
++        socket.set_nonblocking(true).unwrap();
++        socket.set_nodelay(true).unwrap();
++        let client = rustls::ClientConfig::builder()
++            .with_root_certificates(roots)
++            .with_no_client_auth();
++        let mut client = rustls::StreamOwned::new(
++            rustls::ClientConnection::new(Arc::new(client), "localhost".try_into().unwrap())
++                .unwrap(),
++            socket,
++        );
++        accept_stream(&mut server);
++        let token = *server.connections.keys().next().unwrap();
++        let deadline = Instant::now() + Duration::from_secs(3);
++        loop {
++            match client.conn.complete_io(&mut client.sock) {
++                Ok(_) => (),
++                Err(error) if error.kind() == io::ErrorKind::WouldBlock => (),
++                Err(error) => panic!("TLS test handshake failed: {error}"),
++            }
++            server.poll_once(Duration::ZERO).unwrap();
++            let tls = server.connections[&token].tls.as_ref().unwrap();
++            if !client.conn.is_handshaking()
++                && !client.conn.wants_write()
++                && !tls.is_handshaking()
++                && !tls.wants_write()
++                && server.pending_streams.is_empty()
++            {
++                break;
++            }
++            assert!(Instant::now() < deadline, "TLS handshake did not finish");
++        }
++        (files, server, client, token)
++    }
++
++    #[cfg(all(feature = "connected-udp", unix))]
++    fn backpressured_stream() -> (Server, std::net::TcpStream, Token, usize) {
++        let mut config = Config::local(vec![1; 32]);
++        config.listen.set_port(0);
++        let mut server = Server::bind(config).unwrap();
++        // Set the receive allowance before SYN negotiates the TCP window.
++        // Reducing it afterwards may leave room for the whole accepted tail.
++        let socket = socket2::Socket::new(
++            socket2::Domain::IPV4,
++            socket2::Type::STREAM,
++            Some(socket2::Protocol::TCP),
++        )
++        .unwrap();
++        socket.set_recv_buffer_size(4096).unwrap();
++        socket
++            .connect_timeout(&server.local_addr().unwrap().into(), Duration::from_secs(2))
++            .unwrap();
++        let client: std::net::TcpStream = socket.into();
++        client.set_nonblocking(true).unwrap();
++        accept_stream(&mut server);
++        let token = *server.connections.keys().next().unwrap();
++        socket2::SockRef::from(&server.connections[&token].socket)
++            .set_send_buffer_size(1024)
++            .unwrap();
++        let payload = [0x5a; 32_768];
++        let mut accepted = 0;
++        let mut blocked = false;
++        for _ in 0..1024 {
++            server.send_client(Client::Stream(token), &payload);
++            accepted += payload.len();
++            let conn = server
++                .connections
++                .get_mut(&token)
++                .expect("bounded accepted queue");
++            if conn.written != conn.output.len() {
++                // Interest or pending output alone is not evidence of kernel pressure.
++                match conn.socket.write(&[0x5a]) {
++                    Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
++                        blocked = true;
++                        break;
++                    }
++                    Ok(n) => accepted += n,
++                    result => panic!("kernel pressure probe: {result:?}"),
++                }
++            }
++        }
++        assert!(blocked, "fixture must observe actual kernel WouldBlock");
++        assert!(server.connections[&token].writable_interest);
++        (server, client, token, accepted)
++    }
++
++    #[cfg(all(feature = "connected-udp", unix))]
++    fn wait_for_stream_eof(server: &Server, token: Token) {
++        let deadline = Instant::now() + Duration::from_secs(2);
++        loop {
++            match server.connections[&token].socket.peek(&mut [0]) {
++                Ok(0) => return,
++                Err(error) if error.kind() == io::ErrorKind::WouldBlock => (),
++                result => panic!("expected only TCP FIN, not new request data: {result:?}"),
++            }
++            assert!(Instant::now() < deadline, "peer FIN did not arrive");
++            std::thread::yield_now();
++        }
++    }
++
++    #[test]
++    #[cfg(all(feature = "tls", feature = "connected-udp", unix))]
++    fn delivery_tls_application_tail_resumes_after_ciphertext_capacity_returns() {
++        let (_files, mut server, mut client, token) = tls_loopback();
++        let conn = server.connections.get_mut(&token).unwrap();
++        socket2::SockRef::from(&conn.socket)
++            .set_send_buffer_size(1_048_576)
++            .unwrap();
++        let tls = conn.tls.as_mut().unwrap();
++        tls.set_buffer_limit(Some(4096));
++        let first = tls.writer().write(&[0x5a; 8192]).unwrap();
++        assert!(first > 0);
++        assert_eq!(tls.writer().write(&[0x5a]).unwrap(), 0);
++        assert!(tls.wants_write(), "TLS ciphertext fills its bounded buffer");
++        conn.queue(&[0x5a; 8192]).unwrap();
++        conn.update_interest(server.poll.registry(), token, true)
++            .unwrap();
++        assert!(!conn.queued);
++        let mut events = Events::with_capacity(16);
++        let deadline = Instant::now() + Duration::from_secs(2);
++        loop {
++            server
++                .poll
++                .poll(&mut events, Some(Duration::from_millis(10)))
++                .unwrap();
++            if events
++                .iter()
++                .any(|event| event.token() == token && event.is_writable())
++            {
++                break;
++            }
++            assert!(
++                Instant::now() < deadline,
++                "existing writable event was not observed"
++            );
++        }
++
++        // Consume the already-registered writable event before manual recovery.
++        // No new client input or readiness edge is supplied afterwards.
++        server.stream(token, &mut [0; MAX_PACKET + HEADROOM]);
++        let conn = &server.connections[&token];
++        assert!(
++            !conn.tls.as_ref().unwrap().wants_write(),
++            "socket drained TLS records"
++        );
++        eprintln!(
++            "tls_tail first={first} app_remaining={} write_interest={} queued={}",
++            conn.output.len() - conn.written,
++            conn.writable_interest,
++            conn.queued
++        );
++        assert!(
++            conn.output.is_empty(),
++            "freed TLS capacity must resume the accepted app tail"
++        );
++        assert!(!conn.writable_interest);
++        let mut received = 0;
++        let mut bytes = [0; 16_384];
++        let deadline = Instant::now() + Duration::from_secs(2);
++        while received < first + 8192 && Instant::now() < deadline {
++            match client.read(&mut bytes) {
++                Ok(n) => {
++                    assert!(n != 0);
++                    assert!(bytes[..n].iter().all(|byte| *byte == 0x5a));
++                    received += n;
++                }
++                Err(error) if error.kind() == io::ErrorKind::WouldBlock => (),
++                Err(error) => panic!("TLS tail read: {error}"),
++            }
++        }
++        assert_eq!(received, first + 8192);
++    }
++
++    #[test]
++    #[cfg(all(feature = "connected-udp", unix))]
++    fn delivery_eof_drains_the_accepted_prefix_after_real_backpressure() {
++        let (mut server, mut client, token, accepted) = backpressured_stream();
++        client.shutdown(std::net::Shutdown::Write).unwrap();
++        wait_for_stream_eof(&server, token);
++        server.stream(token, &mut [0; MAX_PACKET + HEADROOM]);
++        server.send_client(Client::Stream(token), b"not accepted after EOF");
++        let deadline = Instant::now() + Duration::from_secs(4);
++        let mut received = 0;
++        let mut eof = false;
++        let mut bytes = [0; 65_536];
++        while !eof && Instant::now() < deadline {
++            match client.read(&mut bytes) {
++                Ok(0) => eof = true,
++                Ok(n) => {
++                    assert!(bytes[..n].iter().all(|byte| *byte == 0x5a));
++                    received += n;
++                }
++                Err(error) if error.kind() == io::ErrorKind::WouldBlock => (),
++                Err(error) => panic!("accepted prefix drain: {error}"),
++            }
++            server.poll_once(Duration::from_millis(1)).unwrap();
++        }
++        assert!(eof);
++        assert_eq!(
++            received, accepted,
++            "EOF must retain blocked accepted output: all accepted bytes, no post-EOF admission"
++        );
++        assert!(!server.connections.contains_key(&token));
++    }
++
++    #[test]
++    #[cfg(all(feature = "connected-udp", unix))]
++    fn delivery_eof_drain_expires_without_writable_stimulus_or_a_busy_queue() {
++        let (mut server, client, token, _) = backpressured_stream();
++        client.shutdown(std::net::Shutdown::Write).unwrap();
++        wait_for_stream_eof(&server, token);
++        let began = Instant::now();
++        server.stream(token, &mut [0; MAX_PACKET + HEADROOM]);
++        assert!(
++            server.connections.contains_key(&token),
++            "blocked EOF enters bounded drain"
++        );
++        assert!(server.connections[&token].written < server.connections[&token].output.len());
++        assert!(server.pending_streams.is_empty());
++        eprintln!(
++            "eof_deadline retained_app={} no_writable_stimulus=true absolute_ms={}",
++            server.connections[&token].output.len() - server.connections[&token].written,
++            STREAM_DRAIN_TIMEOUT.as_millis()
++        );
++        // A transient WouldBlock can later drain into unread kernel buffers.
++        // Remove writable events to isolate the fixed deadline from that race.
++        server
++            .poll
++            .registry()
++            .deregister(&mut server.connections.get_mut(&token).unwrap().socket)
++            .unwrap();
++        server
++            .poll
++            .poll(&mut Events::with_capacity(16), Some(Duration::ZERO))
++            .unwrap();
++        let mut polls = 0;
++        while server.connections.contains_key(&token) && began.elapsed() < Duration::from_secs(4) {
++            assert!(
++                server.pending_streams.is_empty(),
++                "kernel pressure must wait for readiness/deadline"
++            );
++            server.poll_once(Duration::from_secs(1)).unwrap();
++            polls += 1;
++        }
++        assert!(!server.connections.contains_key(&token));
++        assert!(began.elapsed() >= Duration::from_secs(1));
++        assert!(began.elapsed() < Duration::from_secs(3));
++        assert!(
++            polls < 16,
++            "read EOF must not remain a hot readable continuation"
++        );
++    }
++
++    #[test]
++    fn delivery_expired_queued_streams_retire_before_one_fifo_prune() {
++        let mut config = Config::local(vec![1; 32]);
++        config.listen.set_port(0);
++        config.max_connections = 17;
++        let mut server = Server::bind(config).unwrap();
++        let mut clients = Vec::new();
++        let mut tokens = Vec::new();
++        let indication = Builder::new(BINDING, 1, [0; 12]).finish(None);
++        for _ in 0..16 {
++            let client = std::net::TcpStream::connect(server.local_addr().unwrap()).unwrap();
++            accept_stream(&mut server);
++            let token = *server.connections.keys().max_by_key(|t| t.0).unwrap();
++            tokens.push(token);
++            clients.push(client);
++        }
++        let mut healthy = std::net::TcpStream::connect(server.local_addr().unwrap()).unwrap();
++        healthy
++            .set_read_timeout(Some(Duration::from_secs(2)))
++            .unwrap();
++        accept_stream(&mut server);
++        let healthy_token = *server.connections.keys().max_by_key(|t| t.0).unwrap();
++        for (client, token) in clients.iter_mut().zip(&tokens) {
++            client
++                .write_all(&indication.repeat(STREAM_FRAMES_PER_TURN + 1))
++                .unwrap();
++            wait_for_queued(
++                &server,
++                *token,
++                indication.len() * (STREAM_FRAMES_PER_TURN + 1),
++            );
++            server.stream(*token, &mut [0; MAX_PACKET + HEADROOM]);
++            assert!(server.connections[token].queued);
++            server.connections.get_mut(token).unwrap().created =
++                Instant::now() - Duration::from_secs(16);
++        }
++        let request = Builder::new(BINDING, 0, [99; 12]).finish(None);
++        healthy.write_all(&request).unwrap();
++        wait_for_queued(&server, healthy_token, request.len());
++        server.queue_stream(healthy_token);
++        let queued = server.pending_streams.len();
++        assert_eq!(queued, tokens.len() + 1);
++        server.sweep();
++        assert_eq!(server.connections.len(), 1);
++        assert_eq!(
++            server.pending_streams.len(),
++            queued,
++            "batch expiry retires membership without one FIFO scan per closed stream"
++        );
++        server.poll_once(Duration::ZERO).unwrap();
++        binding_response(&mut healthy, [99; 12]);
++        assert!(server.pending_streams.is_empty());
++        assert!(server.connections.contains_key(&healthy_token));
++    }
++
++    #[test]
++    fn delivery_write_limits_cover_vectored_bytes_interruptions_and_real_block() {
++        #[derive(Default)]
++        struct Writer {
++            calls: usize,
++            bytes: Vec<u8>,
++            error: Option<io::ErrorKind>,
++        }
++        impl Write for Writer {
++            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
++                self.calls += 1;
++                if let Some(error) = self.error {
++                    return Err(error.into());
++                }
++                self.bytes.extend_from_slice(bytes);
++                Ok(bytes.len())
++            }
++            fn write_vectored(&mut self, bytes: &[io::IoSlice<'_>]) -> io::Result<usize> {
++                self.calls += 1;
++                let mut n = 0;
++                for slice in bytes {
++                    self.bytes.extend_from_slice(slice);
++                    n += slice.len();
++                }
++                Ok(n)
++            }
++            fn flush(&mut self) -> io::Result<()> {
++                Ok(())
++            }
++        }
++        let mut writer = Writer::default();
++        let mut budget = WriteBudget {
++            attempts: 2,
++            bytes: 5,
++            limited: false,
++        };
++        let slices = [io::IoSlice::new(b"abc"), io::IoSlice::new(b"def")];
++        assert_eq!(
++            LimitedWriter {
++                socket: &mut writer,
++                budget: &mut budget
++            }
++            .write_vectored(&slices)
++            .unwrap(),
++            5
++        );
++        assert_eq!(writer.bytes, b"abcde");
++        assert_eq!(
++            LimitedWriter {
++                socket: &mut writer,
++                budget: &mut budget
++            }
++            .write(b"x")
++            .unwrap_err()
++            .kind(),
++            io::ErrorKind::WouldBlock
++        );
++        assert_eq!(budget.blocked(), StreamFlush::Yielded);
++        assert_eq!(writer.calls, 1);
++
++        let mut writer = Writer {
++            error: Some(io::ErrorKind::Interrupted),
++            ..Writer::default()
++        };
++        let mut budget = WriteBudget::new();
++        loop {
++            let error = LimitedWriter {
++                socket: &mut writer,
++                budget: &mut budget,
++            }
++            .write(b"x")
++            .unwrap_err();
++            if error.kind() == io::ErrorKind::WouldBlock {
++                break;
++            }
++            assert_eq!(error.kind(), io::ErrorKind::Interrupted);
++        }
++        assert_eq!(writer.calls, STREAM_WRITES_PER_FLUSH);
++        assert_eq!(budget.blocked(), StreamFlush::Yielded);
++
++        let mut writer = Writer {
++            error: Some(io::ErrorKind::WouldBlock),
++            ..Writer::default()
++        };
++        let mut budget = WriteBudget {
++            attempts: 1,
++            bytes: 1,
++            limited: false,
++        };
++        assert_eq!(
++            LimitedWriter {
++                socket: &mut writer,
++                budget: &mut budget
++            }
++            .write(b"x")
++            .unwrap_err()
++            .kind(),
++            io::ErrorKind::WouldBlock
++        );
++        assert_eq!(budget.attempts, 0);
++        assert_eq!(
++            budget.blocked(),
++            StreamFlush::Blocked,
++            "the last permitted syscall blocked; exhaustion did not cause it"
++        );
++    }
++
++    #[test]
++    fn delivery_eof_deadlines_recompute_once_after_batch_retirement() {
++        let mut config = Config::local(vec![1; 32]);
++        config.listen.set_port(0);
++        let mut server = Server::bind(config).unwrap();
++        let mut clients = Vec::new();
++        let mut tokens = Vec::new();
++        for _ in 0..3 {
++            clients.push(std::net::TcpStream::connect(server.local_addr().unwrap()).unwrap());
++            accept_stream(&mut server);
++            tokens.push(
++                *server
++                    .connections
++                    .keys()
++                    .max_by_key(|token| token.0)
++                    .unwrap(),
++            );
++        }
++        let now = Instant::now();
++        let deadlines = [
++            now + Duration::from_millis(50),
++            now + Duration::from_millis(100),
++            now + Duration::from_millis(150),
++        ];
++        for (token, deadline) in tokens.iter().zip(deadlines) {
++            let conn = server.connections.get_mut(token).unwrap();
++            conn.drain_until = Some(deadline);
++            conn.queue(b"accepted").unwrap();
++            server.poll.registry().deregister(&mut conn.socket).unwrap();
++        }
++        server.drain_at = Some(deadlines[0]);
++        server.close(tokens[0]);
++        server.close(tokens[1]);
++        assert!(server.drain_at_dirty);
++        assert_eq!(
++            server.drain_at,
++            Some(deadlines[0]),
++            "retirement does not rescan per close"
++        );
++        server.refresh_drain_at();
++        assert!(!server.drain_at_dirty);
++        assert_eq!(server.drain_at, Some(deadlines[2]));
++        assert!(server.pending_streams.is_empty());
++        server
++            .poll
++            .poll(&mut Events::with_capacity(16), Some(Duration::ZERO))
++            .unwrap();
++        server.sweep_at = now + Duration::from_secs(60);
++        let began = Instant::now();
++        server.poll_once(Duration::from_secs(5)).unwrap();
++        assert!(
++            server.connections.is_empty(),
++            "surviving cached deadline expires without readiness"
++        );
++        assert!(began.elapsed() < Duration::from_secs(1));
++        assert!(server.drain_at.is_none() && !server.drain_at_dirty);
++    }
++
++    #[test]
++    #[cfg(all(feature = "tls", feature = "connected-udp", unix))]
++    fn delivery_tls_write_budget_queues_without_a_fresh_native_event() {
++        let (_files, mut server, mut client, token) = tls_loopback();
++        socket2::SockRef::from(&client.sock)
++            .set_recv_buffer_size(1_048_576)
++            .unwrap();
++        let conn = server.connections.get_mut(&token).unwrap();
++        socket2::SockRef::from(&conn.socket)
++            .set_send_buffer_size(1_048_576)
++            .unwrap();
++        conn.tls.as_mut().unwrap().set_buffer_limit(Some(1024));
++        conn.queue(&vec![0x5a; MAX_QUEUE]).unwrap();
++        conn.update_interest(server.poll.registry(), token, true)
++            .unwrap();
++        server.stream(token, &mut [0; MAX_PACKET + HEADROOM]);
++        assert!(
++            server.connections[&token].queued,
++            "write budget explicitly yields"
++        );
++        assert!(server.connections[&token].writable_interest);
++        // Route every native event to an absent token. Only the explicit
++        // continuation can resume this live connection until its final drain.
++        server
++            .poll
++            .registry()
++            .reregister(
++                &mut server.connections.get_mut(&token).unwrap().socket,
++                Token(usize::MAX),
++                Interest::READABLE | Interest::WRITABLE,
++            )
++            .unwrap();
++        let mut received = 0;
++        let mut bytes = [0; 65_536];
++        let deadline = Instant::now() + Duration::from_secs(2);
++        while received < MAX_QUEUE && Instant::now() < deadline {
++            match client.read(&mut bytes) {
++                Ok(n) => {
++                    assert!(n != 0);
++                    assert!(bytes[..n].iter().all(|byte| *byte == 0x5a));
++                    received += n;
++                }
++                Err(error) if error.kind() == io::ErrorKind::WouldBlock => (),
++                Err(error) => panic!("TLS continuation read: {error}"),
++            }
++            server.poll_once(Duration::ZERO).unwrap();
++        }
++        assert_eq!(received, MAX_QUEUE);
++        let conn = &server.connections[&token];
++        assert!(conn.output.is_empty() && !conn.tls.as_ref().unwrap().wants_write());
++        assert!(!conn.queued && !conn.writable_interest);
++    }
++
++    #[test]
++    #[cfg(all(feature = "connected-udp", unix))]
++    fn delivery_eof_progress_keeps_its_deadline_and_retires_the_allocation() {
++        let (mut server, mut client, token, _) = backpressured_stream();
++        let peer = server.connections[&token].peer;
++        let mut request = Builder::new(ALLOCATE, 0, [12; 12]);
++        request.attr(TRANSPORT, &[17, 0, 0, 0]);
++        let request = request.finish(None);
++        server.allocate(
++            Client::Stream(token),
++            peer,
++            &Message::parse(&request).unwrap(),
++            format!("{}:delivery-fixture", unix_time() + 600),
++            [7; 16],
++        );
++        assert!(server.allocations.contains_key(&Client::Stream(token)));
++        let relay = server.allocations[&Client::Stream(token)].token;
++        client.shutdown(std::net::Shutdown::Write).unwrap();
++        wait_for_stream_eof(&server, token);
++        server.stream(token, &mut [0; MAX_PACKET + HEADROOM]);
++        assert!(!server.allocations.contains_key(&Client::Stream(token)));
++        assert!(server.relays.get(&relay).is_none());
++        let conn = &server.connections[&token];
++        let deadline = conn.drain_until.unwrap();
++        assert!(!conn.readable_interest);
++        let before = conn.output.len() - conn.written;
++        let mut bytes = [0; 1024];
++        assert!(client.read(&mut bytes).unwrap() > 0);
++        let until = Instant::now() + Duration::from_millis(500);
++        let mut progressed = false;
++        while Instant::now() < until {
++            server.poll_once(Duration::from_millis(1)).unwrap();
++            let conn = server
++                .connections
++                .get(&token)
++                .expect("large accepted tail remains");
++            assert_eq!(conn.drain_until, Some(deadline));
++            if conn.output.len() - conn.written < before {
++                progressed = true;
++                break;
++            }
++        }
++        assert!(progressed, "observe a real write after the EOF transition");
++        assert_eq!(server.connections[&token].drain_until, Some(deadline));
++    }
++
++    #[test]
++    #[cfg(all(feature = "tls", feature = "connected-udp", unix))]
++    fn delivery_tls_eof_drains_after_real_ciphertext_backpressure() {
++        let (_files, mut server, mut client, token) = tls_loopback();
++        socket2::SockRef::from(&client.sock)
++            .set_recv_buffer_size(4096)
++            .unwrap();
++        socket2::SockRef::from(&server.connections[&token].socket)
++            .set_send_buffer_size(1024)
++            .unwrap();
++        let mut accepted = 0;
++        let mut blocked = false;
++        for _ in 0..1024 {
++            let conn = server.connections.get_mut(&token).unwrap();
++            conn.queue(&[0x5a; 4096]).unwrap();
++            accepted += 4096;
++            for _ in 0..32 {
++                let result = conn.flush().unwrap();
++                if result == StreamFlush::Drained {
++                    break;
++                }
++                if result == StreamFlush::Blocked {
++                    let tls = conn.tls.as_mut().unwrap();
++                    assert!(tls.wants_write());
++                    match tls.write_tls(&mut conn.socket) {
++                        Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
++                            blocked = true;
++                            break;
++                        }
++                        Ok(_) => (),
++                        Err(error) => panic!("TLS kernel pressure: {error}"),
++                    }
++                }
++            }
++            if blocked {
++                break;
++            }
++        }
++        assert!(blocked, "observe ciphertext syscall WouldBlock before EOF");
++        client.sock.shutdown(std::net::Shutdown::Write).unwrap();
++        wait_for_stream_eof(&server, token);
++        server.stream(token, &mut [0; MAX_PACKET + HEADROOM]);
++        assert!(server.connections.contains_key(&token));
++        let mut received = 0;
++        let mut eof = false;
++        let mut bytes = [0; 65_536];
++        let deadline = Instant::now() + Duration::from_secs(3);
++        while !eof && Instant::now() < deadline {
++            match client.read(&mut bytes) {
++                Ok(0) => eof = true,
++                Ok(n) => {
++                    assert!(bytes[..n].iter().all(|byte| *byte == 0x5a));
++                    received += n;
++                }
++                Err(error) if error.kind() == io::ErrorKind::WouldBlock => (),
++                Err(error) => panic!("TLS accepted prefix: {error}"),
++            }
++            server.poll_once(Duration::from_millis(1)).unwrap();
++        }
++        assert!(eof);
++        assert_eq!(received, accepted);
++        assert!(!server.connections.contains_key(&token));
+     }
+ 
+     #[test]
