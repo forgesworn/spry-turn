@@ -28,6 +28,8 @@
   The fixture gains twenty-five cases; existing cases are unchanged. Rust
   callers of `advert::open` and `advert::open_parts` pass the new `privacy`
   argument, and `Advert` gains a `privacy` field.
+- Resume queued application bytes after TLS ciphertext drains, without waiting
+  for another writable event. Queue limits and the control reserve are unchanged.
 - Configure the existing Linux verify job on `ubuntu-24.04` to build both
   TLS-enabled standalone executables and upload a three-day CI artefact after
   its checks pass. Include exact committed source, dependency licences,

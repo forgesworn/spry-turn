@@ -2549,6 +2549,22 @@ Canonical source: [docs/verification.md](https://github.com/forgesworn/spry-turn
 
 # Standalone verification
 
+## TLS flush regression
+
+The unit test `tls_flush_retries_application_after_ciphertext_drain` uses a real
+verified localhost TLS handshake. It fills a small fixture-only rustls buffer,
+queues application bytes and consumes an already-armed writable event, then
+requires both queues to drain and read-only interest to resume without another
+payload. Production queue limits are unchanged.
+
+Run it with `cargo test --locked --lib --features tls
+tls_flush_retries_application_after_ciphertext_drain` on Unix with the default
+features. The existing OpenSSL test prerequisite generates temporary SAN/v3
+localhost certificates and keys in an owned private directory; the test bounds
+generation and removes the child process and files. No fixed private key or
+certificate is committed. This regression does not establish the cause of a
+particular network or playback failure.
+
 ## v0.2.1 qualification
 
 The stream-readiness optimisation passed ten all-feature Rust unit tests,
@@ -3158,6 +3174,8 @@ Canonical source: [CHANGELOG.md](https://github.com/forgesworn/spry-turn/blob/ma
   The fixture gains twenty-five cases; existing cases are unchanged. Rust
   callers of `advert::open` and `advert::open_parts` pass the new `privacy`
   argument, and `Advert` gains a `privacy` field.
+- Resume queued application bytes after TLS ciphertext drains, without waiting
+  for another writable event. Queue limits and the control reserve are unchanged.
 - Configure the existing Linux verify job on `ubuntu-24.04` to build both
   TLS-enabled standalone executables and upload a three-day CI artefact after
   its checks pass. Include exact committed source, dependency licences,

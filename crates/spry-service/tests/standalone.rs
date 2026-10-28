@@ -326,12 +326,21 @@ mod profiles {
         binary
     }
 
+    /// Held from reserving a profile's ports until its service reports ready.
+    /// Tests run on parallel threads; without it one thread could release its
+    /// reservation to spawn a service while another reserves the same ports,
+    /// and the service then fails to bind ("Address already in use").
+    static STARTING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     impl Profile {
         fn start(block_turn: bool, private: bool) -> Self {
+            let _starting = STARTING
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             let binary = real_relay();
             // Stay outside normal host ephemeral ranges, reserve every socket
             // together, and never share fixed ports with another test process.
-            let (base, tcp, udp) = (0..64)
+            let (base, tcp, mut udp) = (0..64)
                 .find_map(|_| {
                     let mut random = [0; 2];
                     getrandom::fill(&mut random).unwrap();
@@ -396,9 +405,11 @@ mod profiles {
                 use std::os::unix::process::CommandExt;
                 command.process_group(0);
             }
+            // Keep the reserved TURN socket when the test blocks TURN, rather
+            // than releasing it and binding again.
+            let blocked = block_turn.then(|| udp.remove(1));
             drop(tcp);
             drop(udp);
-            let blocked = block_turn.then(|| UdpSocket::bind(turn).unwrap());
             let child = match command.spawn() {
                 Ok(child) => child,
                 Err(error) => {
