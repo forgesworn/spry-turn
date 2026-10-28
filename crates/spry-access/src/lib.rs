@@ -36,6 +36,25 @@ pub const PUBLIC_TTL: u64 = 3600;
 pub const PUBLIC_PER_MINUTE: u16 = 32;
 pub const PUBLIC_PER_SOURCE: u16 = 6;
 pub const PUBLIC_SOURCES: usize = 256;
+/// Registered signing keys one room grant may hold.
+pub const MAX_MEMBERS: usize = 64;
+/// Registered signing keys across every grant on the node.
+pub const MAX_NODE_MEMBERS: usize = 1024;
+/// Vouched keys one grant may hold at once.
+pub const MAX_VOUCHED: usize = 8;
+/// A vouched key lapses this long after the vouch and is never renewed by use.
+pub const VOUCH_TTL: u64 = 24 * 60 * 60;
+/// Largest state file `restore` reads, and so the largest `save` writes.
+pub const MAX_STATE: usize = 131_072;
+const MAX_REGISTRATION: usize = 32;
+const MAX_VOUCH: usize = 4;
+const SPONSOR_VOUCHES: usize = 8;
+const SPONSORS: usize = 256;
+const REVISION_WINDOW: u64 = 90;
+const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
+const EXPIRED: &str = "Call access has expired.";
+const BUSY: &str = "Spry is busy. Try again shortly.";
+const DEVICE_LIMIT: &str = "This call has reached its device limit.";
 pub type Result<T> = std::result::Result<T, Refused>;
 #[derive(Debug)]
 pub struct Refused(pub u16, pub &'static str);
@@ -93,6 +112,22 @@ fn is_key(value: &str) -> bool {
             .bytes()
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
+/// A lowercase x-only public key that is a real curve point.
+fn is_point(value: &str) -> bool {
+    is_key(value)
+        && unhex(value)
+            .ok()
+            .and_then(|bytes| <[u8; 32]>::try_from(bytes).ok())
+            .is_some_and(|bytes| XOnlyPublicKey::from_byte_array(bytes).is_ok())
+}
+/// Equality whose time does not depend on where two equal-length values differ.
+fn same(a: &str, b: &str) -> bool {
+    a.len() == b.len()
+        && a.bytes()
+            .zip(b.bytes())
+            .fold(0_u8, |acc, (x, y)| acc | (x ^ y))
+            == 0
+}
 fn is_token(value: &str) -> bool {
     value.len() == 43
         && value
@@ -108,6 +143,59 @@ fn text<'a>(body: &'a Value, key: &str) -> Result<&'a str> {
     body.get(key)
         .and_then(Value::as_str)
         .ok_or(Refused(400, "Invalid request."))
+}
+/// A version 1 body holding no field outside `allowed`.
+fn shape(body: &Value, allowed: &[&str]) -> Result<()> {
+    need(
+        body.get("v") == Some(&json!(1))
+            && body
+                .as_object()
+                .is_some_and(|fields| fields.keys().all(|name| allowed.contains(&name.as_str()))),
+        400,
+        "Invalid request.",
+    )
+}
+/// An optional list of at most `max` distinct signing keys.
+fn keys(body: &Value, name: &str, max: usize) -> Result<Vec<String>> {
+    let Some(value) = body.get(name) else {
+        return Ok(Vec::new());
+    };
+    let list = value.as_array().ok_or(Refused(400, "Invalid request."))?;
+    need(list.len() <= max, 400, "Invalid request.")?;
+    let mut found: Vec<String> = Vec::with_capacity(list.len());
+    for item in list {
+        let key = item.as_str().ok_or(Refused(400, "Invalid request."))?;
+        need(
+            is_point(key) && !found.iter().any(|seen| seen == key),
+            400,
+            "Invalid request.",
+        )?;
+        found.push(key.to_owned());
+    }
+    Ok(found)
+}
+
+/// When a room grant refuses signing keys its registrar has not listed.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Seal {
+    /// A grant is enforced once its registrar asks for it to be sealed.
+    #[default]
+    Auto,
+    /// Every grant is enforced, including grants created before the switch.
+    Required,
+    /// Registrations are stored but never enforced. For diagnosis and rollback.
+    Off,
+}
+impl Seal {
+    /// Exactly `auto`, `required` or `off`.
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "auto" => Some(Self::Auto),
+            "required" => Some(Self::Required),
+            "off" => Some(Self::Off),
+            _ => None,
+        }
+    }
 }
 
 pub struct Config {
@@ -127,6 +215,8 @@ pub struct Config {
     pub readiness: &'static str,
     /// Public mode. Off unless the host explicitly turns it on.
     pub public: bool,
+    /// Room-grant sealing. `Auto` unless the host chooses otherwise.
+    pub seal: Seal,
 }
 impl Config {
     pub fn new(
@@ -198,6 +288,7 @@ impl Config {
             ready: false,
             readiness: "Your node needs public access before Spry can connect calls.",
             public: false,
+            seal: Seal::Auto,
         })
     }
 }
@@ -228,6 +319,36 @@ struct Grant {
     expires: u64,
     #[serde(skip)]
     devices: HashMap<String, u64>,
+    /// Set once by the registrar and never cleared.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    sealed: bool,
+    /// Registered signing keys: key, lease end and whether it was vouched.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    members: Vec<(String, u64, bool)>,
+    /// Last redemption by each member since start, in memory only.
+    #[serde(skip)]
+    used: HashMap<String, u64>,
+}
+impl Grant {
+    fn member(&self, key: &str) -> Option<&(String, u64, bool)> {
+        self.members.iter().find(|member| member.0 == key)
+    }
+    /// An unexpired entry, confirmed or vouched.
+    fn admits(&self, key: &str, now: u64) -> bool {
+        self.member(key).is_some_and(|member| member.1 > now)
+    }
+    /// An unexpired entry the registrar added. Only these may vouch.
+    fn confirmed(&self, key: &str, now: u64) -> bool {
+        self.member(key)
+            .is_some_and(|member| !member.2 && member.1 > now)
+    }
+    fn vouched(&self) -> usize {
+        self.members.iter().filter(|member| member.2).count()
+    }
+    fn forget(&mut self, key: &str) {
+        self.members.retain(|member| member.0 != key);
+        self.used.remove(key);
+    }
 }
 pub struct Authority {
     pub config: Config,
@@ -245,6 +366,10 @@ pub struct Authority {
     // limiter that paired apps and owners rely on.
     public_rates: HashMap<String, (u64, u16)>,
     public_window: (u64, u16),
+    // The newest registration revision per grant, held for 90 seconds.
+    revisions: HashMap<String, (u64, u64)>,
+    // Keys each sponsor vouched for per grant: window end and count.
+    vouches: HashMap<(String, String), (u64, usize)>,
 }
 impl Authority {
     pub fn new(config: Config) -> Self {
@@ -258,6 +383,8 @@ impl Authority {
             key_rates: HashMap::new(),
             public_rates: HashMap::new(),
             public_window: (0, 0),
+            revisions: HashMap::new(),
+            vouches: HashMap::new(),
         }
     }
 
@@ -274,6 +401,18 @@ impl Authority {
 
     pub fn has_pairing(&self, pairing: &str) -> bool {
         self.pairs.contains_key(pairing)
+    }
+
+    /// Whether a grant refuses signing keys it does not list.
+    fn enforced(&self, grant: &Grant) -> bool {
+        match self.config.seal {
+            Seal::Auto => grant.sealed,
+            Seal::Required => true,
+            Seal::Off => false,
+        }
+    }
+    fn member_total(&self) -> usize {
+        self.grants.values().map(|grant| grant.members.len()).sum()
     }
 
     /// Transport configuration is an owner action. The adapter validates its URI profile.
@@ -311,7 +450,7 @@ impl Authority {
             Err(_) => return Err(Refused(503, "Pairings could not be read.")),
         };
         need(
-            info.is_file() && !info.file_type().is_symlink() && info.len() <= 131_072,
+            info.is_file() && !info.file_type().is_symlink() && info.len() <= MAX_STATE as u64,
             503,
             "Pairings could not be read.",
         )?;
@@ -339,6 +478,15 @@ impl Authority {
                     .grants
                     .iter()
                     .all(|g| is_token(&g.pair) && is_key(&g.scope) && is_token(&g.salt))
+                && state.grants.iter().all(|g| {
+                    g.members.len() <= MAX_MEMBERS
+                        && g.vouched() <= MAX_VOUCHED
+                        && g.members.iter().enumerate().all(|(index, member)| {
+                            is_point(&member.0)
+                                && !g.members[..index].iter().any(|other| other.0 == member.0)
+                        })
+                })
+                && state.grants.iter().map(|g| g.members.len()).sum::<usize>() <= MAX_NODE_MEMBERS
                 && state
                     .pairs
                     .iter()
@@ -368,6 +516,8 @@ impl Authority {
             transport_endpoint: self.config.transport_endpoint.clone(),
         })
         .map_err(|_| Refused(503, "Pairing could not be saved."))?;
+        // Never write a file that `restore` would refuse on the next start.
+        need(bytes.len() <= MAX_STATE, 503, "Pairing could not be saved.")?;
         write_private(path, &bytes).map_err(|_| Refused(503, "Pairing could not be saved."))
     }
     pub fn sweep(&mut self, now: u64) {
@@ -376,7 +526,17 @@ impl Authority {
             .retain(|_, grant| grant.expires > now && self.pairs.contains_key(&grant.pair));
         for grant in self.grants.values_mut() {
             grant.devices.retain(|_, until| *until > now);
+            grant.members.retain(|member| member.1 > now);
+            let members = &grant.members;
+            grant
+                .used
+                .retain(|key, _| members.iter().any(|member| member.0 == *key));
         }
+        let grants = &self.grants;
+        self.revisions
+            .retain(|id, (_, until)| *until > now && grants.contains_key(id));
+        self.vouches
+            .retain(|(id, _), (until, _)| *until > now && grants.contains_key(id));
         self.replays.retain(|_, until| *until >= now);
         self.rates.retain(|_, (until, _)| *until > now);
         self.key_rates.retain(|_, (until, _)| *until > now);
@@ -608,10 +768,16 @@ impl Authority {
                 };
                 need(authorised, 403, "Approval required.")?;
                 let old = self.pairs.remove(id);
+                // Its grants, and their registered keys, leave the saved
+                // state in the same write.
+                let grants = std::mem::take(&mut self.grants);
+                let (dropped, kept) = grants.into_iter().partition(|(_, g)| g.pair == id);
+                self.grants = kept;
                 if self.save().is_err() {
                     if let Some(old) = old {
                         self.pairs.insert(id.into(), old);
                     }
+                    self.grants.extend::<HashMap<String, Grant>>(dropped);
                     return Err(Refused(503, "The pairing could not be removed."));
                 }
                 self.sweep(now);
@@ -666,6 +832,9 @@ impl Authority {
                         token,
                         expires: now + GRANT_TTL,
                         devices: HashMap::new(),
+                        sealed: false,
+                        members: Vec::new(),
+                        used: HashMap::new(),
                     },
                 );
                 if self.save().is_err() {
@@ -697,37 +866,60 @@ impl Authority {
                 }
                 Ok(json!({"removed":true}))
             }
+            "/v1/grants/devices" => self.register(key, body, now),
+            "/v1/grants/vouch" => self.vouch(key, body, now),
             "/v1/credentials" => {
                 need(self.config.ready, 503, self.config.readiness)?;
                 let token = text(body, "grant")?;
-                need(is_token(token), 403, "Call access has expired.")?;
+                need(is_token(token), 403, EXPIRED)?;
                 let id = hash(token);
-                let grant = self
+                let enforced = self
                     .grants
-                    .get_mut(&id)
-                    .ok_or(Refused(403, "Call access has expired."))?;
+                    .get(&id)
+                    .is_some_and(|grant| self.enforced(grant));
+                let grant = self.grants.get_mut(&id).ok_or(Refused(403, EXPIRED))?;
                 need(
                     grant.expires > now && self.pairs.contains_key(&grant.pair),
                     403,
-                    "Call access has expired.",
+                    EXPIRED,
                 )?;
+                // Before the device limit, so an unlisted key on a sealed
+                // grant gets the expired refusal and takes no slot.
+                need(!enforced || grant.admits(key, now), 403, EXPIRED)?;
                 need(
                     grant.devices.contains_key(key) || grant.devices.len() < 32,
                     429,
-                    "This call has reached its device limit.",
+                    DEVICE_LIMIT,
                 )?;
                 grant.devices.insert(key.into(), now + 600);
                 let old = grant.expires;
                 if old - now < GRANT_TTL - 86400 {
                     grant.expires = now + GRANT_TTL;
                 }
+                // A confirmed entry renews like the grant, at most once a
+                // day; a vouched entry never does.
+                let mut old_lease = None;
+                if let Some(member) = grant.members.iter_mut().find(|member| member.0 == key) {
+                    if !member.2 && member.1 - now < GRANT_TTL - 86400 {
+                        old_lease = Some(member.1);
+                        member.1 = now + GRANT_TTL;
+                    }
+                    grant.used.insert(key.into(), now);
+                }
                 let access_expires = grant.expires;
                 let expires = (now + 300).min(access_expires);
-                if old != access_expires && self.save().is_err() {
-                    self.grants
+                if (old != access_expires || old_lease.is_some()) && self.save().is_err() {
+                    let grant = self
+                        .grants
                         .get_mut(&id)
-                        .ok_or(Refused(503, "Unavailable."))?
-                        .expires = old;
+                        .ok_or(Refused(503, "Unavailable."))?;
+                    grant.expires = old;
+                    if let (Some(lease), Some(member)) = (
+                        old_lease,
+                        grant.members.iter_mut().find(|member| member.0 == key),
+                    ) {
+                        member.1 = lease;
+                    }
                     return Err(Refused(503, "Call access could not be renewed."));
                 }
                 let mut mac = Hmac::<Sha256>::new_from_slice(&self.config.secret)
@@ -744,6 +936,175 @@ impl Authority {
             }
             _ => Err(Refused(404, "Not found.")),
         }
+    }
+
+    /// `/v1/grants/devices`: the owning pairing adds and removes registered
+    /// signing keys and may seal the grant. Changes apply all or nothing.
+    fn register(&mut self, key: &str, body: &Value, now: u64) -> Result<Value> {
+        shape(
+            body,
+            &["v", "pairing", "grant", "add", "remove", "seal", "revision"],
+        )?;
+        let pair = text(body, "pairing")?;
+        let token = text(body, "grant")?;
+        let revision = body
+            .get("revision")
+            .and_then(Value::as_u64)
+            .filter(|revision| *revision <= MAX_SAFE_INTEGER)
+            .ok_or(Refused(400, "Invalid request."))?;
+        let add = keys(body, "add", MAX_REGISTRATION)?;
+        let remove = keys(body, "remove", MAX_REGISTRATION)?;
+        need(
+            !add.iter().any(|key| remove.contains(key)),
+            400,
+            "Invalid request.",
+        )?;
+        let seal = match body.get("seal") {
+            None => false,
+            Some(Value::Bool(seal)) => *seal,
+            Some(_) => return Err(Refused(400, "Invalid request.")),
+        };
+        // The signer's authority first, so a stranger learns nothing about
+        // whether a token it holds is live.
+        need(
+            self.pairing_authorises(pair, key),
+            403,
+            "Approval required.",
+        )?;
+        need(is_token(token), 403, EXPIRED)?;
+        let id = hash(token);
+        let current = self
+            .grants
+            .get(&id)
+            .filter(|grant| grant.expires > now)
+            .ok_or(Refused(403, EXPIRED))?;
+        need(same(&current.pair, pair), 403, "Approval required.")?;
+        need(
+            self.revisions
+                .get(&id)
+                .is_none_or(|(held, _)| revision > *held),
+            409,
+            "Out of date. Try again.",
+        )?;
+        let mut next = current.clone();
+        for key in &remove {
+            next.forget(key);
+            // Frees its device slot at once; issued credentials still lapse
+            // on their own within five minutes.
+            next.devices.remove(key);
+        }
+        let lease = now + GRANT_TTL;
+        for key in &add {
+            if let Some(member) = next.members.iter_mut().find(|member| member.0 == *key) {
+                *member = (key.clone(), lease, false);
+                continue;
+            }
+            if next.members.len() >= MAX_MEMBERS {
+                // The confirmed entry used least recently, never one with a
+                // live device lease, a vouched one or one named here.
+                let victim = next
+                    .members
+                    .iter()
+                    .filter(|member| {
+                        !member.2
+                            && !add.contains(&member.0)
+                            && !next.devices.contains_key(&member.0)
+                    })
+                    .min_by(|a, b| {
+                        let used = |key: &String| next.used.get(key).copied().unwrap_or(0);
+                        used(&a.0).cmp(&used(&b.0)).then_with(|| a.0.cmp(&b.0))
+                    })
+                    .map(|member| member.0.clone())
+                    .ok_or(Refused(429, DEVICE_LIMIT))?;
+                next.forget(&victim);
+            }
+            next.members.push((key.clone(), lease, false));
+        }
+        need(
+            self.member_total() - current.members.len() + next.members.len() <= MAX_NODE_MEMBERS,
+            429,
+            "Spry is already helping too many calls.",
+        )?;
+        if seal {
+            next.sealed = true;
+        }
+        let old = self.grants.insert(id.clone(), next);
+        if self.save().is_err() {
+            if let Some(old) = old {
+                self.grants.insert(id, old);
+            }
+            return Err(Refused(503, "Call access could not be saved."));
+        }
+        self.revisions
+            .insert(id.clone(), (revision, now + REVISION_WINDOW));
+        let grant = &self.grants[&id];
+        Ok(
+            json!({"v":1,"sealed":grant.sealed,"enforced":self.enforced(grant),"devices":grant.members.len()}),
+        )
+    }
+
+    /// `/v1/grants/vouch`: a confirmed member admits a newcomer for a day.
+    /// Vouched keys cannot vouch, and nothing here evicts or renews.
+    fn vouch(&mut self, key: &str, body: &Value, now: u64) -> Result<Value> {
+        shape(body, &["v", "grant", "add"])?;
+        let token = text(body, "grant")?;
+        let add = keys(body, "add", MAX_VOUCH)?;
+        need(!add.is_empty(), 400, "Invalid request.")?;
+        need(is_token(token), 403, EXPIRED)?;
+        let id = hash(token);
+        let grant = self
+            .grants
+            .get(&id)
+            .filter(|grant| grant.expires > now && self.pairs.contains_key(&grant.pair))
+            .ok_or(Refused(403, EXPIRED))?;
+        // Indistinguishable from an expired grant to anyone else.
+        need(grant.confirmed(key, now), 403, EXPIRED)?;
+        let fresh: Vec<String> = add
+            .into_iter()
+            .filter(|key| grant.member(key).is_none())
+            .collect();
+        if fresh.is_empty() {
+            return Ok(json!({"v":1,"added":0}));
+        }
+        let sponsor = (id.clone(), hash(key));
+        let spent = self.vouches.get(&sponsor).map_or(0, |entry| entry.1);
+        need(
+            self.vouches.contains_key(&sponsor) || self.vouches.len() < SPONSORS,
+            429,
+            BUSY,
+        )?;
+        need(
+            spent + fresh.len() <= SPONSOR_VOUCHES && grant.vouched() + fresh.len() <= MAX_VOUCHED,
+            429,
+            BUSY,
+        )?;
+        need(
+            grant.members.len() + fresh.len() <= MAX_MEMBERS,
+            429,
+            DEVICE_LIMIT,
+        )?;
+        need(
+            self.member_total() + fresh.len() <= MAX_NODE_MEMBERS,
+            429,
+            "Spry is already helping too many calls.",
+        )?;
+        let grant = self
+            .grants
+            .get_mut(&id)
+            .ok_or(Refused(503, "Unavailable."))?;
+        let before = grant.members.len();
+        for key in &fresh {
+            grant.members.push((key.clone(), now + VOUCH_TTL, true));
+        }
+        if self.save().is_err() {
+            if let Some(grant) = self.grants.get_mut(&id) {
+                grant.members.truncate(before);
+            }
+            return Err(Refused(503, "Call access could not be saved."));
+        }
+        let entry = self.vouches.entry(sponsor).or_insert((now + VOUCH_TTL, 0));
+        entry.1 += fresh.len();
+        Ok(json!({"v":1,"added":fresh.len()}))
     }
 }
 

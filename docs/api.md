@@ -88,6 +88,64 @@ Parsing and integrity verification do not themselves grant a peer
 permission, allocate a relay or enforce the application's membership.
 For normal server use, let `Server` own the TURN state machine.
 
+## Room-grant paths
+
+Source: [crates/spry-access/src/lib.rs](../crates/spry-access/src/lib.rs).
+
+The `spry-node` service and `spry:` control channel pass these `POST`
+bodies to `Authority::handle` after the usual signed-request check, body
+limit and per-source and per-key rate limits. Every refusal is
+`{"error":"<message>"}` with the status shown.
+
+| Path | Signer | Body | Success |
+|---|---|---|---|
+| `/v1/grants` | Paired app | `{"pairing","scope"}` | `{"v":1,"endpoint","token","expiresAt"}`; one grant per pairing and scope, renewed in place |
+| `/v1/grants/remove` | Paired app | `{"pairing","grant"}` | `{"removed":true}`; drops the grant and its registered keys |
+| `/v1/grants/devices` | The pairing that owns the grant | `{"v":1,"pairing","grant","add":[...],"remove":[...],"seal":true,"revision":N}` | `{"v":1,"sealed":bool,"enforced":bool,"devices":N}` |
+| `/v1/grants/vouch` | A confirmed key on the grant | `{"v":1,"grant","add":[...]}` | `{"v":1,"added":N}` |
+| `/v1/credentials` | Any key, or a registered key when enforced | `{"grant"}` | TURN `urls`, `username`, `credential`, `expiresAt` (at most 5 minutes) and `accessExpiresAt` |
+
+`/v1/grants/devices` and `/v1/grants/vouch` refuse any field not shown and
+any `v` other than 1 (400 "Invalid request."). Keys are distinct lowercase
+64-hex x-only public keys that are valid curve points.
+
+- `/v1/grants/devices`: at most 32 keys in each of `add` and `remove`, no key
+  in both; `seal` optional; `revision` an integer up to 2^53 - 1 that must
+  exceed the last one accepted for the grant in the past 90 seconds (else
+  409 "Out of date. Try again."). A signer that does not hold the named
+  pairing, or a grant of another pairing, gets 403 "Approval required.";
+  an unknown or expired grant gets 403 "Call access has expired.". An added
+  key becomes a confirmed entry with a 30-day lease, replacing a vouched
+  entry for it. A removed key loses its entry and its device slot at once.
+  `seal: true` seals the grant for good; `false` never unseals. Changes apply
+  all or nothing.
+- `/v1/grants/vouch`: one to four keys. The signer must hold a confirmed,
+  unexpired entry, else 403 "Call access has expired.". A key already listed
+  is left as it is and not counted; any other gains a vouched entry that
+  lapses 24 hours later, is never renewed by use and cannot vouch. At most 8
+  vouched entries per grant at once and 8 vouches per signer per grant per
+  24 hours, else 429 "Spry is busy. Try again shortly.". A vouch never
+  evicts.
+- `/v1/credentials`: an enforced grant refuses a key without an unexpired
+  entry with 403 "Call access has expired.", the same refusal as an expired
+  grant, before counting it against the 32 concurrent device slots. A
+  confirmed entry's lease renews to 30 days on use once fewer than 29 days
+  remain.
+
+A grant is enforced when `Config::seal` is `Required`, or when it is `Auto`
+(the default) and the grant is sealed. `Off` stores registrations and
+vouches but never enforces them. `spry-node` reads this from
+`SPRY_ROOM_SEAL` (`auto`, `required` or `off`) once at startup.
+
+A grant holds at most 64 registered keys and the node at most 1024. Adding
+to a full grant evicts the confirmed entry with no live device slot that was
+used least recently since start; with none to evict it refuses with 429
+"This call has reached its device limit.". Over the node limit it refuses
+with 429 "Spry is already helping too many calls.". Registered keys persist
+in the state file as `"sealed":true` and `"members":[["<key>",<lease end>,
+<vouched>]]` on each grant; the file stays version 1 and within its 131072
+byte limit, and an older binary loads it with every grant unsealed.
+
 ## WASM build
 
 ```sh

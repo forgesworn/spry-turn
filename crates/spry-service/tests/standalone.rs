@@ -196,6 +196,9 @@ fn public_mode_refuses_the_private_node_profile_and_bad_settings_clearly() {
         ("SPRY_RELAY_PORTS", "3478:3479"),
         ("SPRY_BYTES_PER_SECOND", "0"),
         ("SPRY_BYTES_PER_SECOND", "18446744073709551616"),
+        ("SPRY_ROOM_SEAL", "yes"),
+        ("SPRY_ROOM_SEAL", ""),
+        ("SPRY_ROOM_SEAL", "Required"),
     ] {
         let refusal = refused_setup(&[(name, value)]);
         assert!(refusal.contains(name), "{refusal}");

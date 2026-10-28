@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+- Seal room grants: a paired app registers the signing keys that may redeem
+  its grant through `POST /v1/grants/devices` (add and remove with 30-day
+  leases, ordered by revision) and may seal the grant; a confirmed key may
+  vouch for up to four newcomers at a time through `POST /v1/grants/vouch`
+  (24-hour entries that cannot vouch, at most 8 per grant and per sponsor per
+  day). An enforced grant refuses unregistered keys at `/v1/credentials`
+  with the existing "Call access has expired." refusal. `SPRY_ROOM_SEAL`
+  (`auto` by default, `required` or `off`) chooses when grants are enforced;
+  any other value refuses startup. At most 64 registered keys per grant and
+  1024 per node. Registered keys persist in the version 1 state file within
+  its 128 KiB limit; an older binary still loads it, with every grant
+  unsealed. Both paths also work over the `spry:` control channel.
+- Removing a pairing now drops its grants from the saved state in the same
+  write, and a state write that would exceed the read limit is refused.
+
 ## 0.3.0 — 26 October 2026
 
 Public MIT prerelease. The native macOS ARM64 download includes the TLS-enabled
