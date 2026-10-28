@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Add `SPRY_MAX_ALLOCATIONS`, `SPRY_MAX_ALLOCATIONS_PER_USER` and
+  `SPRY_MAX_TCP_CONNECTIONS` to the `spry-node` standard profile so a small
+  host can lower the relay's caps. Defaults stay 32, 8 and 32, which are also
+  the maximums; invalid values, or a per-credential cap above the total,
+  refuse startup. The private-node profile and the public credential issuance
+  limits are unchanged.
+
 ## 0.3.0 — 26 October 2026
 
 Public MIT prerelease. The native macOS ARM64 download includes the TLS-enabled
