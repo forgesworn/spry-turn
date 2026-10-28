@@ -804,10 +804,9 @@ mod policy_tests {
             );
             assert!(server.allocations.contains_key(&key));
             let conn = &server.connections[&token];
-            assert_eq!(
-                (&conn.output, conn.written),
-                (&queued, written),
-                "drop cannot truncate or partly queue a frame"
+            assert!(
+                conn.output == queued && conn.written >= written,
+                "retry may flush old bytes, but drop cannot truncate or partly queue a new frame"
             );
             assert_eq!(server.stats.dropped_packets, 1);
             assert_eq!(
@@ -882,6 +881,186 @@ mod policy_tests {
             assert!(!server.allocations.contains_key(&key));
             assert_eq!(server.stats.dropped_packets, 1);
         }
+    }
+
+    #[cfg(all(feature = "connected-udp", unix))]
+    fn recovered_relay_packet(channel: Option<u16>) {
+        let mut config = Config::local(vec![1; 32]);
+        config.listen.set_port(0);
+        let mut server = Server::bind(config).unwrap();
+        let mut client = std::net::TcpStream::connect(server.local_addr().unwrap()).unwrap();
+        client.set_nonblocking(true).unwrap();
+        accept_stream(&mut server);
+        let token = *server.connections.keys().next().unwrap();
+        let key = Client::Stream(token);
+        socket2::SockRef::from(&server.connections[&token].socket)
+            .set_send_buffer_size(1024)
+            .unwrap();
+        let peer = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let peer_address = peer.local_addr().unwrap();
+        let relay_socket = UdpSocket::bind("127.0.0.1:0".parse().unwrap()).unwrap();
+        let address = relay_socket.local_addr().unwrap();
+        let relay_token = server.relays.reserve(key);
+        let expires = Instant::now() + Duration::from_secs(60);
+        server.allocations.insert(
+            key,
+            Allocation {
+                socket: relay_socket,
+                client_socket: None,
+                token: relay_token,
+                bound_address: address,
+                advertised_address: address,
+                username: "recovered-stream-fixture".into(),
+                transaction: [1; 12],
+                expires,
+                permissions: vec![Permission {
+                    ip: peer_address.ip(),
+                    expires,
+                }],
+                channels: channel
+                    .map(|number| Channel {
+                        number,
+                        peer: peer_address,
+                        expires,
+                    })
+                    .into_iter()
+                    .collect(),
+                bandwidth: Bucket::new(64 * 1024 * 1024, 128 * 1024 * 1024, Instant::now()),
+            },
+        );
+
+        // First reach genuine nonblocking socket backpressure, then fill
+        // only the existing bounded application queue, as a relay burst can.
+        let block = vec![0x5a; 32_768];
+        let mut expected_prefix = 0;
+        for _ in 0..1024 {
+            server.send_client(key, &block);
+            expected_prefix += block.len();
+            let conn = &server.connections[&token];
+            if conn.written < conn.output.len() {
+                break;
+            }
+        }
+        let conn = server.connections.get_mut(&token).unwrap();
+        let pending = conn.output.len() - conn.written;
+        assert!(pending != 0, "socket is genuinely backpressured");
+        let fill = MAX_QUEUE - STREAM_CONTROL_RESERVE - pending;
+        conn.queue(&vec![0x5a; fill]).unwrap();
+        expected_prefix += fill;
+        let queued = (conn.output.clone(), conn.written);
+        let kernel_prefix = expected_prefix - (MAX_QUEUE - STREAM_CONTROL_RESERVE);
+
+        // Recover kernel writability without servicing the server's stream
+        // handler: the next ready event may instead be this relay socket.
+        socket2::SockRef::from(&conn.socket)
+            .set_send_buffer_size(1_048_576)
+            .unwrap();
+        let mut scratch = vec![0; MAX_PACKET + HEADROOM];
+        let mut received = Vec::new();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while received.len() < kernel_prefix && Instant::now() < deadline {
+            match client.read(&mut scratch) {
+                Ok(0) => panic!("stream closed before writable recovery"),
+                Ok(n) => received.extend_from_slice(&scratch[..n]),
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => std::thread::yield_now(),
+                Err(e) => panic!("recovery read failed: {e}"),
+            }
+        }
+        assert_eq!(received.len(), kernel_prefix);
+        let mut events = Events::with_capacity(16);
+        let mut writable = false;
+        while !writable && Instant::now() < deadline {
+            server
+                .poll
+                .poll(&mut events, Some(Duration::from_millis(1)))
+                .unwrap();
+            writable = events
+                .iter()
+                .any(|event| event.token() == token && event.is_writable());
+        }
+        assert!(writable, "destination socket recovered write capacity");
+        let conn = &server.connections[&token];
+        assert_eq!((&conn.output, conn.written), (&queued.0, queued.1));
+        assert!(conn.writable_interest);
+
+        let payload = vec![0x7e; 2048];
+        peer.send_to(&payload, address).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            match server.allocations[&key].socket.peek_from(&mut scratch) {
+                Ok((n, from)) => {
+                    assert_eq!((n, from), (payload.len(), peer_address));
+                    break;
+                }
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    assert!(
+                        Instant::now() < deadline,
+                        "authorised relay packet did not arrive"
+                    );
+                    std::thread::yield_now();
+                }
+                Err(e) => panic!("relay peek failed: {e}"),
+            }
+        }
+        server.receive_peer(relay_token, &mut scratch);
+        assert_eq!(
+            server.stats.dropped_packets, 0,
+            "a recovered writable stream must retry queued output before dropping the new relay packet"
+        );
+        assert_eq!(
+            (server.stats.forwarded_packets, server.stats.forwarded_bytes),
+            (1, payload.len() as u64)
+        );
+        assert!(server.allocations.contains_key(&key));
+        let conn = &server.connections[&token];
+        assert!(conn.output.is_empty());
+        assert!(
+            !conn.writable_interest,
+            "drained output returns to read interest"
+        );
+
+        // No new server poll/flush or inbound control data may rescue this
+        // delivery. Both the old prefix and the new whole frame must arrive.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            match client.read(&mut scratch) {
+                Ok(0) => panic!("stream closed while reading the admitted frame"),
+                Ok(n) => received.extend_from_slice(&scratch[..n]),
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => std::thread::yield_now(),
+                Err(e) => panic!("frame read failed: {e}"),
+            }
+            if received.len() >= expected_prefix
+                && wire::frame_len(&received[expected_prefix..])
+                    .is_some_and(|len| len == received.len() - expected_prefix)
+            {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "admitted relay frame did not drain"
+            );
+        }
+        assert!(received[..expected_prefix].iter().all(|byte| *byte == 0x5a));
+        let frame = &received[expected_prefix..];
+        if let Some(number) = channel {
+            assert_eq!(wire::channel(frame), Some((number, payload.as_slice())));
+        } else {
+            let indication = Message::parse(frame).unwrap();
+            assert_eq!((indication.method, indication.class), (DATA_METHOD, 1));
+            assert_eq!(indication.attr(DATA), Some(payload.as_slice()));
+        }
+    }
+
+    #[test]
+    #[cfg(all(feature = "connected-udp", unix))]
+    fn relay_indication_retries_recovered_stream_before_overload_drop() {
+        recovered_relay_packet(None);
+    }
+
+    #[test]
+    #[cfg(all(feature = "connected-udp", unix))]
+    fn relay_channel_retries_recovered_stream_before_overload_drop() {
+        recovered_relay_packet(Some(0x4000));
     }
 
     #[test]
@@ -2003,6 +2182,25 @@ impl Server {
                     }
                     return false;
                 };
+                let pending = conn.output.len() - conn.written;
+                if relay_payload
+                    && bytes.len() > (MAX_QUEUE - STREAM_CONTROL_RESERVE).saturating_sub(pending)
+                {
+                    // The socket may have recovered since its last WouldBlock,
+                    // before this poll services its deferred writable event.
+                    // Retry existing output once before dropping the new frame.
+                    if conn
+                        .flush()
+                        .and_then(|pending| {
+                            conn.update_interest(self.poll.registry(), token, pending)
+                        })
+                        .is_err()
+                    {
+                        self.close(token);
+                        self.stats.dropped_packets += 1;
+                        return false;
+                    }
+                }
                 let pending = conn.output.len() - conn.written;
                 if relay_payload
                     && bytes.len() > (MAX_QUEUE - STREAM_CONTROL_RESERVE).saturating_sub(pending)
