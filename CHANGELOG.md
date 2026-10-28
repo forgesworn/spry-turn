@@ -28,6 +28,11 @@
   The fixture gains twenty-five cases; existing cases are unchanged. Rust
   callers of `advert::open` and `advert::open_parts` pass the new `privacy`
   argument, and `Advert` gains a `privacy` field.
+- Configure the existing Linux verify job on `ubuntu-24.04` to build both
+  TLS-enabled standalone executables and upload a three-day CI artefact after
+  its checks pass. Include exact committed source, dependency licences,
+  checksums and ELF/GLIBC provenance. This adds no formal Linux release, image,
+  service or deployment qualification; existing prerelease bytes stay unchanged.
 
 ## 0.3.0 — 26 October 2026
 
