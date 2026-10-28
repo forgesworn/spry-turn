@@ -1,6 +1,8 @@
 # Room grant sealing and advert privacy links
 
-Design, 28 October 2026. Not implemented. Covers spry-turn (this
+Design, 28 October 2026. The spry-turn parts (1 and 2 of the
+implementation order) are implemented on an unmerged branch; see the
+implementation notes. Covers spry-turn (this
 repository), KithMoot web and desktop (`forgesworn/kithmoot`) and KithMoot
 Android (`forgesworn/kithmoot-android`).
 
@@ -580,3 +582,60 @@ rendering the picker makes no request to the link's host.
 - Whether `tests/kithmoot.py` can route a public-looking origin to the
   loopback service for the cross-repository seal scenario.
 - Open: when Share with my rooms moves from `auto` to `required`.
+
+## Implementation notes (spry-turn)
+
+Choices made while implementing parts 1 and 2 of the order above, where
+this design was silent or ambiguous. Each takes the safer reading.
+
+- `/v1/grants/devices` checks the signer's pairing before the grant, so a
+  signer that does not hold the named pairing gets "Approval required."
+  whether or not the token is live; a stranger learns nothing about a token.
+  A paired app naming another pairing's live grant still gets "Approval
+  required." where an unknown grant gets "Call access has expired.", as
+  `/v1/grants/remove` already does.
+- Both new paths refuse any field not in their wire format and any `v`
+  other than 1 (400). A later field needs `v: 2`. `/v1/grants/vouch` also
+  refuses an empty `add`.
+- Statuses the design left without a message: a vouch into a grant already
+  holding 64 entries gets 429 "This call has reached its device limit.";
+  either path over the 1024-entry node limit gets 429 "Spry is already
+  helping too many calls.". A vouch over any cap adds nothing.
+- The per-sponsor vouch count is a fixed 24-hour window from the sponsor's
+  first vouch, like the existing per-minute buckets, so across a window
+  boundary a sponsor may add up to 16 keys in a little over a day. The
+  8-at-once per-grant cap still holds.
+- Open: the sponsor table holds 256 entries, while 64 grants could each have
+  many confirmed sponsors. When it is full, a new sponsor gets 429 until
+  entries lapse, up to a day. Sponsors are only keys the owner's app
+  registered, so the owner bounds it; sizing it to the 1024-entry node limit
+  is an option.
+- Vouched entries are not removed when their sponsor is removed; they lapse
+  within 24 hours, the risk this design already accepts. The node does not
+  persist which key vouched for which.
+- `enforced` in the `/v1/grants/devices` response is `sealed` under `auto`,
+  always `true` under `required` and always `false` under `off`, even for a
+  sealed grant.
+- `SPRY_ROOM_SEAL` set to the empty string refuses startup, like any value
+  other than `auto`, `required` or `off`.
+- Added: `save()` refuses a state file over the 131072-byte read limit, so a
+  state that grew past it can never stop the next start. Under the bounds it
+  is unreachable; a node at every bound (16 pairings, 64 sealed grants, 1024
+  members, a 2048-byte transport address) wrote 107274 bytes in the test.
+- Added: removing a pairing drops its grants, with their registered keys,
+  from the saved state in the same write. Before, they stayed on disk,
+  ignored by `restore()`, until the next save.
+- `SPRY_PUBLIC_PRIVACY_URL` is validated whenever it is set in the standard
+  profile, not only with `SPRY_PUBLIC=true`, as `SPRY_PUBLIC_REGION` and
+  `SPRY_PUBLIC_NOTE` already are. The private-node profile ignores it.
+- A privacy link must have a path, so an operator linking a front page must
+  write the trailing slash (`https://operator.example/`): the grammar needs
+  `/`, and the URL parser adds one, so the canonical check would refuse the
+  bare host either way. The settings documentation says so.
+- The oversize privacy fixture case gives `Size` because the shape check
+  runs before the signature check; its signature cannot be valid, since the
+  signer refuses an item over 256 bytes. A port that checks signatures first
+  would report `Authentication` and must reorder to match the fixture.
+- Rust now refuses `xn--` credential hosts, so the new fixture case fails
+  the current TypeScript verifier until KithMoot copies the fixture with its
+  verifier change, as for the privacy-link cases.
