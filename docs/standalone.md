@@ -65,6 +65,10 @@ never. It applies to both profiles; see the
 [API reference](api.md#room-grant-paths).
 An operator who wants to serve anyone can turn on [public mode](public-mode.md)
 in this standard profile; it is off by default and has no default relays.
+A host application that runs Spry as its own child process, for its
+owner's rooms only, uses [supervised standard mode](supervised-mode.md)
+instead: no HTTP listener, room grants over `spry:` control only, sealed,
+with every address and port supplied by the supervisor.
 
 `spry-node` listens on loopback HTTP port 3744 behind the operator's HTTPS
 reverse proxy. That proxy must append or set `X-Forwarded-For`: requests

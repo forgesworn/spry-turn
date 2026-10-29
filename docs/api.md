@@ -152,6 +152,21 @@ in the state file as `"sealed":true` and `"members":[["<key>",<lease end>,
 <vouched>]]` on each grant; the file stays version 1 and within its 131072
 byte limit, and an older binary loads it with every grant unsealed.
 
+## Supervised pairing and standard cards
+
+`Authority::trust_pairing(key, now)` makes `key` the node's only pairing,
+for a host that runs `spry-node supervised` and holds that key. Call it after
+`restore`. The id is derived from the node secret and the key, so it is the
+same after a restart; any other pairing, its grants and pending claim codes
+are removed in the same saved write. A key that is not a lowercase x-only
+curve point gets 400 "Invalid pairing key.".
+
+`spry_link::standard::StandardCard` signs and verifies the kind 24183
+`spry-standard-v1` card a supervised node adds as `node` to `/v1/grants` and
+`/v1/credentials` answers. It has no address field. `PeerCard::verify`
+refuses it and `StandardCard::verify` refuses a peer card. See
+[supervised standard mode](supervised-mode.md#the-spry-standard-v1-node-card).
+
 ## WASM build
 
 ```sh

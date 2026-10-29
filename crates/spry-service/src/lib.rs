@@ -5,6 +5,7 @@ pub mod public;
 pub mod resolver;
 pub mod signalling;
 mod standard;
+mod supervised;
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full, Limited};
 use hyper::{Request, Response, StatusCode, body::Incoming, service::service_fn};
@@ -647,7 +648,16 @@ pub async fn run_with_assets(
     Ok(())
 }
 /// Run the standalone service with host-selected assets and environment configuration.
+///
+/// `spry-node supervised ...` runs the supervised standard mode instead; see
+/// `docs/supervised-mode.md`. Without that first argument, arguments are
+/// ignored as before.
 pub fn main_with_assets(assets: UiAssets) {
+    let mut args = env::args_os().skip(1);
+    if args.next().is_some_and(|first| first == "supervised") {
+        supervised::main(args.collect());
+        return;
+    }
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .max_blocking_threads(2)
