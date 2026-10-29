@@ -23,6 +23,28 @@
   allocation, raisable to the standard maximums. `--exit-on-stdin-close` is
   required. Unknown options and any other `SPRY_` variable refuse startup.
   Without the `supervised` argument `spry-node` is unchanged.
+- Wire router port opening into supervised mode. `spry-node supervised
+  --map-ports` replaces `--public-ip`, `--public-udp-port`,
+  `--public-tcp-port` and `--relay-port-map` (now refused alongside it) with
+  what the router grants through `spry-portmap` (PCP, NAT-PMP, then UPnP
+  IGD): it first removes the mappings a crashed run recorded, then maps the
+  UDP and TCP listener and up to `--max-allocations` allocation ports (at
+  least four, or all if fewer were asked for), refuses a VPN route, a
+  `--bind` that does not reach the router and a carrier-grade, private or
+  reserved external address, starts the relay on the granted values, renews
+  each mapping at half its lease (7200 s, or 3600 s on UPnP; a permanent UPnP
+  lease is added again every 30 minutes), and removes only its own mappings
+  on stdin close, SIGINT and SIGTERM within two seconds, leaving anything
+  unfinished in the record. A changed external address or port restarts the
+  node's own relay on the same local ports and updates the TURN URLs that
+  credentials carry. Permanent UPnP leases are used, recorded and reported.
+  The record is `<state file>.mappings`. New `--gateway IPV4` names the
+  router for a host that knows it. New stdout lines, `portmap` (states,
+  counts and fixed reason words only) and `urls`, join `ready` and `status`;
+  `ready` keeps its shape. A router that cannot host ends the node with exit
+  code 3 so a supervisor does not treat it as a crash. Without `--map-ports`
+  the mode is unchanged. Tests use the in-house fake gateways only; no real
+  router has been tried.
 - Add an aggregate bandwidth cap and a counts-only status line to supervised
   mode. `--aggregate-bytes-per-second` (1 to 67108864, default 625000) limits
   relayed payload bytes across every allocation together, in addition to the

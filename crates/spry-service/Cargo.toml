@@ -33,6 +33,7 @@ tokio = { version = "=1.54.1", default-features = false, features = ["rt-multi-t
 url = "=2.5.8"
 
 [dev-dependencies]
+spry-portmap = { path = "../spry-portmap", version = "=0.1.0", features = ["testing"] }
 base64 = "=0.22.1"
 secp256k1 = { version = "=0.33.1", default-features = false, features = ["std"] }
 

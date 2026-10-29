@@ -494,6 +494,284 @@ fn the_local_fixture_alone_allows_loopback_binds_and_ws_relays() {
     }
 }
 
+/// The arguments of a node that asks its router for the public values.
+fn mapped() -> Vec<(&'static str, String)> {
+    let mut list: Vec<_> = arguments()
+        .into_iter()
+        .filter(|(name, _)| {
+            !matches!(
+                *name,
+                "--public-ip" | "--public-udp-port" | "--public-tcp-port" | "--relay-port-map"
+            )
+        })
+        .collect();
+    list.push(("--map-ports", String::new()));
+    list
+}
+fn flatten_all(arguments: &[(&str, String)]) -> Vec<String> {
+    let mut flat = Vec::new();
+    for (name, value) in arguments {
+        flat.push((*name).to_owned());
+        if !matches!(*name, "--exit-on-stdin-close" | "--map-ports") {
+            flat.push(value.clone());
+        }
+    }
+    flat
+}
+fn parse_mapped(arguments: &[(&str, String)]) -> Result<Settings, SetupError> {
+    Settings::parse(&flatten_all(arguments), &environment())
+}
+fn fixture_environment() -> Environment {
+    Environment {
+        local_test: Some("true".into()),
+        ..environment()
+    }
+}
+
+#[test]
+fn map_ports_takes_the_public_values_from_the_router_not_the_command_line() {
+    let settings = parse_mapped(&mapped()).unwrap();
+    assert_eq!(
+        settings.map,
+        Some(MapSettings {
+            gateway: None,
+            gateway_port: None,
+            ssdp: None,
+        })
+    );
+    assert_eq!(settings.listen_port, 41000);
+    assert!(settings.mappings.is_empty());
+    // Nothing is advertised until the router has granted something.
+    let plan = settings.map_plan().unwrap();
+    assert_eq!(
+        (plan.bind, plan.listen_port, plan.wanted, plan.minimum),
+        ("192.168.1.20".parse().unwrap(), 41000, 8, 4)
+    );
+    assert_eq!(plan.ports, 49152..=65535);
+    assert_eq!(
+        plan.record,
+        PathBuf::from("uncreated-supervised-fixture/state.json.mappings")
+    );
+    assert!(!plan.local_test && plan.options.gateway.is_none());
+    // Fewer allocations than the usual minimum ask for no more than that.
+    let mut few = mapped();
+    few.push(("--max-allocations", "2".into()));
+    let plan = parse_mapped(&few).unwrap().map_plan().unwrap();
+    assert_eq!((plan.wanted, plan.minimum), (2, 2));
+    // Without the flag there is no plan and the explicit values rule.
+    assert!(parse(&arguments()).unwrap().map_plan().is_none());
+}
+
+#[test]
+fn map_ports_and_explicit_public_values_exclude_each_other() {
+    for (name, value) in [
+        ("--public-ip", "100.128.0.7"),
+        ("--public-udp-port", "51000"),
+        ("--public-tcp-port", "51001"),
+        ("--relay-port-map", "41002:51002"),
+    ] {
+        let mut list = mapped();
+        list.push((name, value.into()));
+        assert_eq!(parse_mapped(&list).unwrap_err(), MAP_EXCLUSIVE, "{name}");
+    }
+    for (name, value) in [
+        ("--gateway", "192.168.1.1"),
+        ("--gateway-port", "5351"),
+        ("--ssdp", "127.0.0.1:1900"),
+    ] {
+        let mut list = arguments();
+        list.push((name, value.into()));
+        assert_eq!(parse(&list).unwrap_err(), MAP_ONLY, "{name}");
+    }
+    let mut twice = mapped();
+    twice.push(("--map-ports", String::new()));
+    assert_eq!(parse_mapped(&twice).unwrap_err(), ARGUMENT);
+    // The bind address and listener port are still the supervisor's to name.
+    for name in ["--bind", "--listen-port"] {
+        let list: Vec<_> = mapped().into_iter().filter(|(n, _)| *n != name).collect();
+        assert!(parse_mapped(&list).is_err(), "{name}");
+    }
+}
+
+#[test]
+fn the_gateway_may_be_named_and_only_fixtures_move_the_router_port() {
+    let mut list = mapped();
+    list.push(("--gateway", "192.168.1.1".into()));
+    let settings = parse_mapped(&list).unwrap();
+    assert_eq!(
+        settings.map_plan().unwrap().options.gateway,
+        Some("192.168.1.1".parse().unwrap())
+    );
+    for bad in [
+        "router.lan",
+        "0.0.0.0",
+        "224.0.0.1",
+        "127.0.0.1",
+        "169.254.1.1",
+        "",
+    ] {
+        let mut list = mapped();
+        list.push(("--gateway", bad.into()));
+        assert_eq!(parse_mapped(&list).unwrap_err(), GATEWAY, "{bad:?}");
+    }
+    for (name, value) in [("--gateway-port", "5351"), ("--ssdp", "127.0.0.1:1900")] {
+        let mut list = mapped();
+        list.push((name, value.into()));
+        assert_eq!(parse_mapped(&list).unwrap_err(), FIXTURE_ONLY, "{name}");
+    }
+    let mut fixture = mapped();
+    fixture.retain(|(name, _)| *name != "--bind");
+    fixture.extend([
+        ("--bind", "127.0.0.1".to_owned()),
+        ("--gateway", "127.0.0.1".to_owned()),
+        ("--gateway-port", "45351".to_owned()),
+        ("--ssdp", "127.0.0.1:41900".to_owned()),
+    ]);
+    fixture.retain(|(name, _)| *name != "--control-relay");
+    fixture.push(("--control-relay", "ws://127.0.0.1:7777/".into()));
+    let plan = Settings::parse(&flatten_all(&fixture), &fixture_environment())
+        .unwrap()
+        .map_plan()
+        .unwrap();
+    assert_eq!(plan.options.gateway_port, 45351);
+    assert_eq!(plan.options.ssdp, "127.0.0.1:41900".parse().unwrap());
+    assert!(plan.local_test);
+    for bad in ["0", "65536", "x"] {
+        let mut list = fixture.clone();
+        list.push(("--gateway-port", bad.into()));
+        // A repeated option is refused first; use a fresh list.
+        list.retain(|(name, value)| *name != "--gateway-port" || value == bad);
+        assert_eq!(
+            Settings::parse(&flatten_all(&list), &fixture_environment()).unwrap_err(),
+            GATEWAY_PORT,
+            "{bad}"
+        );
+    }
+}
+
+#[test]
+fn what_the_router_grants_becomes_the_urls_the_map_and_the_caps() {
+    let mut settings = parse_mapped(&mapped()).unwrap();
+    let granted = Values {
+        public_ip: "100.128.0.7".parse().unwrap(),
+        udp_port: 51000,
+        tcp_port: 51001,
+        map: vec![(49200, 51002), (49201, 51003), (49202, 51004)],
+    };
+    settings.apply(&granted).unwrap();
+    assert_eq!(
+        settings.urls(),
+        [
+            "turn:100.128.0.7:51000?transport=udp",
+            "turn:100.128.0.7:51001?transport=tcp"
+        ]
+    );
+    let relay = settings.relay_config();
+    // Three ports, so three allocations: the cap follows the router.
+    assert_eq!((relay.max_allocations, relay.max_per_user), (3, 2));
+    assert_eq!(relay.advertised_ip, Some("100.128.0.7".parse().unwrap()));
+    assert_eq!(relay.relay_port_mappings.as_ref().unwrap().len(), 3);
+    // A change replaces the lot.
+    let moved = Values {
+        public_ip: "100.128.0.9".parse().unwrap(),
+        udp_port: 51100,
+        tcp_port: 51100,
+        map: vec![(49200, 51101)],
+    };
+    settings.apply(&moved).unwrap();
+    assert_eq!(settings.urls()[0], "turn:100.128.0.9:51100?transport=udp");
+    assert_eq!(settings.relay_config().max_allocations, 1);
+    assert_eq!(settings.relay_config().max_per_user, 1);
+    // The same rules as explicit values: nothing private, nothing low, no
+    // allocation port on the listener's, no repeats, never empty.
+    let mut bad = [
+        Values {
+            public_ip: "192.168.1.5".parse().unwrap(),
+            ..granted.clone()
+        },
+        Values {
+            public_ip: "100.64.0.1".parse().unwrap(),
+            ..granted.clone()
+        },
+        Values {
+            udp_port: 80,
+            ..granted.clone()
+        },
+        Values {
+            tcp_port: 0,
+            ..granted.clone()
+        },
+        Values {
+            map: vec![],
+            ..granted.clone()
+        },
+        Values {
+            map: vec![(49200, 51000)],
+            ..granted.clone()
+        },
+        Values {
+            map: vec![(41000, 51005)],
+            ..granted.clone()
+        },
+        Values {
+            map: vec![(49200, 51005), (49200, 51006)],
+            ..granted.clone()
+        },
+        Values {
+            map: vec![(49200, 51005), (49201, 51005)],
+            ..granted.clone()
+        },
+        Values {
+            map: vec![(49200, 80)],
+            ..granted
+        },
+    ]
+    .into_iter();
+    assert_eq!(settings.apply(&bad.next().unwrap()), Err(PUBLIC_IP));
+    assert_eq!(settings.apply(&bad.next().unwrap()), Err(PUBLIC_IP));
+    for values in bad {
+        assert_eq!(settings.apply(&values), Err(PORT_MAP), "{values:?}");
+    }
+    // A refused grant changes nothing.
+    assert_eq!(settings.urls()[0], "turn:100.128.0.9:51100?transport=udp");
+    // Explicit mode keeps its own caps, mapped ports or not.
+    assert_eq!(
+        parse(&arguments()).unwrap().relay_config().max_allocations,
+        8
+    );
+}
+
+#[test]
+fn a_restarted_relay_binds_the_same_ports_again_and_keeps_its_counts() {
+    // A loopback port free for both UDP and TCP.
+    let port = (0..64)
+        .find_map(|_| {
+            let tcp = std::net::TcpListener::bind("127.0.0.1:0").ok()?;
+            let port = tcp.local_addr().ok()?.port();
+            std::net::UdpSocket::bind(("127.0.0.1", port)).ok()?;
+            (port >= 1024).then_some(port)
+        })
+        .unwrap();
+    let mut list = with("--bind", "127.0.0.1");
+    list.retain(|(name, _)| !matches!(*name, "--control-relay" | "--listen-port"));
+    list.push(("--control-relay", "ws://127.0.0.1:7777/".into()));
+    list.push(("--listen-port", port.to_string()));
+    let settings = Settings::parse(&flatten(&list), &fixture_environment()).unwrap();
+    let config = settings.relay_config();
+    let mut relay = EmbeddedRelay::start(config.clone(), (500, Some(77))).unwrap();
+    thread::sleep(Duration::from_millis(250));
+    assert_eq!(relay.counts(), (0, 500, Some(77)));
+    relay.restart(&config).unwrap();
+    thread::sleep(Duration::from_millis(250));
+    assert!(relay.running());
+    assert_eq!(relay.counts(), (0, 500, Some(77)));
+    // Another listener on the port is refused while it runs, so the restart
+    // really bound it again.
+    assert!(std::net::UdpSocket::bind(("127.0.0.1", port)).is_err());
+    drop(relay);
+    std::net::UdpSocket::bind(("127.0.0.1", port)).expect("freed on drop");
+}
+
 /// A scratch state directory removed when the test ends.
 struct Scratch(PathBuf);
 impl Scratch {
