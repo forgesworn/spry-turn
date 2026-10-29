@@ -4,7 +4,8 @@
 Commands (run from the repository root, in the release workflow):
 
   rustflags                    print RUSTFLAGS=... for $GITHUB_ENV, remapping
-                               the checkout and Cargo home out of binaries
+                               the checkout, Cargo home and toolchain out of
+                               binaries
   name                         print the artefact name prefix: the tag on a
                                v* tag (which must match Cargo.toml), else
                                ci-<short commit>
@@ -71,10 +72,16 @@ def cargo_home():
     return Path(os.environ.get("CARGO_HOME") or Path.home() / ".cargo")
 
 
+def sysroot():
+    return Path(output("rustc", "--print", "sysroot"))
+
+
 def private_paths():
-    """Builder paths that must not appear in a shipped binary."""
+    """Builder paths that must not appear in a shipped binary: the checkout,
+    Cargo home, the toolchain (rustc maps the standard library's own paths
+    back to it when rust-src is installed) and the home directory."""
     paths = set()
-    for path in (str(ROOT), str(cargo_home())):
+    for path in (str(ROOT), str(cargo_home()), str(sysroot()), str(Path.home())):
         paths.add(path)
         paths.add(path.replace("\\", "/"))
     return [path.encode() for path in paths if len(path) > 3]
@@ -90,7 +97,8 @@ def ci_identity():
 
 def rustflags():
     flags = [f"--remap-path-prefix={ROOT}=/spry-turn",
-             f"--remap-path-prefix={cargo_home()}=/cargo-home"]
+             f"--remap-path-prefix={cargo_home()}=/cargo-home",
+             f"--remap-path-prefix={sysroot()}=/rust-sysroot"]
     if any(" " in flag for flag in flags):
         raise SystemExit("Build paths contain spaces; RUSTFLAGS cannot carry them")
     print("RUSTFLAGS=" + " ".join(flags))
@@ -169,7 +177,8 @@ def base_provenance(commit, label, target, build):
         "rustc": output("rustc", "--version"),
         "cargo": output("cargo", "--version"),
         "buildCommand": build,
-        "pathRemapping": {"workspace": "/spry-turn", "cargoHome": "/cargo-home"},
+        "pathRemapping": {"workspace": "/spry-turn", "cargoHome": "/cargo-home",
+                          "sysroot": "/rust-sysroot"},
         "cargoLockSha256": sha256(ROOT / "Cargo.lock"),
     }
 

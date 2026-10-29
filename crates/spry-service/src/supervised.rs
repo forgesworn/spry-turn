@@ -1047,8 +1047,14 @@ pub(crate) async fn run(
         task = Some(mapping::Task::spawn(plan, updates_in.clone()).map_err(|_| MAPPING_START)?);
         loop {
             tokio::select! {
-                _ = signals.recv() => return Ok(()),
-                _ = lifetime.closed.notified() => return Ok(()),
+                _ = signals.recv() => {
+                    release(task.take(), &mut updates, out);
+                    return Ok(());
+                }
+                _ = lifetime.closed.notified() => {
+                    release(task.take(), &mut updates, out);
+                    return Ok(());
+                }
                 update = updates.recv() => {
                     let Some(update) = update else { return Err(CannotHost.into()) };
                     if let Some(event) = update.event() {
@@ -1155,7 +1161,18 @@ pub(crate) async fn run(
     drop(runtime);
     // Free the relay's ports first, then give the router's back.
     drop(relay);
-    if let Some(mut task) = task.take() {
+    release(task.take(), &mut updates, out);
+    result
+}
+
+/// Remove the node's router mappings, if it has any, and print what the
+/// mapping thread reported while doing so (`released`).
+fn release(
+    task: Option<mapping::Task>,
+    updates: &mut tokio::sync::mpsc::UnboundedReceiver<Update>,
+    out: &Output,
+) {
+    if let Some(mut task) = task {
         task.stop();
         while let Ok(update) = updates.try_recv() {
             if let Some(event) = update.event() {
@@ -1163,7 +1180,6 @@ pub(crate) async fn run(
             }
         }
     }
-    result
 }
 
 /// The exit code for how [`run`] ended, and the refusal to show, if any.
