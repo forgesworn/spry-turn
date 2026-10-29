@@ -876,6 +876,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "spry-ffi"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "serde_json",
+ "spry-portmap",
+ "spry-service",
+ "tokio",
+ "tokio-tungstenite",
+]
+
+[[package]]
 name = "spry-link"
 version = "0.1.0"
 dependencies = [

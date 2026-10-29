@@ -1,0 +1,45 @@
+[package]
+name = "spry-ffi"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+publish = false
+license = "MIT"
+authors = ["TheCryptoDonkey"]
+description = "Hand-written C ABI, and an optional JNI shim, for a supervised Spry relay inside a host app's own process"
+repository = "https://github.com/forgesworn/spry-turn"
+readme = "README.md"
+
+[lib]
+# libspry_relay.so / .dylib / spry_relay.dll. The rlib lets the Rust tests
+# drive the exported functions directly.
+name = "spry_relay"
+crate-type = ["rlib", "cdylib"]
+
+[features]
+# `Java_dev_forgesworn_spry_SpryRelayNative_*` entry points for Android (or
+# any JVM), written by hand against the JNI function table. The C ABI is
+# always present.
+jni = []
+
+[dependencies]
+spry-service = { path = "../spry-service", version = "=0.1.0" }
+
+[dev-dependencies]
+spry-portmap = { path = "../spry-portmap", version = "=0.1.0", features = ["testing"] }
+futures-util = { version = "=0.3.34", default-features = false, features = ["sink", "std"] }
+serde_json = "=1.0.154"
+tokio = { version = "=1.54.1", default-features = false, features = ["rt-multi-thread", "net", "sync", "macros"] }
+tokio-tungstenite = { version = "=0.30.0", default-features = false, features = ["connect"] }
+
+# A C ABI cannot be written without `unsafe`: exporting an unmangled symbol
+# and reading a caller's pointer both need it. It is denied here rather than
+# forbidden, and allowed only on the two modules that implement the ABI,
+# where every unsafe block states why it is sound.
+[lints.rust]
+unsafe_code = "deny"
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+all = "warn"
+undocumented_unsafe_blocks = "warn"
