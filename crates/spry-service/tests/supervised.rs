@@ -837,3 +837,586 @@ fn other_profiles_settings_and_open_modes_refuse_to_start() {
     assert!(refusal.contains("SPRY_TURN_SECRET"), "{refusal}");
     assert!(!refusal.contains("too-short"), "{refusal}");
 }
+
+// ---------------------------------------------------------------------------
+// `--map-ports`: the node asks the router for its public values. The router is
+// one of the in-house fake gateways on loopback; nothing real is involved.
+// ---------------------------------------------------------------------------
+
+use spry_portmap::{
+    Protocol,
+    fake::{
+        EXTERNAL, FakeNatGateway, FakeUpnpGateway, NatBehaviour, NatPmpMode, PcpMode, UpnpBehaviour,
+    },
+    record::Ledger,
+};
+use std::net::SocketAddrV4;
+use std::path::Path;
+
+impl Node {
+    /// The next line of any kind.
+    fn next(&self) -> Value {
+        self.lines
+            .recv_timeout(Duration::from_secs(10))
+            .expect("no further line")
+    }
+    /// The next `portmap` line, with the state it must be in.
+    fn portmap(&self, state: &str) -> Value {
+        let line = self.line("portmap");
+        assert_eq!(line["state"], state, "{line}");
+        line
+    }
+    /// Wait for the process to end.
+    fn exit(&mut self, seconds: u64) -> std::process::ExitStatus {
+        let deadline = Instant::now() + Duration::from_secs(seconds);
+        loop {
+            if let Some(status) = self.child.try_wait().unwrap() {
+                return status;
+            }
+            assert!(Instant::now() < deadline, "node did not exit");
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+}
+
+fn mapped_node(
+    relay: &str,
+    host: &str,
+    listen: u16,
+    gateway: &FakeNatGateway,
+    ssdp: Option<SocketAddrV4>,
+    directory: Option<&Path>,
+) -> Node {
+    let directory = directory.map_or_else(scratch, Path::to_path_buf);
+    let mut command = Command::new(env!("CARGO_BIN_EXE_spry-node"));
+    command
+        .env_clear()
+        .env("SPRY_TURN_SECRET", SECRET)
+        .env("SPRY_LOCAL_TEST", "true")
+        .args([
+            "supervised",
+            "--exit-on-stdin-close",
+            "--map-ports",
+            "--pairing-key",
+            host,
+        ])
+        .arg("--state-file")
+        .arg(directory.join("state.json"))
+        .args([
+            "--control-relay",
+            relay,
+            "--bind",
+            "127.0.0.1",
+            "--listen-port",
+            &listen.to_string(),
+            "--gateway",
+            "127.0.0.1",
+            "--gateway-port",
+            &gateway.address().port().to_string(),
+        ]);
+    if let Some(ssdp) = ssdp {
+        command.args(["--ssdp", &ssdp.to_string()]);
+    }
+    command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = command.spawn().unwrap();
+    let stdin = child.stdin.take();
+    let stdout = child.stdout.take().unwrap();
+    let (send, lines) = mpsc::channel();
+    thread::spawn(move || {
+        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+            let value: Value = serde_json::from_str(&line).expect("stdout line is JSON");
+            if send.send(value).is_err() {
+                return;
+            }
+        }
+    });
+    Node {
+        child,
+        stdin,
+        lines,
+        directory,
+    }
+}
+
+fn record(node: &Node) -> Vec<spry_portmap::record::Entry> {
+    Ledger::load(node.directory.join("state.json.mappings"))
+        .unwrap()
+        .entries()
+        .to_vec()
+}
+
+/// A guest admitted to a fresh sealed grant, able to ask for credentials.
+struct Guest {
+    socket: Socket,
+    target: ControlEndpoint,
+    identity: Identity,
+    token: String,
+}
+async fn admit(relay: &str, ready: &Value, host: &Identity) -> Guest {
+    let identity = Identity::from_secret(&[3; 32]).unwrap();
+    let node_key = Identity::derive(SECRET.as_bytes()).unwrap().public_key();
+    let target =
+        ControlEndpoint::new(node_key, vec![relay.to_owned()], RelayPolicy::LocalFixture).unwrap();
+    assert_eq!(ready["endpoint"], target.uri().unwrap());
+    let pairing = ready["pairing"].as_str().unwrap().to_owned();
+    let mut socket = client(relay).await;
+    let (status, granted) = ask(
+        &mut socket,
+        host,
+        &target,
+        "/v1/grants",
+        json!({"pairing":pairing,"scope":spry_access::hash("synthetic-mapped-room")}),
+    )
+    .await;
+    assert_eq!(status, 200, "{granted}");
+    let token = granted["token"].as_str().unwrap().to_owned();
+    let (status, registered) = ask(
+        &mut socket,
+        host,
+        &target,
+        "/v1/grants/devices",
+        json!({"v":1,"pairing":pairing,"grant":token,"add":[host.public_key(), identity.public_key()],"revision":1}),
+    )
+    .await;
+    assert_eq!(status, 200, "{registered}");
+    Guest {
+        socket,
+        target,
+        identity,
+        token,
+    }
+}
+impl Guest {
+    async fn credentials(&mut self) -> Value {
+        let (status, issued) = ask(
+            &mut self.socket,
+            &self.identity,
+            &self.target,
+            "/v1/credentials",
+            json!({"grant":self.token}),
+        )
+        .await;
+        assert_eq!(status, 200, "{issued}");
+        issued
+    }
+}
+
+fn turn_urls(ip: impl std::fmt::Display, udp: u16, tcp: u16) -> Value {
+    json!([
+        format!("turn:{ip}:{udp}?transport=udp"),
+        format!("turn:{ip}:{tcp}?transport=tcp")
+    ])
+}
+
+/// The keys a `portmap` line may carry, by state.
+fn assert_portmap_shape(line: &Value) {
+    let mut keys: Vec<_> = line
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    keys.sort_unstable();
+    let expected: &[&str] = match line["state"].as_str().unwrap() {
+        "mapped" => &[
+            "allocationPorts",
+            "event",
+            "method",
+            "permanent",
+            "requested",
+            "state",
+            "v",
+        ],
+        "changed" => &[
+            "allocationPorts",
+            "event",
+            "method",
+            "permanent",
+            "reason",
+            "requested",
+            "state",
+            "v",
+        ],
+        "cleaned" | "released" => &["event", "remaining", "removed", "state", "v"],
+        "failed" | "lost" => &["event", "reason", "state", "v"],
+        other => panic!("unknown state {other}"),
+    };
+    assert_eq!(keys, expected, "{line}");
+    assert!(line.to_string().len() < 200, "bounded: {line}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_mapped_node_opens_the_router_first_serves_what_it_was_given_and_closes_it_again() {
+    let relay = fixture_relay().await;
+    let host = Identity::from_secret(&[2; 32]).unwrap();
+    let router = FakeNatGateway::start(NatBehaviour::default());
+    let starting = STARTING
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let (listen, ..) = ports();
+    let mut node = mapped_node(&relay, &host.public_key(), listen, &router, None, None);
+
+    // The router is asked, and the grant reported, before the relay is ready.
+    let mapped = node.next();
+    drop(starting);
+    assert_portmap_shape(&mapped);
+    assert_eq!(
+        mapped,
+        json!({"v":1,"event":"portmap","state":"mapped","method":"pcp",
+               "allocationPorts":8,"requested":8,"permanent":false})
+    );
+    let ready = node.next();
+    assert_eq!(ready["event"], "ready");
+    assert_eq!(
+        ready.as_object().unwrap().len(),
+        6,
+        "ready keeps its shape: {ready}"
+    );
+    assert_eq!(ready["urls"], turn_urls(EXTERNAL, listen, listen));
+    let map = ready["relayPortMap"].as_array().unwrap().clone();
+    assert_eq!(map.len(), 8);
+    // The router holds the listener on UDP and TCP and one UDP port per pair.
+    let held = router.mappings();
+    assert_eq!(held.len(), 10);
+    assert!(
+        held.iter()
+            .any(|m| m.protocol == Protocol::Udp && m.internal_port == listen)
+    );
+    assert!(
+        held.iter()
+            .any(|m| m.protocol == Protocol::Tcp && m.internal_port == listen)
+    );
+    for pair in &map {
+        let (local, public) = (pair[0].as_u64().unwrap(), pair[1].as_u64().unwrap());
+        assert!((49152..=65535).contains(&local) && local == public);
+        assert!(
+            held.iter()
+                .any(|m| u64::from(m.internal_port) == local && m.protocol == Protocol::Udp)
+        );
+    }
+    // And all of it is in the record, with the nonce that can delete it.
+    let recorded = record(&node);
+    assert_eq!(recorded.len(), 10);
+    assert!(recorded.iter().all(|entry| entry.nonce.is_some()));
+    // The state file's directory holds the node's private files only.
+    assert!(node.directory.join("state.json").exists());
+
+    // The relay hands out the router's address and a granted port.
+    node.line("control");
+    let mut guest = admit(&relay, &ready, &host).await;
+    let issued = guest.credentials().await;
+    assert_eq!(issued["urls"], ready["urls"]);
+    let relayed = allocate(listen, &issued).unwrap();
+    assert_eq!(relayed.ip().to_string(), EXTERNAL.to_string());
+    assert!(
+        map.iter()
+            .any(|pair| pair[1].as_u64() == Some(u64::from(relayed.port()))),
+        "{relayed}"
+    );
+
+    // Closing the pipe ends the node, which gives back only what it made.
+    drop(node.stdin.take());
+    assert!(node.exit(3).success());
+    assert!(router.mappings().is_empty(), "the router was cleared");
+    assert!(record(&node).is_empty(), "and so was the record");
+    UdpSocket::bind(("127.0.0.1", listen)).expect("listener UDP port freed");
+    let released = node.portmap("released");
+    assert_portmap_shape(&released);
+    assert_eq!(released["removed"], 10);
+    assert_eq!(released["remaining"], 0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_killed_node_leaves_its_mappings_and_the_next_launch_removes_exactly_those() {
+    let relay = fixture_relay().await;
+    let host = Identity::from_secret(&[2; 32]).unwrap();
+    let router = FakeNatGateway::start(NatBehaviour::default());
+    let starting = STARTING
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let (listen, ..) = ports();
+    let mut first = mapped_node(&relay, &host.public_key(), listen, &router, None, None);
+    first.portmap("mapped");
+    first.line("ready");
+    drop(starting);
+    let old = router.mappings();
+    assert_eq!(old.len(), 10);
+    // A crash: no chance to clean up.
+    first.child.kill().unwrap();
+    first.child.wait().unwrap();
+    assert_eq!(router.mappings(), old, "the router still holds them");
+    assert_eq!(record(&first).len(), 10, "and the record remembers them");
+
+    // The router would refuse a new owner for the same listener port, so
+    // the next launch can only start by removing the old mappings first.
+    let starting = STARTING
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut second = mapped_node(
+        &relay,
+        &host.public_key(),
+        listen,
+        &router,
+        None,
+        Some(&first.directory.clone()),
+    );
+    let cleaned = second.portmap("cleaned");
+    assert_portmap_shape(&cleaned);
+    assert_eq!(
+        (&cleaned["removed"], &cleaned["remaining"]),
+        (&json!(10), &json!(0))
+    );
+    let mapped = second.portmap("mapped");
+    assert_eq!(mapped["allocationPorts"], 8);
+    second.line("ready");
+    drop(starting);
+    let now = router.mappings();
+    assert_eq!(now.len(), 10);
+    assert!(
+        now.iter()
+            .all(|new| old.iter().all(|o| o.nonce != new.nonce)),
+        "only the second run's mappings are left"
+    );
+    drop(second.stdin.take());
+    assert!(second.exit(3).success());
+    assert!(router.mappings().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_permanent_lease_is_used_reported_recorded_and_removed_after_a_crash() {
+    let relay = fixture_relay().await;
+    let host = Identity::from_secret(&[2; 32]).unwrap();
+    // PCP and NAT-PMP decline at once; the UPnP router grants only
+    // permanent leases.
+    let router = FakeNatGateway::start(NatBehaviour {
+        pcp: PcpMode::Refuse(2),
+        natpmp: NatPmpMode::Refuse(2),
+        ..NatBehaviour::default()
+    });
+    let upnp = FakeUpnpGateway::start(UpnpBehaviour {
+        permanent_only: true,
+        ..UpnpBehaviour::default()
+    });
+    let starting = STARTING
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let (listen, ..) = ports();
+    let mut first = mapped_node(
+        &relay,
+        &host.public_key(),
+        listen,
+        &router,
+        Some(upnp.ssdp()),
+        None,
+    );
+    let mapped = first.portmap("mapped");
+    assert_portmap_shape(&mapped);
+    assert_eq!(mapped["method"], "upnp");
+    assert_eq!(
+        mapped["permanent"], true,
+        "the supervisor can tell the person a mapping may outlive a crash"
+    );
+    first.line("ready");
+    drop(starting);
+    assert!(upnp.mappings().iter().all(|m| m.lease == 0));
+    let recorded = record(&first);
+    assert_eq!(recorded.len(), 10);
+    assert!(recorded.iter().all(|entry| entry.expires.is_none()));
+
+    first.child.kill().unwrap();
+    first.child.wait().unwrap();
+    assert_eq!(
+        upnp.mappings().len(),
+        10,
+        "a permanent lease outlives the crash"
+    );
+
+    let starting = STARTING
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut second = mapped_node(
+        &relay,
+        &host.public_key(),
+        listen,
+        &router,
+        Some(upnp.ssdp()),
+        Some(&first.directory.clone()),
+    );
+    let cleaned = second.portmap("cleaned");
+    assert_eq!(
+        (&cleaned["removed"], &cleaned["remaining"]),
+        (&json!(10), &json!(0))
+    );
+    second.portmap("mapped");
+    second.line("ready");
+    drop(starting);
+    drop(second.stdin.take());
+    assert!(second.exit(3).success());
+    assert!(upnp.mappings().is_empty(), "removed on stop as well");
+    assert!(record(&second).is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_router_that_refuses_stops_the_node_with_its_own_exit_code_and_nothing_open() {
+    let relay = fixture_relay().await;
+    let host = Identity::from_secret(&[2; 32]).unwrap();
+    let router = FakeNatGateway::start(NatBehaviour {
+        pcp: PcpMode::Refuse(2),
+        natpmp: NatPmpMode::Refuse(2),
+        ..NatBehaviour::default()
+    });
+    let upnp = FakeUpnpGateway::start(UpnpBehaviour {
+        refuse: Some(718),
+        ..UpnpBehaviour::default()
+    });
+    let _starting = STARTING
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let (listen, ..) = ports();
+    let mut node = mapped_node(
+        &relay,
+        &host.public_key(),
+        listen,
+        &router,
+        Some(upnp.ssdp()),
+        None,
+    );
+    let failed = node.portmap("failed");
+    assert_portmap_shape(&failed);
+    assert_eq!(failed["reason"], "refused");
+    let status = node.exit(10);
+    assert_eq!(
+        status.code(),
+        Some(3),
+        "not a crash: do not restart blindly"
+    );
+    // Nothing listened, nothing was written, no ready line was printed.
+    assert!(node.lines.recv_timeout(Duration::from_millis(200)).is_err());
+    assert!(!node.directory.join("state.json").exists());
+    UdpSocket::bind(("127.0.0.1", listen)).expect("the listener was never bound");
+    TcpListener::bind(("127.0.0.1", listen)).expect("the listener was never bound");
+    assert!(router.mappings().is_empty() && upnp.mappings().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_change_at_the_router_restarts_the_relay_and_new_credentials_carry_the_new_address() {
+    let relay = fixture_relay().await;
+    let host = Identity::from_secret(&[2; 32]).unwrap();
+    // A four second lease, so renewal (at half) takes two seconds.
+    let behaviour = NatBehaviour {
+        max_lifetime: 4,
+        ..NatBehaviour::default()
+    };
+    let router = FakeNatGateway::start(behaviour.clone());
+    let starting = STARTING
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let (listen, ..) = ports();
+    let mut node = mapped_node(&relay, &host.public_key(), listen, &router, None, None);
+    node.portmap("mapped");
+    let ready = node.line("ready");
+    drop(starting);
+    node.line("control");
+    let mut guest = admit(&relay, &ready, &host).await;
+    let before = guest.credentials().await;
+    assert_eq!(before["urls"], turn_urls(EXTERNAL, listen, listen));
+    assert_eq!(
+        allocate(listen, &before).unwrap().ip().to_string(),
+        EXTERNAL.to_string()
+    );
+
+    // The internet address changes at the next renewal.
+    let moved: std::net::Ipv4Addr = "100.128.0.9".parse().unwrap();
+    router.set(NatBehaviour {
+        external: moved,
+        ..behaviour
+    });
+    let changed = node.portmap("changed");
+    assert_portmap_shape(&changed);
+    assert_eq!(changed["reason"], "address");
+    let urls = node.line("urls");
+    assert_eq!(urls["urls"], turn_urls(moved, listen, listen));
+    assert_eq!(urls["relayPortMap"].as_array().unwrap().len(), 8);
+    assert_eq!(urls.as_object().unwrap().len(), 4, "{urls}");
+
+    // The same pairing and grant keep working, and now say the new address.
+    let after = guest.credentials().await;
+    assert_eq!(after["urls"], urls["urls"]);
+    let relayed = allocate(listen, &after).unwrap();
+    assert_eq!(relayed.ip().to_string(), moved.to_string());
+    drop(node.stdin.take());
+    assert!(node.exit(3).success());
+    assert!(router.mappings().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_router_that_goes_quiet_for_good_ends_the_node_with_the_cannot_host_code() {
+    let relay = fixture_relay().await;
+    let host = Identity::from_secret(&[2; 32]).unwrap();
+    let behaviour = NatBehaviour {
+        max_lifetime: 4,
+        ..NatBehaviour::default()
+    };
+    let router = FakeNatGateway::start(behaviour.clone());
+    let starting = STARTING
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let (listen, ..) = ports();
+    let mut node = mapped_node(&relay, &host.public_key(), listen, &router, None, None);
+    node.portmap("mapped");
+    node.line("ready");
+    drop(starting);
+    router.set(NatBehaviour {
+        pcp: PcpMode::Silent,
+        natpmp: NatPmpMode::Silent,
+        ..behaviour
+    });
+    let lost = node.portmap("lost");
+    assert_portmap_shape(&lost);
+    assert_eq!(lost["reason"], "expired");
+    assert_eq!(node.exit(20).code(), Some(3));
+    // It could not remove them from a silent router, and says so.
+    let released = node.portmap("released");
+    assert_eq!(released["removed"], 0);
+    assert_eq!(released["remaining"], 10);
+    assert_eq!(record(&node).len(), 10, "left for the next launch");
+}
+
+#[test]
+fn map_ports_refuses_explicit_public_values_and_names_the_setting() {
+    let output = Command::new(env!("CARGO_BIN_EXE_spry-node"))
+        .env_clear()
+        .env("SPRY_TURN_SECRET", SECRET)
+        .env("SPRY_LOCAL_TEST", "true")
+        .args([
+            "supervised",
+            "--exit-on-stdin-close",
+            "--map-ports",
+            "--public-ip",
+            "203.0.113.7",
+            "--pairing-key",
+            &Identity::from_secret(&[2; 32]).unwrap().public_key(),
+            "--state-file",
+            "unused.json",
+            "--control-relay",
+            "ws://127.0.0.1:1/",
+            "--bind",
+            "127.0.0.1",
+            "--listen-port",
+            "41000",
+        ])
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    let message = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        message.contains("--map-ports takes the public address and ports"),
+        "{message}"
+    );
+    assert!(!message.contains("203.0.113.7"));
+}

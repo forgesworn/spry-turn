@@ -51,6 +51,9 @@ impl ControlEndpoint {
                 || (!local
                     && (url.scheme() != "wss"
                         || !host.contains('.')
+                        // A trailing dot names the same host but hides its
+                        // last label from the local-name check below.
+                        || host.ends_with('.')
                         || host.parse::<std::net::IpAddr>().is_ok()
                         || host.starts_with('[')
                         || host.split('.').next_back().is_some_and(|suffix| {

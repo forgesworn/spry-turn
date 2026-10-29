@@ -28,7 +28,7 @@ These files provide navigation and source context for readers and tools. They do
 
 - [Public mode](https://github.com/forgesworn/spry-turn/blob/main/docs/public-mode.md): Opt-in anonymous credentials, the kind 31478 advert and the client rules; off by default.
 - [Independent operation](https://github.com/forgesworn/spry-turn/blob/main/docs/operations.md): Bounded relay ports, firewall/NAT plan, secret rotation, TLS and limits.
-- [Supervised standard mode](https://github.com/forgesworn/spry-turn/blob/main/docs/supervised-mode.md): spry-node as a host app's child process: room grants only over spry: control, no HTTP, sealed, explicit addresses and the spry-standard-v1 card.
+- [Supervised standard mode](https://github.com/forgesworn/spry-turn/blob/main/docs/supervised-mode.md): spry-node as a host app's child process: room grants only over spry: control, no HTTP, sealed, explicit or router-mapped addresses (--map-ports) and the spry-standard-v1 card.
 - [Explicit TURN allocation mappings](https://github.com/forgesworn/spry-turn/blob/main/docs/mapped-ports.md): Exact local/public UDP endpoint pairs, fail-closed allocation and separate VPN/reachability gates.
 - [Security](https://github.com/forgesworn/spry-turn/blob/main/SECURITY.md): Reporting channel and transport/credential boundaries.
 - [Support and donations](https://github.com/forgesworn/spry-turn/blob/main/SUPPORT.md): Bug reports and established ForgeSworn funding destinations.
