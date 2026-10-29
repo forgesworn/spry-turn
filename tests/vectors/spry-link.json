@@ -58,5 +58,19 @@
     ]
   },
   "schema": 1,
+  "standardNode": {
+    "content": "{\"profile\":\"spry-standard-v1\",\"v\":1}",
+    "created_at": 1700000000,
+    "id": "7524ac4942652bd715d8ca8aeccf7823230620f0fc2f94aaf8756cf325b34778",
+    "kind": 24183,
+    "pubkey": "1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f",
+    "sig": "d87b59e175554a30c3acc4cee0a09c9f47880190da184ee1472f7b47839bee90dd9708d635ea172c92d53621e3cc368d73374c91f7ea1e25f584bd294ded0dad",
+    "tags": [
+      [
+        "expiration",
+        "1700000600"
+      ]
+    ]
+  },
   "synthetic": true
 }

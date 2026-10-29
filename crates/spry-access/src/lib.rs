@@ -447,6 +447,51 @@ impl Authority {
         }
         Ok(())
     }
+    /// For a supervised node: trust the supervising app's signing key as the
+    /// node's only pairing, in place of an owner-issued claim code. Call it
+    /// after [`Authority::restore`]. The pairing id is derived from the node
+    /// secret and the key, so a restart keeps the same id and with it every
+    /// room grant. Any other pairing, its grants and any pending claim code
+    /// are removed in the same saved write. Returns the pairing id.
+    pub fn trust_pairing(&mut self, key: &str, now: u64) -> Result<String> {
+        need(is_point(key), 400, "Invalid pairing key.")?;
+        let mut mac = Hmac::<Sha256>::new_from_slice(&self.config.secret)
+            .map_err(|_| Refused(503, "Unavailable."))?;
+        mac.update(format!("spry-supervised-pairing-v1:{key}").as_bytes());
+        let id = URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes());
+        let held = self.pairs.get(&id).is_some_and(|pair| pair.key == key);
+        if held && self.pairs.len() == 1 && self.pending.is_empty() {
+            return Ok(id);
+        }
+        let created_at = self
+            .pairs
+            .get(&id)
+            .filter(|_| held)
+            .map_or(now, |pair| pair.created_at);
+        let pairs = std::mem::take(&mut self.pairs);
+        let pending = std::mem::take(&mut self.pending);
+        let grants = std::mem::take(&mut self.grants);
+        self.pairs.insert(
+            id.clone(),
+            Pairing {
+                id: id.clone(),
+                key: key.into(),
+                created_at,
+            },
+        );
+        self.grants = grants
+            .iter()
+            .filter(|(_, grant)| held && grant.pair == id)
+            .map(|(token, grant)| (token.clone(), grant.clone()))
+            .collect();
+        if self.save().is_err() {
+            self.pairs = pairs;
+            self.pending = pending;
+            self.grants = grants;
+            return Err(Refused(503, "Pairing could not be saved."));
+        }
+        Ok(id)
+    }
     fn grant_token(&self, pair: &str, scope: &str, salt: &str) -> Result<String> {
         let mut mac = Hmac::<Sha256>::new_from_slice(&self.config.secret)
             .map_err(|_| Refused(503, "Unavailable."))?;

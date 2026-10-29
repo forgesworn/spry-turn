@@ -24,10 +24,10 @@ struct Limits {
     connections: u32,
 }
 
-const MAX_ALLOCATIONS: u32 = 32;
-const MAX_PER_USER: u32 = 8;
-const MAX_CONNECTIONS: u32 = 32;
-const MAX_BYTES_PER_SECOND: u64 = 64 * 1024 * 1024;
+pub(crate) const MAX_ALLOCATIONS: u32 = 32;
+pub(crate) const MAX_PER_USER: u32 = 8;
+pub(crate) const MAX_CONNECTIONS: u32 = 32;
+pub(crate) const MAX_BYTES_PER_SECOND: u64 = 64 * 1024 * 1024;
 const TURN_PORT: SetupError = SetupError("SPRY_TURN_PORT must be an integer from 1 to 65535");
 const TLS_PORT: SetupError =
     SetupError("SPRY_TLS_PORT must be an integer from 1 to 65535 and differ from SPRY_TURN_PORT");
@@ -52,7 +52,7 @@ fn port(value: &str) -> Option<u16> {
 }
 
 /// A plain decimal integer from 1 to `maximum`: no sign, space or empty value.
-fn bounded(value: &str, maximum: u32) -> Option<u32> {
+pub(crate) fn bounded(value: &str, maximum: u32) -> Option<u32> {
     (!value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit()))
         .then(|| value.parse::<u32>().ok())
         .flatten()
