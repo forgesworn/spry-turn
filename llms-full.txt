@@ -3523,6 +3523,21 @@ Canonical source: [CHANGELOG.md](https://github.com/forgesworn/spry-turn/blob/ma
   answers, and a reproducible `standardNode` entry in
   `tests/vectors/spry-link.json`. Existing vector entries are unchanged.
 - Add `Authority::trust_pairing` for supervised hosts.
+- Add `spry-portmap`, an in-house router port-mapping library: PCP (MAP),
+  then NAT-PMP, then UPnP IGD (v1 and v2, WANIPConnection and
+  WANPPPConnection), with gateway discovery from the route table, renewal at
+  half the lease, epoch-based restart detection, owned-only removal (PCP by
+  nonce, UPnP after `GetSpecificPortMappingEntry` shows this host and tag)
+  and a record file so a later launch can remove a crashed run's mappings.
+  UPnP routers that grant only permanent leases are used and recorded unless
+  the caller refuses them. Router replies are parsed with fixed size limits
+  and deadlines; UPnP URLs are followed only when they name the gateway, and
+  the XML reader refuses document type declarations and custom entities.
+  No new dependency: `getrandom` and `socket2` were already in the workspace.
+  Tests run against in-house fake PCP, NAT-PMP and UPnP gateways on
+  loopback. `spry-node portmap check` maps a test port, prints what worked
+  and removes it, without starting a relay. Not yet wired into `spry-node`'s
+  relay; real routers remain untested.
 
 - Retry existing nonblocking stream output once before dropping a relay packet
   for queue pressure. Recheck the unchanged queue/control-reserve limits after
