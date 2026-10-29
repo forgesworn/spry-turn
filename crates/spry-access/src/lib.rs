@@ -1186,6 +1186,20 @@ struct AuthEvent {
     sig: String,
 }
 
+/// Make a rename in `directory` durable. On Unix the directory itself is
+/// synced. Windows cannot open a directory as a file without platform calls
+/// this crate does not make (`unsafe` is forbidden here); there the file's
+/// contents are already synced before the rename, which replaces the old
+/// file in one step, and NTFS journals the rename itself.
+#[cfg(unix)]
+fn sync_directory(directory: &Path) -> std::io::Result<()> {
+    fs::File::open(directory)?.sync_all()
+}
+#[cfg(not(unix))]
+fn sync_directory(_directory: &Path) -> std::io::Result<()> {
+    Ok(())
+}
+
 fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let parent = path.parent().ok_or(std::io::ErrorKind::InvalidInput)?;
     if !parent.exists() {
@@ -1209,7 +1223,7 @@ fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
         file.write_all(bytes)?;
         file.sync_all()?;
         fs::rename(&temporary, path)?;
-        fs::File::open(parent)?.sync_all()
+        sync_directory(parent)
     })();
     let _ = fs::remove_file(temporary);
     result

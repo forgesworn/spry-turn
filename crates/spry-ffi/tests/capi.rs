@@ -16,7 +16,10 @@ use std::{
     net::{TcpListener, UdpSocket},
     path::PathBuf,
     ptr,
-    sync::mpsc,
+    sync::{
+        atomic::{AtomicU32, Ordering},
+        mpsc,
+    },
     thread,
     time::{Duration, Instant},
 };
@@ -87,17 +90,15 @@ fn fixture_relay() -> String {
 }
 
 /// A loopback listener port and two allocation ports, free on UDP and TCP.
+/// Each call takes a different slot, so tests running at the same time in
+/// this process never probe the same ports and then race to bind them. The
+/// range stays below 49152, where a mapped node picks its own ports.
 fn ports() -> (u16, u16, u16) {
-    for attempt in 0..256_u32 {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .subsec_nanos();
-        let seed = (u64::from(std::process::id()) * 7919
-            + u64::from(attempt) * 104_729
-            + u64::from(nanos))
-            % 4_000;
-        let base = 30_000 + (seed as u16) * 8;
+    static NEXT: AtomicU32 = AtomicU32::new(0);
+    let start = std::process::id() % 3_000;
+    for _ in 0..256 {
+        let slot = (start + NEXT.fetch_add(1, Ordering::Relaxed)) % 3_000;
+        let base = 20_000 + (slot as u16) * 8;
         let candidates = [base, base + 2, base + 3];
         let tcp: Option<Vec<_>> = candidates
             .iter()
@@ -427,8 +428,8 @@ fn a_node_started_through_the_c_abi_reports_relays_and_stops_on_request() {
     );
     assert_eq!(length, needed);
     let ready = relay.next().unwrap();
+    assert_eq!(ready["event"], "ready", "{ready}");
     assert_eq!(serde_json::to_vec(&ready).unwrap().len(), needed);
-    assert_eq!(ready["event"], "ready");
     assert!(ready["endpoint"].as_str().unwrap().starts_with("spry://"));
     assert_eq!(ready["pairing"].as_str().unwrap().len(), 43);
     assert_eq!(
@@ -514,7 +515,7 @@ fn stopping_a_mapped_node_removes_the_router_mappings_it_made() {
                "allocationPorts":8,"requested":8,"permanent":false})
     );
     let ready = relay.next().unwrap();
-    assert_eq!(ready["event"], "ready");
+    assert_eq!(ready["event"], "ready", "{ready}");
     assert_eq!(ready["relayPortMap"].as_array().unwrap().len(), 8);
     let held = router.mappings();
     assert_eq!(held.len(), 10, "listener on UDP and TCP and eight ports");
