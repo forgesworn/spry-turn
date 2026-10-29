@@ -1,0 +1,29 @@
+[package]
+name = "spry-portmap"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+publish = false
+license = "MIT"
+authors = ["TheCryptoDonkey"]
+description = "In-house router port mapping (PCP, NAT-PMP and UPnP IGD) for a self-hosted Spry relay"
+repository = "https://github.com/forgesworn/spry-turn"
+readme = "README.md"
+
+[features]
+# In-process fake PCP, NAT-PMP and UPnP IGD gateways for tests. Never needed
+# by a relay.
+testing = []
+
+[dependencies]
+getrandom = "=0.3.4"
+socket2 = "=0.6.5"
+
+[dev-dependencies]
+spry-portmap = { path = ".", features = ["testing"] }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = "warn"

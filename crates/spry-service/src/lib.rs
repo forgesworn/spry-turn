@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 pub mod mesh;
 mod node;
+pub mod portmap;
 pub mod public;
 pub mod resolver;
 pub mod signalling;

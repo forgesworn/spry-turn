@@ -892,6 +892,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "spry-portmap"
+version = "0.1.0"
+dependencies = [
+ "getrandom 0.3.4",
+ "socket2",
+ "spry-portmap",
+]
+
+[[package]]
 name = "spry-service"
 version = "0.1.0"
 dependencies = [
@@ -908,6 +917,7 @@ dependencies = [
  "socket2",
  "spry-access",
  "spry-link",
+ "spry-portmap",
  "spry-turn",
  "tokio",
  "tokio-tungstenite",

@@ -14,7 +14,7 @@ categories = ["network-programming", "command-line-utilities", "wasm"]
 publish = false
 
 [workspace]
-members = ["crates/spry-access", "crates/spry-service", "crates/spry-link"]
+members = ["crates/spry-access", "crates/spry-service", "crates/spry-link", "crates/spry-portmap"]
 exclude = ["experiments/linux-batch", "fuzz"]
 resolver = "3"
 
