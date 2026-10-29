@@ -867,14 +867,32 @@ mod policy_tests {
     #[test]
     #[cfg(all(feature = "connected-udp", unix))]
     fn relay_overload_preserves_stream_and_resumes_both_framing_paths() {
+        // Above the bytes two 2 KiB socket buffers can hold (the platform may
+        // round each up), below macOS's 9216-byte UDP datagram limit.
+        const OVERLOAD_PAYLOAD: usize = 8192;
         for channel in [None, Some(0x4000_u16)] {
             let mut config = Config::local(vec![1; 32]);
             config.listen.set_port(0);
             let mut server = Server::bind(config).unwrap();
-            let mut client = std::net::TcpStream::connect(server.local_addr().unwrap()).unwrap();
+            // Fix the client's receive buffer at 2 KiB before connecting, so
+            // the window is negotiated at that size. An explicit size stops the
+            // OS auto-tuning the receive buffer upwards as data arrives, which
+            // on macOS lets the kernel keep trickling queued bytes out for a
+            // while after the first WouldBlock. The non-reading client then
+            // gives real, bounded backpressure: the kernel can never absorb
+            // more than a few KiB of the application queue.
+            let client = socket2::Socket::new(
+                socket2::Domain::IPV4,
+                socket2::Type::STREAM,
+                Some(socket2::Protocol::TCP),
+            )
+            .unwrap();
+            client.set_recv_buffer_size(2048).unwrap();
+            client
+                .connect(&server.local_addr().unwrap().into())
+                .unwrap();
+            let mut client = std::net::TcpStream::from(client);
             client.set_nonblocking(true).unwrap();
-            // Leave the receive window at its OS default. The non-reading
-            // client and small server send buffer provide real backpressure.
             accept_stream(&mut server);
             let token = *server.connections.keys().next().unwrap();
             let key = Client::Stream(token);
@@ -938,12 +956,16 @@ mod policy_tests {
             let queued = conn.output.clone();
             let written = conn.written;
 
-            let payload = vec![0x7e; 2048];
+            // Larger than anything the kernel could drain from the full
+            // queue between the fill above and this datagram being handled
+            // (even while the retry flush runs), so the new frame can only
+            // be refused, whatever the scheduler does on a loaded runner.
+            let payload = vec![0x7e; OVERLOAD_PAYLOAD];
             peer.send_to(&payload, address).unwrap();
             let mut scratch = vec![0; MAX_PACKET + HEADROOM];
             let wait_for_peer = |server: &Server| {
                 let queued_by = Instant::now() + Duration::from_secs(2);
-                let mut peek = [0; 2048];
+                let mut peek = vec![0; OVERLOAD_PAYLOAD];
                 loop {
                     match server.allocations[&key].socket.peek_from(&mut peek) {
                         Ok((n, from)) => {
