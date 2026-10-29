@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Refuse a control relay whose host name ends in a dot (`wss://localhost./`,
+  `wss://relay.local./`) in `ControlEndpoint::new`. A trailing dot named the
+  same host but hid its last label from the local-name check, so it slipped
+  past the refusal of `local`, `localhost`, `internal`, `invalid` and `test`
+  names. This matches the KithMoot web client.
 - Add supervised standard mode, `spry-node supervised`, for a host app that
   runs Spry as its child process for its own rooms. It opens no HTTP
   listener and answers only the room-grant control paths (`/v1/grants`,

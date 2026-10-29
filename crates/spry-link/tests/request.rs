@@ -25,6 +25,12 @@ fn control_uris_are_bounded_canonical_and_have_no_implicit_relays() {
         vec!["ws://relay.example".into()],
         vec!["wss://localhost".into()],
         vec!["wss://127.0.0.1".into()],
+        // A trailing dot is the same name, so it cannot slip past the
+        // local-name check.
+        vec!["wss://localhost./".into()],
+        vec!["wss://relay.local./".into()],
+        vec!["wss://relay.internal./".into()],
+        vec!["wss://relay.example./".into()],
         vec!["wss://relay.example?a=1".into()],
         vec!["wss://relay.example".into(); 5],
     ] {
