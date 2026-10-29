@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+- Add supervised standard mode, `spry-node supervised`, for a host app that
+  runs Spry as its child process for its own rooms. It opens no HTTP
+  listener and answers only the room-grant control paths (`/v1/grants`,
+  `/v1/grants/devices`, `/v1/grants/vouch`, `/v1/credentials`) over the
+  `spry:` Nostr control channel, on one to four supervisor-named relays;
+  every other path gets 404. The supervisor's signing key is trusted as the
+  only pairing (stable id across restarts; other pairings and their grants
+  are removed), every grant is sealed (`SPRY_ROOM_SEAL` must be unset or
+  `required`), and public mode, adverts, claim codes and the private mesh
+  are absent. The TURN relay runs in the same process with an explicit bind
+  address, public IPv4, listener port, separate public UDP and TCP listener
+  ports and 1 to 64 `--relay-port-map` pairs; home caps default to 8
+  allocations, 2 per user, 16 TCP connections and 125000 bytes/s per
+  allocation, raisable to the standard maximums. `--exit-on-stdin-close` is
+  required. Unknown options and any other `SPRY_` variable refuse startup.
+  Without the `supervised` argument `spry-node` is unchanged.
+- Add the `spry-standard-v1` node card (kind 24183, no address) in
+  `spry_link::standard`, returned with supervised grant and credential
+  answers, and a reproducible `standardNode` entry in
+  `tests/vectors/spry-link.json`. Existing vector entries are unchanged.
+- Add `Authority::trust_pairing` for supervised hosts.
+
 - Retry existing nonblocking stream output once before dropping a relay packet
   for queue pressure. Recheck the unchanged queue/control-reserve limits after
   that attempt; a genuinely blocked stream still drops the packet.

@@ -1852,3 +1852,75 @@ fn failed_state_writes_change_nothing() {
     let state = saved(&scratch.file());
     assert_eq!(state["grants"][0]["expires"], NOW + 86_403 + GRANT_TTL);
 }
+
+#[test]
+fn a_trusted_pairing_keeps_its_id_and_grants_across_restarts_and_stands_alone() {
+    let scratch = Scratch::new();
+    let mut a = fixture();
+    a.config.state_file = Some(scratch.file());
+    // A claimed pairing from an earlier run, with its own grant.
+    let claimed = pair_with(&mut a, &public(5), NOW);
+    let other = grant_for(&mut a, &claimed, &public(5), "other-scope", NOW);
+    let id = a.trust_pairing(&public(2), NOW).expect("trusted");
+    assert_eq!(id.len(), 43);
+    assert!(a.pairing_authorises(&id, &public(2)));
+    assert!(!a.has_pairing(&claimed));
+    assert_eq!(
+        refusal(redeem(&mut a, &public(5), &other, NOW)),
+        (403, EXPIRED)
+    );
+    assert_eq!(saved(&scratch.file())["pairs"].as_array().unwrap().len(), 1);
+    let token = grant_for(&mut a, &id, &public(2), "synthetic-scope", NOW);
+    register(&mut a, &id, &token, &[public(3)], true, 1, NOW);
+
+    // The same secret and key give the same id after a restart, so the room
+    // grant and its registered keys survive.
+    let mut b = restarted(&scratch.file());
+    assert_eq!(b.trust_pairing(&public(2), NOW + 10).unwrap(), id);
+    redeem(&mut b, &public(3), &token, NOW + 11).expect("grant survives restart");
+    let created = saved(&scratch.file())["pairs"][0]["createdAt"].clone();
+    assert_eq!(created, json!(NOW));
+
+    // A different supervising key replaces the pairing and its grants.
+    let mut c = restarted(&scratch.file());
+    let replaced = c.trust_pairing(&public(6), NOW + 20).unwrap();
+    assert_ne!(replaced, id);
+    assert!(!c.has_pairing(&id));
+    assert_eq!(
+        refusal(redeem(&mut c, &public(3), &token, NOW + 21)),
+        (403, EXPIRED)
+    );
+    let state = saved(&scratch.file());
+    assert_eq!(state["pairs"].as_array().unwrap().len(), 1);
+    assert!(state["grants"].as_array().unwrap().is_empty());
+
+    // Another node secret derives another id for the same key.
+    let mut config = Config::new(
+        "https://relay.example:3744",
+        "https://kithmoot.example/j/",
+        &public(1),
+        b"another-synthetic-secret-not-for-deployment",
+        None,
+    )
+    .unwrap();
+    config.ready = true;
+    assert_ne!(
+        Authority::new(config)
+            .trust_pairing(&public(2), NOW)
+            .unwrap(),
+        id
+    );
+    // Only a real curve point is trusted.
+    for bad in [
+        "",
+        "00",
+        &"g".repeat(64),
+        &"f".repeat(64),
+        &public(2).to_uppercase(),
+    ] {
+        assert_eq!(
+            refusal(fixture().trust_pairing(bad, NOW).map(Value::String)),
+            (400, "Invalid pairing key.")
+        );
+    }
+}

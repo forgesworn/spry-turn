@@ -26,6 +26,7 @@ const documents = [
   ['Get started', 'docs/coturn-compatibility.md', 'Coturn compatibility', 'Feature map, configuration concepts and migration gaps.'],
   ['Operate and support', 'docs/public-mode.md', 'Public mode', 'Opt-in anonymous credentials, the kind 31478 advert and the client rules; off by default.'],
   ['Operate and support', 'docs/operations.md', 'Independent operation', 'Bounded relay ports, firewall/NAT plan, secret rotation, TLS and limits.'],
+  ['Operate and support', 'docs/supervised-mode.md', 'Supervised standard mode', 'spry-node as a host app\'s child process: room grants only over spry: control, no HTTP, sealed, explicit addresses and the spry-standard-v1 card.'],
   ['Operate and support', 'docs/mapped-ports.md', 'Explicit TURN allocation mappings', 'Exact local/public UDP endpoint pairs, fail-closed allocation and separate VPN/reachability gates.'],
   ['Operate and support', 'SECURITY.md', 'Security', 'Reporting channel and transport/credential boundaries.'],
   ['Operate and support', 'SUPPORT.md', 'Support and donations', 'Bug reports and established ForgeSworn funding destinations.'],

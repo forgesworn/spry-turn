@@ -4,6 +4,7 @@ use spry_link::{
     control::{self, ControlEndpoint, RelayPolicy},
     identity::Identity,
     peer::PeerCard,
+    standard::StandardCard,
 };
 fn main() {
     let node = Identity::from_secret(&[1; 32]).unwrap();
@@ -28,6 +29,10 @@ fn main() {
     let card = PeerCard::sign(&node, "[fd12:3456::2]:3745".parse().unwrap(), now)
         .unwrap()
         .event;
+    // Zero auxiliary randomness makes this card reproducible byte for byte.
+    let standard = StandardCard::sign_with_aux(&node, now, &[0; 32])
+        .unwrap()
+        .event;
     println!("{}", serde_json::to_string_pretty(&json!({"schema":1,"synthetic":true,"now":now,"nodeKeyRepeatedByte":1,"clientKeyRepeatedByte":2,
-        "endpoint":target.uri().unwrap(),"request":request,"response":response,"node":card})).unwrap());
+        "endpoint":target.uri().unwrap(),"request":request,"response":response,"node":card,"standardNode":standard})).unwrap());
 }

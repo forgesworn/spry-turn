@@ -7,6 +7,7 @@ pub mod identity;
 pub mod nip44;
 pub mod peer;
 pub mod registry;
+pub mod standard;
 
 pub const MAX_PLAINTEXT: usize = 16_384;
 pub const MAX_EVENT: usize = 24_576;

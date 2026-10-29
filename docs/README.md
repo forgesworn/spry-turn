@@ -15,6 +15,7 @@ performance and explicit compatibility gaps. The source and GitHub prereleases a
 | Assess an existing coturn configuration | [Coturn compatibility](coturn-compatibility.md) |
 | Configure addresses, credentials, TLS and resource limits | [Operations](operations.md) |
 | Configure exact local/public TURN allocation port pairs | [Explicit allocation mappings](mapped-ports.md) |
+| Run Spry as a host application's child process for its own rooms | [Supervised standard mode](supervised-mode.md) |
 | Open your own relay to anyone, optionally advertised on Nostr | [Public mode](public-mode.md) |
 | Inspect current throughput, latency and resource measurements | [Standalone qualification](qualification-0.2.1.md), [historical benchmarks](benchmarks.md) |
 | Reproduce optional performance experiments | [Batching, process scaling and PGO](performance-experiments.md) |
