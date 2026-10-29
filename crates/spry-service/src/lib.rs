@@ -23,6 +23,8 @@ use std::{
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
+/// Supervised standard mode inside a host's own process; see `docs/embedding.md`.
+pub use supervised::embedded;
 use tokio::{
     net::{TcpListener, UdpSocket},
     process::{Child, Command},

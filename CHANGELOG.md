@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+- Run supervised mode inside a host app's own process.
+  `spry_service::embedded::start` takes the same options as
+  `spry-node supervised` (without `--exit-on-stdin-close`, which is refused
+  there) and the same five settings as name and value pairs; it never reads
+  the process environment, installs no signal handler and never ends the
+  process. Lines go to the host's sink and end with a new
+  `{"v":1,"event":"stopped","code":N}` line carrying the exit code and any
+  refusal. `Node::stop` replaces closing stdin: the relay stops and the
+  node's own router mappings are removed. The child process is unchanged.
+- Add `crates/spry-ffi`, `libspry_relay`: a hand-written C ABI
+  (`include/spry_relay.h`: start, poll lines into the caller's buffer, stop,
+  exit code, free) with every pointer borrowed for the call and every export
+  behind `catch_unwind`, and, with the `jni` feature, a JNI shim for the
+  Kotlin class `dev.forgesworn.spry.SpryRelayNative`, written against the JNI
+  function table with no binding crate. Android keep rules ship with it. A
+  new `release-ffi` profile unwinds on panic so the guards hold in release
+  builds; the executables still abort. This crate is the only place `unsafe`
+  is allowed, in its two ABI modules. See `docs/embedding.md`.
+- Add `scripts/build-android.py`, which builds the library for arm64-v8a and
+  x86_64 (API 33) with the NDK's clang through cargo's own target variables
+  (no `cargo-ndk`), links with 16 KB pages and checks machine, alignment,
+  exports and needed libraries, and `scripts/jni-smoke.py`, which drives
+  every JNI entry point from a JVM. A test-only `panic-probe` feature proves
+  that a panic in the `release-ffi` library returns an error code.
+- Add a release workflow. Every pull request builds both executables
+  natively for macOS arm64, Windows x64, Linux x64 and Linux arm64, runs them
+  and the C ABI tests on each, and builds and checks the Android library. A
+  `v*` tag matching `Cargo.toml` also writes `SHA256SUMS` and
+  `release-manifest.json` over every asset, adds the exact source archive and
+  creates a draft prerelease for a maintainer to publish. The Windows
+  executables are unsigned and there is no macOS Intel build.
+
 - Refuse a control relay whose host name ends in a dot (`wss://localhost./`,
   `wss://relay.local./`) in `ControlEndpoint::new`. A trailing dot named the
   same host but hid its last label from the local-name check, so it slipped

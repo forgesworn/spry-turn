@@ -9,7 +9,7 @@
 //! room grant is sealed (`SPRY_ROOM_SEAL=required`), and every network value
 //! is supplied explicitly: nothing is discovered or guessed.
 use crate::{
-    node::{ServiceState, relay_options_from_environment},
+    node::{ServiceState, relay_options},
     now,
     public::SetupError,
     public_v4,
@@ -39,6 +39,7 @@ use std::{
     time::Duration,
 };
 
+pub mod embedded;
 mod mapping;
 
 /// Home defaults from the owner decisions of 28 October 2026. Each may be
@@ -131,6 +132,9 @@ const RELAY_STOPPED: SetupError = SetupError("the embedded relay stopped");
 const IDENTITY: SetupError = SetupError("the node identity could not be prepared");
 const STATE: SetupError = SetupError("the state file could not be read or saved");
 const STDIN_READ: SetupError = SetupError("the supervisor's pipe could not be read");
+const EMBEDDED_STDIN: SetupError = SetupError(
+    "--exit-on-stdin-close does not apply to a node inside its host's process: the host stops it",
+);
 
 /// Automatic port opening gave no relay that guests can reach. The node
 /// exits with code 3 so a supervisor can tell this from a crash and does not
@@ -161,9 +165,35 @@ pub(crate) struct Environment {
     secret: Option<Vec<u8>>,
     seal: Option<String>,
     local_test: Option<String>,
+    socks_proxy: Option<String>,
+    control_ca_file: Option<String>,
     foreign: bool,
 }
 impl Environment {
+    /// The same five settings handed over by a host as name and value
+    /// pairs, for a node in the host's own process. The process environment
+    /// is never read, so nothing the host inherited can appear to apply.
+    /// Any other name, `SPRY_` or not, and any name given twice refuse.
+    pub(crate) fn from_pairs(pairs: &[(String, String)]) -> Self {
+        let mut found = Self::default();
+        let mut seen = std::collections::HashSet::new();
+        for (name, value) in pairs {
+            if !seen.insert(name.as_str()) {
+                found.foreign = true;
+                continue;
+            }
+            let value = Some(value.clone());
+            match name.as_str() {
+                "SPRY_TURN_SECRET" => found.secret = value.map(String::into_bytes),
+                "SPRY_ROOM_SEAL" => found.seal = value,
+                "SPRY_LOCAL_TEST" => found.local_test = value,
+                "SPRY_SOCKS_PROXY" => found.socks_proxy = value,
+                "SPRY_CONTROL_CA_FILE" => found.control_ca_file = value,
+                _ => found.foreign = true,
+            }
+        }
+        found
+    }
     fn read() -> Result<Self, SetupError> {
         let mut found = Self::default();
         for (name, value) in env::vars_os() {
@@ -178,8 +208,12 @@ impl Environment {
                 "SPRY_TURN_SECRET" => found.secret = Some(text(SECRET)?.into_bytes()),
                 "SPRY_ROOM_SEAL" => found.seal = Some(text(SEAL)?),
                 "SPRY_LOCAL_TEST" => found.local_test = Some(text(LOCAL_TEST)?),
-                // Outbound control options, read by the shared relay rules.
-                "SPRY_SOCKS_PROXY" | "SPRY_CONTROL_CA_FILE" => {}
+                // Outbound control options, for the shared relay rules. A
+                // value that is not Unicode is ignored, as those rules do.
+                "SPRY_SOCKS_PROXY" => found.socks_proxy = value.to_str().map(str::to_owned),
+                "SPRY_CONTROL_CA_FILE" => {
+                    found.control_ca_file = value.to_str().map(str::to_owned);
+                }
                 name if name.starts_with("SPRY_") => found.foreign = true,
                 _ => {}
             }
@@ -235,7 +269,19 @@ fn lowercase_key(value: &str) -> bool {
 }
 
 impl Settings {
+    /// Settings for `spry-node supervised`, a child process whose stdin is
+    /// its lifetime: `--exit-on-stdin-close` is required.
+    #[cfg(test)]
     pub(crate) fn parse(args: &[String], environment: &Environment) -> Result<Self, SetupError> {
+        Self::parse_for(args, environment, Host::Process)
+    }
+    /// The same options for either host. Inside the host's own process there
+    /// is no stdin to watch, so `--exit-on-stdin-close` is refused there.
+    pub(crate) fn parse_for(
+        args: &[String],
+        environment: &Environment,
+        host: Host,
+    ) -> Result<Self, SetupError> {
         if environment.foreign {
             return Err(FOREIGN_SETTING);
         }
@@ -265,6 +311,9 @@ impl Settings {
         while let Some(option) = iter.next() {
             let option = option.as_str();
             if option == "--exit-on-stdin-close" {
+                if host == Host::Embedded {
+                    return Err(EMBEDDED_STDIN);
+                }
                 if stdin {
                     return Err(ARGUMENT);
                 }
@@ -311,7 +360,7 @@ impl Settings {
                 }
             }
         }
-        if !stdin {
+        if !stdin && host == Host::Process {
             return Err(STDIN);
         }
         let required = |name: &str, error| single.get(name).copied().ok_or(error);
@@ -839,21 +888,51 @@ pub(crate) fn authority(
     Ok((authority, pairing))
 }
 
-fn line(value: Value) {
-    let mut out = io::stdout().lock();
-    let _ = writeln!(out, "{value}");
-    let _ = out.flush();
+/// Which host the node lives in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Host {
+    /// `spry-node supervised`: a child process. Lines go to stdout, stdin is
+    /// the lifetime, SIGINT and SIGTERM stop it, and it ends the process.
+    Process,
+    /// Inside the host's own process (`embedded`): lines go to the host's
+    /// sink, the host's stop request is the lifetime, no signal handler is
+    /// installed and the process is never ended.
+    Embedded,
 }
 
-/// How the supervisor's pipe ended, for a node that has mappings to remove.
+/// Where the node's single-line JSON objects go.
+#[derive(Clone)]
+pub(crate) struct Output(Arc<dyn Fn(&str) + Send + Sync>);
+impl Output {
+    fn stdout() -> Self {
+        Self(Arc::new(|text: &str| {
+            let mut out = io::stdout().lock();
+            let _ = writeln!(out, "{text}");
+            let _ = out.flush();
+        }))
+    }
+    pub(crate) fn line(&self, value: Value) {
+        (self.0)(&value.to_string());
+    }
+}
+
+/// How the supervisor's pipe ended, or that the host asked the node to stop.
 #[derive(Default)]
-struct Lifetime {
+pub(crate) struct Lifetime {
     closed: tokio::sync::Notify,
     failed: AtomicBool,
 }
+impl Lifetime {
+    /// Ask the node for an orderly stop: the relay's ports are freed and its
+    /// router mappings removed before it ends.
+    pub(crate) fn close(&self) {
+        self.failed.store(false, Ordering::Release);
+        self.closed.notify_one();
+    }
+}
 /// Seconds a node that was asked to stop has to finish removing its router
 /// mappings before it exits regardless.
-const STOP_SECONDS: u64 = 5;
+pub(crate) const STOP_SECONDS: u64 = 5;
 
 /// The supervisor's stdin pipe is the node's lifetime. EOF ends the whole
 /// process, including the forwarding thread; the OS closes every socket.
@@ -885,6 +964,46 @@ fn watch_stdin(graceful: Option<Arc<Lifetime>>) -> io::Result<()> {
         .map(|_| ())
 }
 
+/// SIGINT and SIGTERM for a child process. A node in its host's process
+/// installs no handler: the signals belong to the host.
+struct Signals {
+    enabled: bool,
+    #[cfg(unix)]
+    terminate: Option<tokio::signal::unix::Signal>,
+}
+impl Signals {
+    fn new(host: Host) -> io::Result<Self> {
+        let enabled = host == Host::Process;
+        Ok(Self {
+            enabled,
+            #[cfg(unix)]
+            terminate: if enabled {
+                Some(tokio::signal::unix::signal(
+                    tokio::signal::unix::SignalKind::terminate(),
+                )?)
+            } else {
+                None
+            },
+        })
+    }
+    /// Completes when the process is asked to stop; never for a node in its
+    /// host's process.
+    async fn recv(&mut self) {
+        if !self.enabled {
+            return std::future::pending().await;
+        }
+        #[cfg(unix)]
+        if let Some(terminate) = self.terminate.as_mut() {
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {}
+                _ = terminate.recv() => {}
+            }
+            return;
+        }
+        let _ = tokio::signal::ctrl_c().await;
+    }
+}
+
 fn set_credentials(state: &ServiceState, urls: Option<Vec<String>>, ready: bool) {
     if let Ok(mut authority) = state.lock() {
         if let Some(urls) = urls {
@@ -894,11 +1013,22 @@ fn set_credentials(state: &ServiceState, urls: Option<Vec<String>>, ready: bool)
     }
 }
 
-async fn run(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
-    let mut settings = Settings::parse(args, &Environment::read()?)?;
-    let lifetime = Arc::new(Lifetime::default());
-    watch_stdin(settings.map.is_some().then(|| lifetime.clone()))?;
-    let options = relay_options_from_environment()?;
+pub(crate) async fn run(
+    args: &[String],
+    environment: Environment,
+    host: Host,
+    out: &Output,
+    lifetime: Arc<Lifetime>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut settings = Settings::parse_for(args, &environment, host)?;
+    if host == Host::Process {
+        watch_stdin(settings.map.is_some().then(|| lifetime.clone()))?;
+    }
+    let options = relay_options(
+        settings.local_test,
+        environment.socks_proxy.clone(),
+        environment.control_ca_file.clone(),
+    )?;
     let identity = Arc::new(Identity::derive(&settings.secret).map_err(|_| IDENTITY)?);
     let endpoint = ControlEndpoint::new(
         identity.public_key(),
@@ -910,21 +1040,25 @@ async fn run(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     // Ask the router first, when told to: the public address and ports are
     // what it grants. The thread keeps renewing them and removes them when
     // this function returns.
-    #[cfg(unix)]
-    let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+    let mut signals = Signals::new(host)?;
     let (updates_in, mut updates) = tokio::sync::mpsc::unbounded_channel::<Update>();
     let mut task = None;
     if let Some(plan) = settings.map_plan() {
         task = Some(mapping::Task::spawn(plan, updates_in.clone()).map_err(|_| MAPPING_START)?);
         loop {
             tokio::select! {
-                _ = tokio::signal::ctrl_c() => return Ok(()),
-                _ = async { #[cfg(unix)] { terminate.recv().await; } #[cfg(not(unix))] { std::future::pending::<()>().await; } } => return Ok(()),
-                _ = lifetime.closed.notified() => return Ok(()),
+                _ = signals.recv() => {
+                    release(task.take(), &mut updates, out);
+                    return Ok(());
+                }
+                _ = lifetime.closed.notified() => {
+                    release(task.take(), &mut updates, out);
+                    return Ok(());
+                }
                 update = updates.recv() => {
                     let Some(update) = update else { return Err(CannotHost.into()) };
                     if let Some(event) = update.event() {
-                        line(event);
+                        out.line(event);
                     }
                     match update {
                         Update::Mapped { values, .. } => {
@@ -950,7 +1084,7 @@ async fn run(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         options,
     );
     runtime.control.configure(endpoint);
-    line(json!({
+    out.line(json!({
         "v":1,
         "event":"ready",
         "endpoint":uri,
@@ -959,14 +1093,13 @@ async fn run(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         "relayPortMap":settings.mappings,
     }));
     let mut reported = relay.counts();
-    line(status_line(reported));
+    out.line(status_line(reported));
     let mut monitor = tokio::time::interval(Duration::from_secs(1));
     let mut connected = 0;
     let mut seconds = 0_u64;
     let result = loop {
         tokio::select! {
-            _ = tokio::signal::ctrl_c() => break Ok(()),
-            _ = async { #[cfg(unix)] { terminate.recv().await; } #[cfg(not(unix))] { std::future::pending::<()>().await; } } => break Ok(()),
+            _ = signals.recv() => break Ok(()),
             _ = lifetime.closed.notified() => {
                 break if lifetime.failed.load(Ordering::Acquire) {
                     Err(STDIN_READ.into())
@@ -977,7 +1110,7 @@ async fn run(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
             update = updates.recv() => {
                 let Some(update) = update else { continue };
                 if let Some(event) = update.event() {
-                    line(event);
+                    out.line(event);
                 }
                 match update {
                     Update::Changed { values, .. } => {
@@ -992,7 +1125,7 @@ async fn run(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
                             break Err(RELAY_START.into());
                         }
                         set_credentials(&state, Some(settings.urls()), true);
-                        line(json!({
+                        out.line(json!({
                             "v":1,
                             "event":"urls",
                             "urls":settings.urls(),
@@ -1009,7 +1142,7 @@ async fn run(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
                 }
                 let active = runtime.control.active_relays();
                 if (active == 0) != (connected == 0) {
-                    line(json!({"v":1,"event":"control","relays":active}));
+                    out.line(json!({"v":1,"event":"control","relays":active}));
                 }
                 connected = active;
                 // Counts again only when they have moved, and no faster than
@@ -1018,7 +1151,7 @@ async fn run(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
                 if seconds % STATUS_SECONDS == 0 {
                     let counts = relay.counts();
                     if counts != reported {
-                        line(status_line(counts));
+                        out.line(status_line(counts));
                         reported = counts;
                     }
                 }
@@ -1028,15 +1161,50 @@ async fn run(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     drop(runtime);
     // Free the relay's ports first, then give the router's back.
     drop(relay);
-    if let Some(mut task) = task.take() {
+    release(task.take(), &mut updates, out);
+    result
+}
+
+/// Remove the node's router mappings, if it has any, and print what the
+/// mapping thread reported while doing so (`released`).
+fn release(
+    task: Option<mapping::Task>,
+    updates: &mut tokio::sync::mpsc::UnboundedReceiver<Update>,
+    out: &Output,
+) {
+    if let Some(mut task) = task {
         task.stop();
         while let Ok(update) = updates.try_recv() {
             if let Some(event) = update.event() {
-                line(event);
+                out.line(event);
             }
         }
     }
-    result
+}
+
+/// The exit code for how [`run`] ended, and the refusal to show, if any.
+/// Only refusals that name a setting are given; other errors may carry
+/// configuration values.
+pub(crate) fn exit_of(result: Result<(), Box<dyn std::error::Error>>) -> (i32, Option<String>) {
+    match result {
+        Ok(()) => (0, None),
+        Err(error) if error.downcast_ref::<CannotHost>().is_some() => {
+            (EXIT_CANNOT_HOST, Some(CannotHost.to_string()))
+        }
+        Err(error) => (
+            1,
+            error.downcast_ref::<SetupError>().map(ToString::to_string),
+        ),
+    }
+}
+
+/// The node's own tokio runtime: two workers, as the other profiles use.
+pub(crate) fn runtime() -> io::Result<tokio::runtime::Runtime> {
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .max_blocking_threads(2)
+        .enable_all()
+        .build()
 }
 
 /// Entry point for `spry-node supervised ...`.
@@ -1049,27 +1217,30 @@ pub(crate) fn main(args: Vec<std::ffi::OsString>) {
         eprintln!("Spry supervised mode stopped: {ARGUMENT}.");
         std::process::exit(1);
     };
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(2)
-        .max_blocking_threads(2)
-        .enable_all()
-        .build();
-    let Ok(runtime) = runtime else {
+    let Ok(runtime) = runtime() else {
         eprintln!("Spry could not start.");
         std::process::exit(1);
     };
-    if let Err(error) = runtime.block_on(run(&args)) {
-        // Only refusals that name a setting are printed; other errors may
-        // carry configuration values.
-        if error.downcast_ref::<CannotHost>().is_some() {
-            eprintln!("Spry supervised mode stopped: automatic port opening did not succeed.");
-            std::process::exit(EXIT_CANNOT_HOST);
+    let result = Environment::read()
+        .map_err(Into::into)
+        .and_then(|environment| {
+            runtime.block_on(run(
+                &args,
+                environment,
+                Host::Process,
+                &Output::stdout(),
+                Arc::new(Lifetime::default()),
+            ))
+        });
+    match exit_of(result) {
+        (0, _) => {}
+        (code, refusal) => {
+            match refusal {
+                Some(refusal) => eprintln!("Spry supervised mode stopped: {refusal}."),
+                None => eprintln!("Spry supervised mode stopped. Check the supervisor's settings."),
+            }
+            std::process::exit(code);
         }
-        match error.downcast_ref::<SetupError>() {
-            Some(refusal) => eprintln!("Spry supervised mode stopped: {refusal}."),
-            None => eprintln!("Spry supervised mode stopped. Check the supervisor's settings."),
-        }
-        std::process::exit(1);
     }
 }
 

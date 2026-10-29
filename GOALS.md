@@ -363,7 +363,7 @@ Archipelago Apps `7d98cc2b7a442ead2c1a3274aedd2cb9b65d5675`.
 | Native core and standalone service | Implemented; see [embedding](docs/integration.md#embed-the-native-rust-server) and [standalone operation](docs/standalone.md). | A supported desktop hosting wrapper and platform lifecycle acceptance. |
 | Public profile | Explicit opt-in, no default advert relays; private-node profile rejects public mode. See `crates/spry-service/src/public.rs` and [public mode](docs/public-mode.md). | Independent operator deployment and external-network acceptance. |
 | Archipelago | The catalogue selects the private mesh profile in `apps/spry/manifest.yml` in the Archipelago Apps repository. Its public-mode package remains a separate design draft. | Implementation, isolation/transition tests and maintainer ZAT. |
-| Android host | Native Kotlin bindings and hosting lifecycle are future work. | Build, lifecycle integration and physical no-Play GrapheneOS acceptance. |
+| Android host | A hand-written C ABI and JNI shim (`crates/spry-ffi`, [embedding](docs/embedding.md)) run the supervised node in-process; the release workflow builds it for arm64-v8a and x86_64. The Kotlin class, foreground service and hosting lifecycle are future work in the Android app. | Device load of the packaged minified app, lifecycle integration and physical no-Play GrapheneOS acceptance. |
 | Discovery | KithMoot source contains optional device-side discovery. This is separate from hosting a server on the device. | Version-specific client and operator interoperability evidence. |
 
 Delivery order: preserve the publisher boundary and private operation; build
