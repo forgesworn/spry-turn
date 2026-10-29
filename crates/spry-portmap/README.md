@@ -59,15 +59,16 @@ Everything a router sends is outside input:
 ## Use
 
 ```rust
-use spry_portmap::{Options, PortMapper, Protocol, Request};
+use spry_portmap::{Error, Options, PortMapper, Protocol, Request};
 use std::time::Duration;
 
-let mut mapper = PortMapper::new(Options::default())?;
-let listener = mapper.map(Request::new(Protocol::Udp, 3478, Duration::from_secs(7200)))?;
-println!("{} via {}", listener.external, listener.method);
-// Later: mapper.renew(&listener) at listener.renew_at(); on stop:
-mapper.remove(&listener)?;
-# Ok::<(), spry_portmap::Error>(())
+fn open_listener() -> Result<(), Error> {
+    let mut mapper = PortMapper::new(Options::default())?;
+    let listener = mapper.map(Request::new(Protocol::Udp, 3478, Duration::from_secs(7200)))?;
+    println!("{} via {}", listener.external, listener.method);
+    // Later: mapper.renew(&listener) at listener.renew_at(); on stop:
+    mapper.remove(&listener)
+}
 ```
 
 The API is blocking; an async host runs it on a blocking thread.

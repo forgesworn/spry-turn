@@ -8,16 +8,24 @@ use spry_portmap::record::{self, Ledger};
 use spry_portmap::upnp::Service;
 use spry_portmap::{Cleanup, Error, Method, Options, Owner, PortMapper, Protocol, Request, check};
 use std::net::{Ipv4Addr, SocketAddrV4, UdpSocket};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 const LEASE: Duration = Duration::from_secs(7200);
 
-/// A loopback port with nothing behind it.
+/// Sockets kept bound for the whole test run, so a port handed out as
+/// "nothing listens here" cannot be taken by a fake another test starts.
+static HELD: Mutex<Vec<UdpSocket>> = Mutex::new(Vec::new());
+
+/// A loopback port that never answers.
 fn closed_port() -> u16 {
     let socket = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
-    socket.local_addr().unwrap().port()
+    let port = socket.local_addr().unwrap().port();
+    HELD.lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .push(socket);
+    port
 }
 
 fn options(nat: Option<&FakeNatGateway>, upnp: Option<&FakeUpnpGateway>) -> Options {
@@ -522,6 +530,34 @@ fn upnp_never_follows_urls_off_the_gateway() {
 }
 
 #[test]
+fn upnp_removes_its_mapping_when_the_follow_up_fails() {
+    // A router whose WAN is down grants the add, then reports no external
+    // address. The mapping must not be left behind unrecorded.
+    for permanent_only in [false, true] {
+        let upnp = FakeUpnpGateway::start(UpnpBehaviour {
+            external: Ipv4Addr::UNSPECIFIED,
+            permanent_only,
+            ..UpnpBehaviour::default()
+        });
+        let error = upnp_only(&upnp)
+            .map(Request::new(Protocol::Udp, 3478, LEASE))
+            .unwrap_err();
+        assert_eq!(
+            error,
+            Error::NoMethod(vec![(
+                Method::Upnp,
+                Error::Malformed("no external address")
+            )])
+        );
+        assert!(
+            upnp.mappings().is_empty(),
+            "permanent only: {permanent_only}"
+        );
+        assert!(upnp.actions().contains(&"DeletePortMapping".to_owned()));
+    }
+}
+
+#[test]
 fn upnp_leaves_a_mapping_that_is_not_ours() {
     let upnp = FakeUpnpGateway::start(UpnpBehaviour::default());
     let mut mapper = upnp_only(&upnp);
@@ -694,4 +730,14 @@ fn check_maps_reports_and_removes() {
         "TCP is not retried after UDP found no protocol"
     );
     assert!(report.to_string().contains("Turn on UPnP"), "{report}");
+}
+
+/// Reads this host's real route table; sends nothing. Run with `--ignored`
+/// on a machine with an IPv4 default route.
+#[test]
+#[ignore = "needs a host with an IPv4 default route"]
+fn host_route_table_has_a_default_gateway() {
+    let route = spry_portmap::route::default_route().unwrap();
+    assert!(!route.gateway.is_unspecified() && !route.gateway.is_loopback());
+    assert!(route.interface.is_some());
 }

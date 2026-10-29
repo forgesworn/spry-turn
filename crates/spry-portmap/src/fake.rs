@@ -434,6 +434,7 @@ pub struct UpnpBehaviour {
     pub permanent_only: bool,
     /// Refuse every add with this error code.
     pub refuse: Option<u16>,
+    /// External address reported; unspecified reports an empty address.
     pub external: Ipv4Addr,
     /// Advertise the description at this host instead of loopback.
     pub location_host: Option<Ipv4Addr>,
@@ -576,11 +577,16 @@ fn handle_soap(state: &mut UpnpState, action: &str, body: &str) -> (u16, String)
     let external_port: Option<u16> =
         soap_argument(body, "NewExternalPort").and_then(|p| p.parse().ok());
     match action {
-        "GetExternalIPAddress" => soap_ok(
-            &urn,
-            action,
-            &[("NewExternalIPAddress", behaviour.external.to_string())],
-        ),
+        "GetExternalIPAddress" => {
+            // An unspecified address stands for a router whose WAN is down,
+            // which answers with an empty address.
+            let address = if behaviour.external.is_unspecified() {
+                String::new()
+            } else {
+                behaviour.external.to_string()
+            };
+            soap_ok(&urn, action, &[("NewExternalIPAddress", address)])
+        }
         "AddPortMapping" | "AddAnyPortMapping" => {
             if action == "AddAnyPortMapping" && behaviour.version < 2 {
                 return soap_fault(401);

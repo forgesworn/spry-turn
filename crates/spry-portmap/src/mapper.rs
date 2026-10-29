@@ -509,18 +509,34 @@ impl PortMapper {
         };
         // Read the entry back where the gateway supports it: it must show
         // this host, port and tag, and it reveals a lease silently made
-        // permanent.
-        match igd.entry(request.protocol, port) {
-            Ok(entry) => {
-                if entry.internal != internal || entry.description != description {
-                    return Err(Error::NotOurs);
+        // permanent. Then fetch the external address. If either fails after
+        // the add, remove the mapping again rather than leave it unrecorded
+        // (unless it turned out not to be ours).
+        let follow_up = || -> Result<(bool, Ipv4Addr), Error> {
+            let mut made_permanent = false;
+            match igd.entry(request.protocol, port) {
+                Ok(entry) => {
+                    if entry.internal != internal || entry.description != description {
+                        return Err(Error::NotOurs);
+                    }
+                    made_permanent = entry.lease == 0;
                 }
-                permanent |= entry.lease == 0;
+                Err(Error::Refused { .. }) | Err(Error::Malformed(_)) => {}
+                Err(error) => return Err(error),
             }
-            Err(Error::Refused { .. }) | Err(Error::Malformed(_)) => {}
-            Err(error) => return Err(error),
-        }
-        let address = igd.external_address()?;
+            Ok((made_permanent, igd.external_address()?))
+        };
+        let address = match follow_up() {
+            Ok((made_permanent, address)) => {
+                permanent |= made_permanent;
+                address
+            }
+            Err(Error::NotOurs) => return Err(Error::NotOurs),
+            Err(error) => {
+                let _ = owned_delete(&igd, request.protocol, port, internal, &description);
+                return Err(error);
+            }
+        };
         self.external = Some(address);
         Ok(Mapping {
             method: Method::Upnp,
