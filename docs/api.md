@@ -41,6 +41,7 @@ Source: [src/turn.rs](../src/turn.rs).
 | `max_per_user` | `8`, per-username allocation limit |
 | `max_connections` | `256`, TCP/TLS connections |
 | `bytes_per_second` | `67108864`, aggregate byte rate per allocation across both directions |
+| `aggregate_bytes_per_second` | `None`; `Some(rate)` (non-zero) also limits payload bytes per second across every allocation together, after the per-allocation limit |
 | `tls` | `None`; with `tls`, an optional address and `Arc<rustls::ServerConfig>` |
 
 `Server::bind(config)` validates configuration and binds listeners. Realm
@@ -56,6 +57,7 @@ loopback-only listener; embedding hosts must enforce the same policy.
 | `server.poll_once(timeout: Duration)` | `io::Result<()>`; processes readiness and expiry work |
 | `server.stats()` | Copy of `limits::Stats` aggregate counters |
 | `server.allocation_count()` | Current number of allocations |
+| `server.last_remote_allocation()` | Unix seconds of the newest allocation from a non-local client address (`turn::remote_client`), or `None`; the time only, never the address |
 | `turn::unix_time()` | Current epoch seconds |
 
 The library starts no threads. A host must keep polling and drop `Server`

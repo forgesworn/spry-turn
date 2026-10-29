@@ -35,6 +35,15 @@ impl Bucket {
         self.available -= amount as u64;
         true
     }
+
+    /// Return tokens taken for a packet that a second, shared limit then
+    /// refused, so that refusal does not also spend this bucket.
+    pub fn give_back(&mut self, amount: usize) {
+        self.available = self
+            .available
+            .saturating_add(amount as u64)
+            .min(self.capacity);
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -59,5 +68,17 @@ mod tests {
         assert!(!bucket.take(1, now + Duration::from_millis(500)));
         assert!(bucket.take(200, now + Duration::from_secs(100)));
         assert!(!bucket.take(201, now + Duration::from_secs(1000)));
+    }
+
+    #[test]
+    fn returned_tokens_never_exceed_the_burst() {
+        let now = Instant::now();
+        let mut bucket = Bucket::new(100, 200, now);
+        assert!(bucket.take(150, now));
+        bucket.give_back(150);
+        assert!(bucket.take(200, now));
+        bucket.give_back(usize::MAX);
+        assert!(bucket.take(200, now));
+        assert!(!bucket.take(1, now));
     }
 }
