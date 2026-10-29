@@ -1,0 +1,150 @@
+name: release
+# Builds every release artefact on each pull request, so the release path is
+# proven before a tag exists. On a v* tag that matches Cargo.toml it also
+# writes SHA256SUMS over every artefact and creates a draft prerelease for a
+# maintainer to review and publish. Nothing is signed: the Windows
+# executables are unsigned, the macOS ones are ad hoc signed by the linker.
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+env:
+  CARGO_INCREMENTAL: "0"
+  # The NDK version scripts/build-android.py expects.
+  ANDROID_NDK_VERSION: "28.2.13676358"
+jobs:
+  name:
+    runs-on: ubuntu-24.04
+    outputs:
+      name: ${{ steps.name.outputs.name }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: name
+        run: echo "name=$(python3 scripts/package-release.py name)" >> "$GITHUB_OUTPUT"
+
+  executables:
+    needs: name
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            runner: macos-latest
+            python: python3
+          - target: x86_64-pc-windows-msvc
+            runner: windows-latest
+            python: python
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-24.04
+            python: python3
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+            python: python3
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Remap build paths out of the binaries
+        run: ${{ matrix.python }} scripts/package-release.py rustflags >> "$GITHUB_ENV"
+      - name: Build both executables natively
+        run: cargo build --locked --release --target ${{ matrix.target }} --workspace --features tls --bins
+      - name: Run the executables on this platform
+        run: |
+          set -u
+          bin=target/${{ matrix.target }}/release
+          "$bin/spry-turn" --version
+          "$bin/spry-node" portmap --help > /dev/null
+          # Supervised mode with no options refuses and names the setting.
+          if refusal=$("$bin/spry-node" supervised 2>&1 < /dev/null); then
+            echo "supervised mode started without options" >&2
+            exit 1
+          fi
+          echo "$refusal"
+          case "$refusal" in
+            "Spry supervised mode stopped: "*) ;;
+            *) echo "unexpected refusal" >&2; exit 1 ;;
+          esac
+      - name: Drive the embedded relay through the C ABI on this platform
+        run: cargo test --locked --target ${{ matrix.target }} -p spry-ffi
+      - name: Package
+        run: ${{ matrix.python }} scripts/package-release.py executables ${{ matrix.target }} ${{ needs.name.outputs.name }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-${{ matrix.target }}
+          path: .local/release/*
+          if-no-files-found: error
+          retention-days: 7
+
+  android:
+    needs: name
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android, x86_64-linux-android
+      - name: Remap build paths out of the libraries
+        run: python3 scripts/package-release.py rustflags >> "$GITHUB_ENV"
+      - name: Use the pinned NDK
+        run: |
+          ndk="$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION"
+          if [ ! -d "$ndk" ]; then
+            "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$ANDROID_NDK_VERSION" > /dev/null
+          fi
+          echo "SPRY_NDK=$ndk" >> "$GITHUB_ENV"
+      - name: Build and check arm64-v8a and x86_64
+        run: python3 scripts/build-android.py --ndk "$SPRY_NDK"
+      - name: Drive every JNI entry point from a JVM (host build)
+        run: |
+          cargo build --locked -p spry-ffi --features jni
+          python3 scripts/jni-smoke.py target/debug/libspry_relay.so
+      - name: Package
+        run: python3 scripts/package-release.py android ${{ needs.name.outputs.name }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-android
+          path: .local/release/*
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: [name, executables, android]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      NAME: ${{ needs.name.outputs.name }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: .local/dist
+      - name: Add the exact source
+        run: |
+          git archive --format=tar.gz --prefix="spry-turn-$NAME-source/" \
+            --output ".local/dist/spry-turn-$NAME-source.tar.gz" "$GITHUB_SHA"
+          ls -l .local/dist
+          test "$(ls .local/dist | wc -l)" -eq 6
+      - name: Write SHA256SUMS and the release manifest
+        run: |
+          python3 scripts/package-release.py sums .local/dist "$NAME"
+          (cd .local/dist && sha256sum --strict -c SHA256SUMS)
+      - name: Create the draft prerelease
+        run: |
+          if gh release view "$NAME" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "A release for $NAME already exists; its assets are not replaced." >&2
+            exit 1
+          fi
+          gh release create "$NAME" --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --draft --prerelease --title "spry-turn $NAME" \
+            --notes-file .local/release-notes.md .local/dist/*
