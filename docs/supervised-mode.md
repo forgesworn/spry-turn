@@ -23,10 +23,16 @@ the router itself (PCP, NAT-PMP, then UPnP IGD), keeps the mappings alive,
 follows changes and removes what it made; see
 [Automatic router port opening](#automatic-router-port-opening). Without it
 the supervisor supplies the public address and mapped ports. Either way this
-mode does not prove reachability from outside, enforce a daily data limit or
-ship release builds, and the supervisor decides when the network can host at
-all. It does cap the relay's total bandwidth and report counts of its use;
-both are described below.
+mode does not prove reachability from outside or enforce a daily data limit,
+and the supervisor decides when the network can host at all. It does cap the
+relay's total bandwidth and report counts of its use; both are described
+below.
+
+The same node also runs inside a host app's own process, through the
+`libspry_relay` C ABI and its JNI shim, for Android; see
+[Embedding the relay](embedding.md). Release builds of `spry-node` for macOS
+arm64, Windows x64 and Linux x64 and arm64, and of the Android library, are
+listed there.
 
 ## Command line
 

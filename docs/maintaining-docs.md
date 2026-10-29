@@ -46,9 +46,17 @@ and never grant transport or application access.
 
 Run [the required checks](../CONTRIBUTING.md), inspect the staged diff and
 scan for secrets. Push a branch, merge its reviewed PR only after Linux/macOS
-CI succeeds, then verify the merged head. Tag the reviewed commit and make
-the GitHub release a prerelease while qualification remains incomplete. Verify the tag target, release
-visibility and any downloaded asset checksums. Public packages, images,
+CI succeeds, then verify the merged head. Bump `Cargo.toml` to the release
+version first: pushing a `v*` tag that does not match it fails the release
+workflow. Pushing the tag runs `.github/workflows/release.yml`, which builds
+the macOS arm64, Windows x64 and Linux x64 and arm64 executables and the
+Android library on their own runners, writes `SHA256SUMS` and
+`release-manifest.json` over every asset and creates a draft prerelease with
+them. Review the draft's notes (they must say the Windows executables are
+unsigned), keep it a prerelease while qualification remains incomplete and
+publish it by hand. The workflow refuses to replace assets of a release that
+already exists; delete an unpublished draft to rebuild it. Verify the tag
+target, release visibility and any downloaded asset checksums. Public packages, images,
 Pages and a running TURN service require their own explicit scope.
 
 Release builds must remap the builder's home-directory prefix before

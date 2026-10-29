@@ -25,6 +25,10 @@ shasum -a 256 -c SHA256SUMS
 
 [Download v0.3.0](https://github.com/forgesworn/spry-turn/releases/tag/v0.3.0).
 Linux, Windows, WASM and `spry-node` are source builds for this version.
+Releases tagged after v0.3.0 are built by the release workflow and carry both
+executables for macOS arm64, Windows x64 (unsigned) and Linux x64 and arm64,
+and the Android library, with `SHA256SUMS`; see
+[the release artefacts](embedding.md#what-is-in-a-release).
 The [older v0.2.1 release](https://github.com/forgesworn/spry-turn/releases/tag/v0.2.1)
 retains its original macOS/Linux ARM64 and WASM archives; those do not contain
 the newer options. Existing archives and tags retain their original bytes.
