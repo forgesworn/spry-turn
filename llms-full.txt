@@ -4302,7 +4302,10 @@ TURN is optional. Do not silently turn either into an open arbitrary proxy.
   remain separate scope; do not add them without the owner's instruction.
 - No real endpoints, credentials, private source, media or machine paths in
   committed evidence. Fixtures must be generated locally.
-- `unsafe` is forbidden in our code. Keep dependency features small.
+- `unsafe` is forbidden in our code, with one exception: the foreign-function
+  boundary in `crates/spry-ffi` (`capi.rs` and `jni.rs` only), where every
+  unsafe block states why it is sound. Every other crate keeps
+  `unsafe_code = "forbid"`. Keep dependency features small.
 - Use this checkout's `target/`. Leave `CARGO_INCREMENTAL` unchanged.
 - Test outside-input parsing, authentication, permissions, state expiry and
   overload. Performance claims require reproducible socket measurements.
