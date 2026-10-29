@@ -961,3 +961,67 @@ fn credentials_wait_for_the_relay_and_state_restarts_with_the_same_pairing() {
         .unwrap();
     assert_eq!(issued["urls"], json!(settings.urls()));
 }
+
+#[test]
+fn a_node_in_its_hosts_process_takes_the_same_options_without_the_stdin_guard() {
+    let embedded = |arguments: &[(&str, String)]| {
+        Settings::parse_for(&flatten(arguments), &environment(), Host::Embedded)
+    };
+    let child = parse(&arguments()).unwrap();
+    let inside = embedded(&without("--exit-on-stdin-close")).unwrap();
+    assert!(child == inside, "the same settings either way");
+    assert_eq!(embedded(&arguments()).unwrap_err(), EMBEDDED_STDIN);
+    assert_eq!(parse(&without("--exit-on-stdin-close")).unwrap_err(), STDIN);
+    // Every other rule is the child process's own.
+    let mut bad = without("--exit-on-stdin-close");
+    bad.retain(|(name, _)| *name != "--bind");
+    bad.push(("--bind", "0.0.0.0".into()));
+    assert_eq!(embedded(&bad).unwrap_err(), BIND);
+}
+
+#[test]
+fn a_host_hands_over_only_the_five_settings_and_each_once() {
+    let pairs = |list: &[(&str, &str)]| {
+        list.iter()
+            .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
+            .collect::<Vec<_>>()
+    };
+    let args = flatten(&without("--exit-on-stdin-close"));
+    let parse = |list: &[(&str, &str)]| {
+        Settings::parse_for(
+            &args,
+            &Environment::from_pairs(&pairs(list)),
+            Host::Embedded,
+        )
+    };
+    let secret = std::str::from_utf8(TEST_SECRET).unwrap();
+    let all = [
+        ("SPRY_TURN_SECRET", secret),
+        ("SPRY_ROOM_SEAL", "required"),
+        ("SPRY_SOCKS_PROXY", "127.0.0.1:9050"),
+        ("SPRY_CONTROL_CA_FILE", "uncreated-ca.pem"),
+    ];
+    assert!(parse(&all).is_ok());
+    let found = Environment::from_pairs(&pairs(&all));
+    assert_eq!(found.socks_proxy.as_deref(), Some("127.0.0.1:9050"));
+    assert_eq!(found.control_ca_file.as_deref(), Some("uncreated-ca.pem"));
+    assert_eq!(parse(&[]).unwrap_err(), SECRET);
+    // Names from another profile, names outside Spry and repeats refuse,
+    // where the child process ignores a variable that is not Spry's.
+    for extra in [
+        ("SPRY_PUBLIC", "true"),
+        ("PATH", "/bin"),
+        ("SPRY_TURN_SECRET", secret),
+    ] {
+        assert_eq!(
+            parse(&[("SPRY_TURN_SECRET", secret), extra]).unwrap_err(),
+            FOREIGN_SETTING,
+            "{}",
+            extra.0
+        );
+    }
+    assert_eq!(
+        parse(&[("SPRY_TURN_SECRET", secret), ("SPRY_ROOM_SEAL", "auto")]).unwrap_err(),
+        SEAL
+    );
+}

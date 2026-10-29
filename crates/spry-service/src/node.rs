@@ -420,18 +420,29 @@ impl PrivateSettings {
 /// certificate validation, the optional SOCKS proxy and public-address checks.
 pub(crate) fn relay_options_from_environment()
 -> std::result::Result<RelayOptions, Box<dyn std::error::Error>> {
-    let policy = if env::var("SPRY_LOCAL_TEST").as_deref() == Ok("true") {
+    relay_options(
+        env::var("SPRY_LOCAL_TEST").as_deref() == Ok("true"),
+        env::var("SPRY_SOCKS_PROXY").ok(),
+        env::var("SPRY_CONTROL_CA_FILE").ok(),
+    )
+}
+/// The same rules from values a host supplies, for a node that must not read
+/// its process environment (supervised mode inside a host's own process).
+pub(crate) fn relay_options(
+    local_test: bool,
+    socks_proxy: Option<String>,
+    control_ca_file: Option<String>,
+) -> std::result::Result<RelayOptions, Box<dyn std::error::Error>> {
+    let policy = if local_test {
         RelayPolicy::LocalFixture
     } else {
         RelayPolicy::Public
     };
-    let socks_proxy = env::var("SPRY_SOCKS_PROXY")
-        .ok()
+    let socks_proxy = socks_proxy
         .filter(|value| !value.is_empty())
         .map(|value| value.parse())
         .transpose()?;
-    let tls = env::var("SPRY_CONTROL_CA_FILE")
-        .ok()
+    let tls = control_ca_file
         .map(
             |path| -> std::result::Result<_, Box<dyn std::error::Error>> {
                 use rustls::pki_types::{CertificateDer, pem::PemObject};
