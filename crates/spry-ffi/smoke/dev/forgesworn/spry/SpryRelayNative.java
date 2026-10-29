@@ -14,4 +14,6 @@ public final class SpryRelayNative {
     public static native int stop(long handle);
     public static native int exitCode(long handle);
     public static native int free(long handle);
+    /** Only in a library built with the panic-probe feature. */
+    public static native int panicProbe();
 }

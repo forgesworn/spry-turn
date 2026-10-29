@@ -4,7 +4,7 @@ import java.nio.charset.StandardCharsets;
 /**
  * Loads libspry_relay through System.load and drives every JNI entry point:
  * a refused start, then a loopback node that reports, stops and is freed.
- * Usage: java -cp <classes> SpryRelaySmoke <library path> <state directory>
+ * Usage: java -cp <classes> SpryRelaySmoke <library> <state directory> <port> [panic-probe]
  */
 public final class SpryRelaySmoke {
     private static final String SECRET = "SPRY_TURN_SECRET=synthetic-supervised-secret-not-for-deployment";
@@ -45,6 +45,12 @@ public final class SpryRelaySmoke {
     public static void main(String[] arguments) throws Exception {
         System.load(arguments[0]);
         check(SpryRelayNative.abiVersion() == 1, "ABI version 1");
+        if (arguments.length > 3 && arguments[3].equals("panic-probe")) {
+            // A panic inside the library must come back as an error code,
+            // not end this process.
+            check(SpryRelayNative.panicProbe() == -4, "a caught panic");
+            check(SpryRelayNative.abiVersion() == 1, "still usable after a panic");
+        }
 
         // No secret: refused on the node's thread, reported as the last line.
         long refused = SpryRelayNative.start(new String[] {"--map-ports"}, new String[0]);

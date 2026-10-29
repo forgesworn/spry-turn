@@ -232,6 +232,12 @@ itself, in `spry-service`, still forbids `unsafe`.
 - `scripts/jni-smoke.py` loads the library into a JVM with `-Xcheck:jni`
   and drives every JNI entry point: a refused start, a malformed setting, and
   a loopback node through `ready`, `status`, stop, `stopped` and free.
+- A test-only `panic-probe` feature exports a function that panics inside
+  the guard. The Rust tests check it returns `SPRY_RELAY_ERR_PANIC`, and the
+  release workflow builds the JVM library with `--profile release-ffi` and
+  that feature, so the smoke proves a panic in the profile that ships comes
+  back as an error code and the JVM carries on. `scripts/build-android.py`
+  refuses an Android library that exports the probe.
 - `scripts/build-android.py` proves that both Android libraries link and
   checks their machine, alignment, exports and needed libraries.
 

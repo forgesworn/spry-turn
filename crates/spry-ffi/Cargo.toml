@@ -21,6 +21,11 @@ crate-type = ["rlib", "cdylib"]
 # any JVM), written by hand against the JNI function table. The C ABI is
 # always present.
 jni = []
+# `spry_relay_panic_probe` (and `panicProbe` with `jni`), which panics inside
+# the guard, so tests can prove a panic becomes SPRY_RELAY_ERR_PANIC in the
+# profile that ships. Never in a shipped library; scripts/build-android.py
+# refuses one that exports it.
+panic-probe = []
 
 [dependencies]
 spry-service = { path = "../spry-service", version = "=0.1.0" }

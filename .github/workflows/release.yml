@@ -100,10 +100,10 @@ jobs:
           echo "SPRY_NDK=$ndk" >> "$GITHUB_ENV"
       - name: Build and check arm64-v8a and x86_64
         run: python3 scripts/build-android.py --ndk "$SPRY_NDK"
-      - name: Drive every JNI entry point from a JVM (host build)
+      - name: Drive every JNI entry point from a JVM, and a caught panic, in the shipped profile
         run: |
-          cargo build --locked -p spry-ffi --features jni
-          python3 scripts/jni-smoke.py target/debug/libspry_relay.so
+          cargo build --locked -p spry-ffi --features jni,panic-probe --profile release-ffi
+          python3 scripts/jni-smoke.py --panic-probe target/release-ffi/libspry_relay.so
       - name: Package
         run: python3 scripts/package-release.py android ${{ needs.name.outputs.name }}
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

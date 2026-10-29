@@ -296,6 +296,14 @@ fn the_header_states_the_same_values_as_the_library() {
     }
 }
 
+#[cfg(feature = "panic-probe")]
+#[test]
+fn a_panic_inside_the_library_becomes_an_error_code() {
+    assert_eq!(spry_relay_panic_probe(), SPRY_RELAY_ERR_PANIC);
+    // And the library still works afterwards.
+    assert_eq!(spry_relay_abi_version(), SPRY_RELAY_ABI_VERSION);
+}
+
 #[test]
 fn malformed_calls_are_refused_and_nothing_is_started() {
     let arg = CString::new("--map-ports").unwrap();

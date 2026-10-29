@@ -208,6 +208,14 @@ unsafe fn strings(list: *const *const c_char, count: usize) -> Option<Vec<String
         .collect()
 }
 
+/// Test-only: panics inside the guard and so returns
+/// [`SPRY_RELAY_ERR_PANIC`], unless the build aborts on panic.
+#[cfg(feature = "panic-probe")]
+#[unsafe(no_mangle)]
+pub extern "C" fn spry_relay_panic_probe() -> i32 {
+    guard(|| panic!("spry_relay_panic_probe"))
+}
+
 /// The ABI version this library implements.
 #[unsafe(no_mangle)]
 pub extern "C" fn spry_relay_abi_version() -> u32 {

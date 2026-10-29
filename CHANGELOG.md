@@ -24,7 +24,8 @@
   x86_64 (API 33) with the NDK's clang through cargo's own target variables
   (no `cargo-ndk`), links with 16 KB pages and checks machine, alignment,
   exports and needed libraries, and `scripts/jni-smoke.py`, which drives
-  every JNI entry point from a JVM.
+  every JNI entry point from a JVM. A test-only `panic-probe` feature proves
+  that a panic in the `release-ffi` library returns an error code.
 - Add a release workflow. Every pull request builds both executables
   natively for macOS arm64, Windows x64, Linux x64 and Linux arm64, runs them
   and the C ABI tests on each, and builds and checks the Android library. A

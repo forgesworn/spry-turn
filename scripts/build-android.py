@@ -106,6 +106,8 @@ def check(target, bin_dir):
     missing = [name for name in EXPORTS if name not in symbols]
     if missing:
         raise SystemExit(f"{abi}: missing exports {missing}")
+    if any("panic_probe" in name or "panicProbe" in name for name in symbols):
+        raise SystemExit(f"{abi}: a shipped library must not export the panic probe")
     needed = set(re.findall(r"\(NEEDED\)\s+Shared library: \[([^\]]+)\]",
                             output(readelf, "--dynamic", str(library))))
     if not needed <= SYSTEM_LIBRARIES:

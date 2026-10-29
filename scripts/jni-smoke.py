@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
 """Load a built libspry_relay into a JVM and drive every JNI entry point.
 
-Usage: python3 scripts/jni-smoke.py <path to libspry_relay.so|.dylib>
+Usage: python3 scripts/jni-smoke.py [--panic-probe] <path to libspry_relay.so|.dylib>
+
+With --panic-probe the library must be built with the `panic-probe` feature
+too, and the smoke checks that a panic inside it returns an error code
+instead of ending the JVM: build it with `--profile release-ffi` to prove
+that of the profile that ships.
 
 Needs javac and java on PATH (any JDK 11 or later). The library must be built
 with the `jni` feature. Proves the JNI symbol names, the hand-written function
@@ -43,9 +48,13 @@ def free_ports():
 
 
 def main():
-    if len(sys.argv) != 2:
+    arguments = sys.argv[1:]
+    probe = arguments[:1] == ["--panic-probe"]
+    if probe:
+        arguments = arguments[1:]
+    if len(arguments) != 1:
         raise SystemExit(__doc__)
-    library = Path(sys.argv[1]).resolve()
+    library = Path(arguments[0]).resolve()
     if not library.is_file():
         raise SystemExit(f"Missing library: {library.name}")
     for tool in ("javac", "java"):
@@ -58,7 +67,8 @@ def main():
         sources = [str(path) for path in SMOKE.rglob("*.java")]
         subprocess.run(["javac", "-d", str(classes), *sources], check=True)
         subprocess.run(["java", "-Xcheck:jni", "-cp", str(classes), "SpryRelaySmoke",
-                        str(library), str(state), str(free_ports())], check=True, timeout=120)
+                        str(library), str(state), str(free_ports()),
+                        *(["panic-probe"] if probe else [])], check=True, timeout=120)
 
 
 if __name__ == "__main__":

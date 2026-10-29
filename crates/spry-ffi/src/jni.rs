@@ -239,6 +239,16 @@ pub unsafe extern "system" fn Java_dev_forgesworn_spry_SpryRelayNative_nextLine(
     .unwrap_or(ptr::null_mut())
 }
 
+/// Test-only `panicProbe(): Int`, with the `panic-probe` feature.
+#[cfg(feature = "panic-probe")]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_forgesworn_spry_SpryRelayNative_panicProbe(
+    _env: Env,
+    _class: Object,
+) -> Jint {
+    crate::capi::spry_relay_panic_probe()
+}
+
 /// `stop(handle: Long): Int`: ask for an orderly stop and return at once.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_dev_forgesworn_spry_SpryRelayNative_stop(
