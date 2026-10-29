@@ -83,6 +83,22 @@ pub struct Config {
 mod policy_tests {
     use super::*;
 
+    /// Binds a server on an ephemeral port. `Server::bind` takes a UDP port
+    /// first and then needs the same number free for TCP, which an unrelated
+    /// connection can occupy, so a port-0 bind occasionally fails with
+    /// `AddrInUse` on a busy host. A fresh attempt picks another port; any
+    /// other error, or a persistent clash, still fails the test.
+    fn bind_server(config: Config) -> Server {
+        const ATTEMPTS: usize = 8;
+        for _ in 1..ATTEMPTS {
+            match Server::bind(config.clone()) {
+                Err(error) if error.kind() == io::ErrorKind::AddrInUse => (),
+                result => return result.unwrap(),
+            }
+        }
+        Server::bind(config).unwrap()
+    }
+
     fn drive_until(server: &mut Server, ready: impl Fn(&Server) -> bool) {
         let deadline = Instant::now() + Duration::from_secs(2);
         while !ready(server) && Instant::now() < deadline {
@@ -128,7 +144,7 @@ mod policy_tests {
     fn stream_processes_valid_batch_larger_than_input_limit() {
         let mut config = Config::local(vec![1; 32]);
         config.listen.set_port(0);
-        let mut server = Server::bind(config).unwrap();
+        let mut server = bind_server(config);
         let mut client = std::net::TcpStream::connect(server.local_addr().unwrap()).unwrap();
         client.set_nodelay(true).unwrap();
         client
@@ -186,7 +202,7 @@ mod policy_tests {
     fn stream_retains_partial_frames_and_cleans_up_only_closed_connections() {
         let mut config = Config::local(vec![1; 32]);
         config.listen.set_port(0);
-        let mut server = Server::bind(config).unwrap();
+        let mut server = bind_server(config);
         let mut client = std::net::TcpStream::connect(server.local_addr().unwrap()).unwrap();
         client.set_nodelay(true).unwrap();
         client
@@ -248,7 +264,7 @@ mod policy_tests {
     fn stream_processes_complete_frames_before_eof() {
         let mut config = Config::local(vec![1; 32]);
         config.listen.set_port(0);
-        let mut server = Server::bind(config).unwrap();
+        let mut server = bind_server(config);
         let mut client = std::net::TcpStream::connect(server.local_addr().unwrap()).unwrap();
         client
             .set_read_timeout(Some(Duration::from_secs(2)))
@@ -274,7 +290,7 @@ mod policy_tests {
     fn stream_frame_budget_resumes_buffered_frames_without_new_readiness() {
         let mut config = Config::local(vec![1; 32]);
         config.listen.set_port(0);
-        let mut server = Server::bind(config).unwrap();
+        let mut server = bind_server(config);
         let mut client = std::net::TcpStream::connect(server.local_addr().unwrap()).unwrap();
         client
             .set_read_timeout(Some(Duration::from_secs(2)))
@@ -325,7 +341,7 @@ mod policy_tests {
         let mut config = Config::local(vec![1; 32]);
         config.listen.set_port(0);
         config.max_connections = 1;
-        let mut server = Server::bind(config).unwrap();
+        let mut server = bind_server(config);
         for _ in 0..16 {
             let client = std::net::TcpStream::connect(server.local_addr().unwrap()).unwrap();
             drive_until(&mut server, |server| !server.connections.is_empty());
@@ -350,7 +366,7 @@ mod policy_tests {
     fn hot_stream_yields_to_other_clients_and_expiry_sweeps() {
         let mut config = Config::local(vec![1; 32]);
         config.listen.set_port(0);
-        let mut server = Server::bind(config).unwrap();
+        let mut server = bind_server(config);
         let mut hot = std::net::TcpStream::connect(server.local_addr().unwrap()).unwrap();
         hot.set_nodelay(true).unwrap();
         accept_stream(&mut server);
@@ -422,7 +438,7 @@ mod policy_tests {
 
         let mut config = Config::local(vec![1; 32]);
         config.listen.set_port(0);
-        let mut server = Server::bind(config).unwrap();
+        let mut server = bind_server(config);
         let mut client = std::net::TcpStream::connect(server.local_addr().unwrap()).unwrap();
         accept_stream(&mut server);
         let token = *server.connections.keys().next().unwrap();
@@ -572,7 +588,7 @@ mod policy_tests {
         let mut config = Config::local(vec![1; 32]);
         config.listen.set_port(0);
         config.tls = Some(("127.0.0.1:0".parse().unwrap(), Arc::new(tls_server)));
-        let mut server = Server::bind(config).unwrap();
+        let mut server = bind_server(config);
         let mut client = std::net::TcpStream::connect(
             server.tls_listener.as_ref().unwrap().local_addr().unwrap(),
         )
@@ -722,7 +738,7 @@ mod policy_tests {
         let mut config = Config::local(vec![1; 32]);
         config.listen.set_port(0);
         config.aggregate_bytes_per_second = aggregate;
-        let mut server = Server::bind(config).unwrap();
+        let mut server = bind_server(config);
         let (mut clients, mut peers, mut relays) = (Vec::new(), Vec::new(), Vec::new());
         for index in 0..2 {
             let client = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
@@ -873,7 +889,7 @@ mod policy_tests {
         for channel in [None, Some(0x4000_u16)] {
             let mut config = Config::local(vec![1; 32]);
             config.listen.set_port(0);
-            let mut server = Server::bind(config).unwrap();
+            let mut server = bind_server(config);
             // Fix the client's receive buffer at 2 KiB before connecting, so
             // the window is negotiated at that size. An explicit size stops the
             // OS auto-tuning the receive buffer upwards as data arrives, which
@@ -1071,7 +1087,7 @@ mod policy_tests {
     fn recovered_relay_packet(channel: Option<u16>) {
         let mut config = Config::local(vec![1; 32]);
         config.listen.set_port(0);
-        let mut server = Server::bind(config).unwrap();
+        let mut server = bind_server(config);
         let mut client = std::net::TcpStream::connect(server.local_addr().unwrap()).unwrap();
         client.set_nonblocking(true).unwrap();
         accept_stream(&mut server);
@@ -1252,7 +1268,7 @@ mod policy_tests {
     fn stream_backpressure_rearms_and_returns_to_read_interest() {
         let mut config = Config::local(vec![1; 32]);
         config.listen.set_port(0);
-        let mut server = Server::bind(config).unwrap();
+        let mut server = bind_server(config);
         let mut client = std::net::TcpStream::connect(server.local_addr().unwrap()).unwrap();
         client.set_nonblocking(true).unwrap();
         let accepting = Instant::now() + Duration::from_secs(2);
@@ -1390,7 +1406,7 @@ mod policy_tests {
                 })
                 .collect(),
         );
-        let server = Server::bind(config).unwrap();
+        let server = bind_server(config);
         assert_eq!(server.allocated_relay_ports().count(), 0);
     }
 
@@ -1418,7 +1434,7 @@ mod policy_tests {
                     advertised_port: 41002,
                 },
             ]);
-            let server = Server::bind(config).unwrap();
+            let server = bind_server(config);
             assert_eq!(server.allocated_relay_ports().count(), 0);
         }
     }
