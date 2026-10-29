@@ -18,10 +18,11 @@ The supervising app's signing key is trusted as the node's one pairing at
 start-up. Guests reach the node only through the encrypted `spry:` control
 channel (Nostr kinds 24181 and 24182) on relays the supervisor names.
 
-This mode does not open router ports, prove reachability, cap aggregate
-bandwidth, report usage counts or ship release builds. The supervisor (or a
-later Spry release) supplies mapped ports and decides when the network can
-host at all.
+This mode does not open router ports, prove reachability, enforce a daily
+data limit or ship release builds. The supervisor (or a later Spry release)
+supplies mapped ports and decides when the network can host at all. It does
+cap the relay's total bandwidth and report counts of its use; both are
+described below.
 
 ## Command line
 
@@ -55,6 +56,7 @@ existing standard or private-node profile exactly as before.
 | `--max-per-user` | No | 1 to 8 and at most `--max-allocations`, default 2 (or the total, if lower) |
 | `--max-tcp-connections` | No | 1 to 32, default 16 |
 | `--bytes-per-second` | No | Per allocation, 1 to 67108864, default 125000 |
+| `--aggregate-bytes-per-second` | No | For every allocation together, 1 to 67108864, default 625000. See [the aggregate cap](#the-aggregate-bandwidth-cap). |
 
 When `--bind` equals `--public-ip` (a host holding a public address on its
 own interface), every mapping must be `PORT:PORT` and both public listener
@@ -83,6 +85,34 @@ profile (`SPRY_PUBLIC`, `SPRY_HTTP_PORT`, `SPRY_PEER_BIND`, `SPRY_RELAY_IP` and
 so on) cannot appear to apply. Supervisors should start the node with a
 cleared environment.
 
+## The aggregate bandwidth cap
+
+A home uplink is small, and every allocation can ask for its own
+`--bytes-per-second`. The aggregate cap limits the relay as a whole, so that
+eight allocations at their default 125,000 bytes a second (1,000,000 in all)
+cannot take more than the supervisor allows from the connection.
+
+- It is always on in this mode. The default, 625,000 bytes a second (5 Mbit/s),
+  is two thirds of what eight default allocations could ask for. It is a
+  cautious choice, not a measured one; the supervisor may set any value from
+  1 to 67108864.
+  A value below `--bytes-per-second` is allowed and then rules over it.
+- It counts relayed payload bytes in both directions, from every allocation,
+  in one token bucket that refills continuously and holds at most one second
+  of allowance. It is the same accounting as the per-allocation limit
+  (payload only, no STUN, TURN or UDP/TCP framing overhead), applied after
+  it. The per-allocation limit is checked first, and a packet the aggregate
+  refuses gives that allocation its tokens back, so a busy neighbour cannot
+  also spend someone's own allowance.
+- Over the cap a packet is dropped, not queued, so the senders see loss and
+  delay is not added. No allocation is reserved a share; whoever's packets
+  arrive first in a second spend it.
+  Nothing is closed or refused at allocation time, so the allocation caps
+  above are unchanged.
+
+There is no environment variable for it: this mode reads no tuning
+variables.
+
 ## Lifetime and output
 
 After the settings are accepted the node watches stdin, binds the UDP and
@@ -99,8 +129,10 @@ Standard output carries only single-line JSON objects, for the supervisor:
 
 ```json
 {"v":1,"event":"ready","endpoint":"spry://<node key>?relay=wss%3A%2F%2Frelay.example%2F","pairing":"<43 characters>","urls":["turn:<public IP>:51000?transport=udp","turn:<public IP>:51001?transport=tcp"],"relayPortMap":[[41002,51002],[41003,51003]]}
+{"v":1,"event":"status","allocations":0,"bytesRelayed":0,"lastAllocation":null}
 {"v":1,"event":"control","relays":1}
 {"v":1,"event":"control","relays":0}
+{"v":1,"event":"status","allocations":2,"bytesRelayed":412000,"lastAllocation":1800000000}
 ```
 
 - `ready` is printed once, when the relay is bound and control has started.
@@ -110,6 +142,37 @@ Standard output carries only single-line JSON objects, for the supervisor:
 - `control` is printed when the number of connected control relays changes
   between none and some. Until the first such line, guests cannot reach the
   node.
+- `status` carries counts and nothing else; see below.
+
+### The status line
+
+Always these five keys and no others, so a line is under 160 bytes:
+
+| Key | Meaning |
+|---|---|
+| `v` | `1` |
+| `event` | `"status"` |
+| `allocations` | Allocations open now |
+| `bytesRelayed` | Payload bytes forwarded since the node started, both directions, counted once for each allocation they pass through. At most `u64::MAX`. |
+| `lastAllocation` | Unix seconds of the newest allocation whose client was a non-local address, or `null` if there has been none |
+
+A client address is local, and so never sets `lastAllocation`, when it is
+loopback, unspecified, private (10/8, 172.16/12, 192.168/16), link-local,
+IPv6 unique-local, multicast, or the node's own `--bind` or `--public-ip`
+address (a host reaching its own relay through its router). The node keeps
+only the time, never the address. Allocations from local addresses still
+count in `allocations` and `bytesRelayed`.
+
+One status line is printed straight after `ready`. After that the node
+checks once every 5 seconds and prints a line only if a count has changed,
+so an idle relay is silent and a busy one prints at most one line in 5
+seconds. A supervisor shows the numbers as they stand and should treat a
+missing line as unchanged.
+
+The line never carries an address, port, login, credential, key, grant, room
+or relay URL, and the node holds none of that in the counters it reads: the
+forwarding thread publishes three numbers and the status line is built from
+those alone.
 
 Standard error carries at most one refusal line. Neither stream carries
 secrets, tokens, credentials, guest keys or guest addresses.
@@ -197,7 +260,14 @@ allocates through the embedded relay with the issued credentials (the
 relayed address is the advertised public IP and a mapped public port),
 checks that an HTTP request to the listener gets no HTTP answer, then
 closes stdin and checks that the process exits within three seconds and
-frees its ports.
+frees its ports. A second integration test starts the node with a
+5000 bytes-per-second aggregate cap, opens two allocations well inside their
+own allowance, sends 20,000 bytes through them and checks that about 5000
+were relayed in all. It then reads the status lines: the first is all zeros,
+the next shows both allocations and the bytes that crossed, `lastAllocation`
+is `null` because both clients are on loopback, every line has exactly the
+five keys, and no key, address, port, login, credential, grant, room or relay
+URL appears in it.
 
 These are loopback tests. No router, NAT, firewall prompt, remote guest,
 sleep and wake cycle or packaged desktop build is exercised; those remain

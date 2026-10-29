@@ -149,6 +149,17 @@ fn scratch() -> std::path::PathBuf {
 }
 
 fn spawn(relay: &str, listen: u16, first: u16, second: u16, host: &str) -> Node {
+    spawn_with(relay, listen, first, second, host, &[])
+}
+
+fn spawn_with(
+    relay: &str,
+    listen: u16,
+    first: u16,
+    second: u16,
+    host: &str,
+    extra: &[&str],
+) -> Node {
     let directory = scratch();
     let mut command = Command::new(env!("CARGO_BIN_EXE_spry-node"));
     command
@@ -176,6 +187,7 @@ fn spawn(relay: &str, listen: u16, first: u16, second: u16, host: &str) -> Node 
             "--relay-port-map",
             &format!("{second}:51003"),
         ])
+        .args(extra)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
@@ -247,9 +259,20 @@ async fn ask(
     .unwrap_or_else(|_| panic!("no answer on {path}"))
 }
 
-/// A long-term-credential UDP allocation: the relayed address, or the
+/// A live long-term-credential UDP allocation and what it needs to keep
+/// talking to the relay.
+struct Open {
+    socket: UdpSocket,
+    key: Vec<u8>,
+    user: String,
+    realm: String,
+    nonce: Vec<u8>,
+    relayed: std::net::SocketAddr,
+}
+
+/// A long-term-credential UDP allocation: the open allocation, or the
 /// refusal's error code.
-fn allocate(listen: u16, issued: &Value) -> Result<std::net::SocketAddr, u16> {
+fn open_allocation(listen: u16, issued: &Value) -> Result<Open, u16> {
     let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
     socket
         .set_read_timeout(Some(Duration::from_secs(2)))
@@ -266,8 +289,8 @@ fn allocate(listen: u16, issued: &Value) -> Result<std::net::SocketAddr, u16> {
         .unwrap()
         .to_owned();
     let nonce = challenge.attr(wire::NONCE).unwrap().to_vec();
-    let user = issued["username"].as_str().unwrap();
-    let key = auth::key(user, &realm, issued["credential"].as_str().unwrap());
+    let user = issued["username"].as_str().unwrap().to_owned();
+    let key = auth::key(&user, &realm, issued["credential"].as_str().unwrap()).to_vec();
     let mut request = wire::Builder::new(wire::ALLOCATE, 0, [2; 12]);
     request
         .attr(wire::TRANSPORT, &[17, 0, 0, 0])
@@ -282,7 +305,60 @@ fn allocate(listen: u16, issued: &Value) -> Result<std::net::SocketAddr, u16> {
         return Err(u16::from(code[2]) * 100 + u16::from(code[3]));
     }
     assert!(response.verify(&key));
-    Ok(response.address(wire::RELAYED).unwrap())
+    let relayed = response.address(wire::RELAYED).unwrap();
+    Ok(Open {
+        socket,
+        key,
+        user,
+        realm,
+        nonce,
+        relayed,
+    })
+}
+
+fn allocate(listen: u16, issued: &Value) -> Result<std::net::SocketAddr, u16> {
+    open_allocation(listen, issued).map(|open| open.relayed)
+}
+
+impl Open {
+    /// Let `peer`'s address send to this allocation.
+    fn permit(&self, peer: std::net::SocketAddr) {
+        let mut request = wire::Builder::new(wire::PERMISSION, 0, [3; 12]);
+        request
+            .address(wire::PEER, peer)
+            .attr(wire::USERNAME, self.user.as_bytes())
+            .attr(wire::REALM, self.realm.as_bytes())
+            .attr(wire::NONCE, &self.nonce);
+        self.socket.send(&request.finish(Some(&self.key))).unwrap();
+        let mut bytes = [0; 2048];
+        let size = self.socket.recv(&mut bytes).unwrap();
+        let response = wire::Message::parse(&bytes[..size]).unwrap();
+        assert_eq!(response.class, 2, "{:?}", response.attr(wire::ERROR));
+    }
+    /// A Send indication: the relay answers nothing, forwarded or not.
+    fn send(&self, peer: std::net::SocketAddr, payload: &[u8]) {
+        let mut indication = wire::Builder::new(wire::SEND, 1, [4; 12]);
+        indication
+            .address(wire::PEER, peer)
+            .attr(wire::DATA, payload);
+        self.socket.send(&indication.finish(None)).unwrap();
+    }
+}
+
+/// Data indications that reach a client before it has been quiet for 300 ms.
+fn data_indications(client: &UdpSocket) -> usize {
+    client
+        .set_read_timeout(Some(Duration::from_millis(300)))
+        .unwrap();
+    let mut bytes = [0; 2048];
+    let mut count = 0;
+    while let Ok(size) = client.recv(&mut bytes) {
+        let message = wire::Message::parse(&bytes[..size]);
+        if message.is_some_and(|message| message.method == wire::DATA_METHOD) {
+            count += 1;
+        }
+    }
+    count
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -464,6 +540,178 @@ async fn a_port_in_use_stops_the_node_before_it_writes_state_or_reports_ready() 
     assert!(node.lines.recv_timeout(Duration::from_millis(200)).is_err());
     assert!(!node.directory.join("state.json").exists());
     drop(occupied);
+}
+
+/// Every status line is exactly these keys with numbers (or null), so
+/// nothing that names a guest, a room or an address can ride on it.
+fn assert_counts_only(status: &Value) {
+    let object = status.as_object().unwrap();
+    let mut keys: Vec<_> = object.keys().map(String::as_str).collect();
+    keys.sort_unstable();
+    assert_eq!(
+        keys,
+        [
+            "allocations",
+            "bytesRelayed",
+            "event",
+            "lastAllocation",
+            "v"
+        ],
+        "{status}"
+    );
+    assert_eq!(
+        (&status["v"], &status["event"]),
+        (&json!(1), &json!("status"))
+    );
+    for key in ["allocations", "bytesRelayed"] {
+        assert!(status[key].is_u64(), "{key}: {status}");
+    }
+    assert!(
+        status["lastAllocation"].is_null() || status["lastAllocation"].is_u64(),
+        "{status}"
+    );
+    assert!(status.to_string().len() < 160, "bounded: {status}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_aggregate_cap_is_shared_by_all_allocations_and_the_status_line_is_counts_only() {
+    let relay = fixture_relay().await;
+    let host = Identity::from_secret(&[2; 32]).unwrap();
+    let guest = Identity::from_secret(&[3; 32]).unwrap();
+    let starting = STARTING
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let (listen, first, second) = ports();
+    // 5000 bytes a second in all, against 125,000 for each allocation.
+    let node = spawn_with(
+        &relay,
+        listen,
+        first,
+        second,
+        &host.public_key(),
+        &["--aggregate-bytes-per-second", "5000"],
+    );
+    let ready = node.line("ready");
+    drop(starting);
+    // The first count is printed with ready, before anything has happened.
+    let idle = node.line("status");
+    assert_counts_only(&idle);
+    assert_eq!(
+        idle,
+        json!({"v":1,"event":"status","allocations":0,"bytesRelayed":0,"lastAllocation":null})
+    );
+    node.line("control");
+
+    let node_key = Identity::derive(SECRET.as_bytes()).unwrap().public_key();
+    let target = ControlEndpoint::new(
+        node_key.clone(),
+        vec![relay.clone()],
+        RelayPolicy::LocalFixture,
+    )
+    .unwrap();
+    let pairing = ready["pairing"].as_str().unwrap().to_owned();
+    let mut socket = client(&relay).await;
+    let room = spry_access::hash("synthetic-room-for-the-status-line");
+    let (status, granted) = ask(
+        &mut socket,
+        &host,
+        &target,
+        "/v1/grants",
+        json!({"pairing":pairing,"scope":room}),
+    )
+    .await;
+    assert_eq!(status, 200, "{granted}");
+    let token = granted["token"].as_str().unwrap().to_owned();
+    let (status, registered) = ask(
+        &mut socket,
+        &host,
+        &target,
+        "/v1/grants/devices",
+        json!({"v":1,"pairing":pairing,"grant":token,"add":[host.public_key(), guest.public_key()],"revision":1}),
+    )
+    .await;
+    assert_eq!(status, 200, "{registered}");
+    let (status, issued) = ask(
+        &mut socket,
+        &guest,
+        &target,
+        "/v1/credentials",
+        json!({"grant":token}),
+    )
+    .await;
+    assert_eq!(status, 200, "{issued}");
+
+    // Two allocations, each far inside its own allowance of 125,000 a
+    // second. In mapped mode a peer on the node's own address must be one of
+    // its allocation ports, so the first allocation sends to the second:
+    // every packet is spent once on the way out and once on the way in, by
+    // two different allocations, against the one shared allowance.
+    let a = open_allocation(listen, &issued).unwrap();
+    let b = open_allocation(listen, &issued).unwrap();
+    let local = |open: &Open| {
+        let port = if open.relayed.port() == 51002 {
+            first
+        } else {
+            second
+        };
+        std::net::SocketAddr::from(([127, 0, 0, 1], port))
+    };
+    a.permit(local(&b));
+    b.permit(local(&a));
+    let payload = [0x5a; 1000];
+    for _ in 0..10 {
+        a.send(local(&b), &payload);
+    }
+    let arrived = data_indications(&b.socket);
+    assert!(arrived <= 5, "{arrived} of 1000 bytes reached the second");
+
+    // The next count that differs is printed within a few seconds: both
+    // allocations, the bytes that crossed, and no time because both clients
+    // are on this machine.
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let busy = loop {
+        let status = node.line("status");
+        assert_counts_only(&status);
+        if status["allocations"] == 2 && status["bytesRelayed"].as_u64().unwrap() >= 4000 {
+            break status;
+        }
+        assert!(Instant::now() < deadline, "no busy status line");
+    };
+    assert_eq!(busy["lastAllocation"], Value::Null);
+    // Twenty thousand bytes were asked for and 5000 a second allowed; each
+    // allocation alone spent far less than its own allowance, so only the
+    // total can have stopped them.
+    let moved = busy["bytesRelayed"].as_u64().unwrap();
+    assert!(
+        (4000..=6000).contains(&moved) && moved % 1000 == 0,
+        "{busy}"
+    );
+
+    // Nothing that identifies anyone or anything is anywhere in the line.
+    let text = busy.to_string();
+    for secret in [
+        host.public_key(),
+        guest.public_key(),
+        node_key,
+        pairing,
+        token,
+        room,
+        a.user.clone(),
+        issued["credential"].as_str().unwrap().to_owned(),
+        a.socket.local_addr().unwrap().port().to_string(),
+        b.socket.local_addr().unwrap().port().to_string(),
+        first.to_string(),
+        second.to_string(),
+        a.relayed.port().to_string(),
+        listen.to_string(),
+        "127.0.0.1".to_owned(),
+        PUBLIC_IP.to_owned(),
+        relay.clone(),
+        "wss".to_owned(),
+        "turn:".to_owned(),
+    ] {
+        assert!(!text.contains(&secret), "{secret} appears in {text}");
+    }
 }
 
 fn refused(arguments: &[&str], environment: &[(&str, &str)]) -> String {

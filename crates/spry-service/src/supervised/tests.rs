@@ -78,6 +78,7 @@ fn explicit_values_become_two_turn_urls_home_caps_and_a_mapped_relay() {
         ),
         (8, 2, 16, 125_000)
     );
+    assert_eq!(settings.aggregate_bytes_per_second, 625_000);
     assert_eq!(settings.mappings, [(41002, 51002), (41003, 51007)]);
     assert_eq!(settings.relays, ["wss://relay.example/"]);
     let relay = settings.relay_config();
@@ -105,6 +106,7 @@ fn explicit_values_become_two_turn_urls_home_caps_and_a_mapped_relay() {
         ),
         (8, 2, 16, 125_000)
     );
+    assert_eq!(relay.aggregate_bytes_per_second, Some(625_000));
     assert!(!relay.allow_loopback_peers && !relay.local_peer_bridge);
     assert_eq!(format!("{settings:?}"), "Settings { .. }");
 }
@@ -147,6 +149,67 @@ fn caps_may_be_raised_to_the_standard_maximum_and_no_further() {
     let mut over = with("--max-allocations", "2");
     over.push(("--max-per-user", "3".into()));
     assert_eq!(parse(&over).unwrap_err(), PER_USER);
+}
+
+#[test]
+fn the_aggregate_cap_has_a_default_is_settable_and_bounded() {
+    // Always on: a supervised node never relays without a total cap.
+    assert_eq!(
+        parse(&arguments())
+            .unwrap()
+            .relay_config()
+            .aggregate_bytes_per_second,
+        Some(HOME_AGGREGATE_BYTES_PER_SECOND)
+    );
+    for (value, expected) in [("1", 1), ("2500000", 2_500_000), ("67108864", 67_108_864)] {
+        let settings = parse(&with("--aggregate-bytes-per-second", value)).unwrap();
+        assert_eq!(settings.aggregate_bytes_per_second, expected);
+        assert_eq!(
+            settings.relay_config().aggregate_bytes_per_second,
+            Some(expected)
+        );
+    }
+    // Lower than one allocation's allowance is allowed: the total rules.
+    let tight = parse(&with("--aggregate-bytes-per-second", "50000")).unwrap();
+    assert!(tight.aggregate_bytes_per_second < tight.bytes_per_second);
+    for bad in ["0", "67108865", "-1", "+5", "1e6", "", "1.5", "0x10"] {
+        assert_eq!(
+            parse(&with("--aggregate-bytes-per-second", bad)).unwrap_err(),
+            AGGREGATE,
+            "{bad}"
+        );
+    }
+    let mut twice = arguments();
+    twice.push(("--aggregate-bytes-per-second", "1000".into()));
+    twice.push(("--aggregate-bytes-per-second", "2000".into()));
+    assert_eq!(parse(&twice).unwrap_err(), ARGUMENT);
+    // The refusal names the setting and never echoes the value.
+    assert!(!AGGREGATE.0.contains("999999999"));
+}
+
+#[test]
+fn the_status_line_is_counts_only_and_fixed_in_shape() {
+    assert_eq!(
+        status_line((0, 0, None)).to_string(),
+        r#"{"allocations":0,"bytesRelayed":0,"event":"status","lastAllocation":null,"v":1}"#
+    );
+    let line = status_line((3, u64::MAX, Some(1_800_000_000)));
+    assert_eq!(
+        line,
+        json!({"v":1,"event":"status","allocations":3,"bytesRelayed":u64::MAX,"lastAllocation":1_800_000_000})
+    );
+    // The largest possible line is short.
+    assert!(line.to_string().len() < 120);
+    // The monitor is handed only these three numbers, none of them an
+    // address or key, and zero means no remote allocation yet.
+    let counts = Counts::default();
+    assert_eq!(counts.snapshot(), (0, 0, None));
+    counts.allocations.store(2, Ordering::Relaxed);
+    counts.bytes_relayed.store(9, Ordering::Relaxed);
+    counts
+        .last_allocation
+        .store(1_800_000_001, Ordering::Relaxed);
+    assert_eq!(counts.snapshot(), (2, 9, Some(1_800_000_001)));
 }
 
 #[test]

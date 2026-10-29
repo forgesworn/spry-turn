@@ -31,7 +31,7 @@ use std::{
     path::PathBuf,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     thread,
     time::Duration,
@@ -43,6 +43,14 @@ pub(crate) const HOME_ALLOCATIONS: u32 = 8;
 pub(crate) const HOME_PER_USER: u32 = 2;
 pub(crate) const HOME_CONNECTIONS: u32 = 16;
 pub(crate) const HOME_BYTES_PER_SECOND: u64 = 125_000;
+/// Relayed payload bytes per second, both directions, across every
+/// allocation together: 5 Mbit/s. Eight allocations at the per-allocation
+/// default could otherwise ask for 1,000,000, more than many home uplinks
+/// carry. The owner decisions of 28 October 2026 fix no value; this is
+/// two thirds of that sum, and the supervisor may raise or lower it.
+pub(crate) const HOME_AGGREGATE_BYTES_PER_SECOND: u64 = 625_000;
+/// Seconds between status lines when the counts have changed.
+const STATUS_SECONDS: u64 = 5;
 /// Mapped allocation ports accepted from the supervisor. Twice the largest
 /// allocation cap; every mapping is a router entry.
 pub(crate) const MAX_MAPPINGS: usize = 64;
@@ -86,6 +94,8 @@ const CONNECTIONS: SetupError =
     SetupError("--max-tcp-connections must be a decimal integer from 1 to 32");
 const BANDWIDTH: SetupError =
     SetupError("--bytes-per-second must be a decimal integer from 1 to 67108864");
+const AGGREGATE: SetupError =
+    SetupError("--aggregate-bytes-per-second must be a decimal integer from 1 to 67108864");
 const STDIN: SetupError = SetupError(
     "--exit-on-stdin-close is required: a supervised node lives only while its supervisor holds its stdin",
 );
@@ -154,6 +164,7 @@ pub(crate) struct Settings {
     per_user: u32,
     connections: u32,
     bytes_per_second: u64,
+    aggregate_bytes_per_second: u64,
 }
 
 /// Never prints the secret.
@@ -231,6 +242,7 @@ impl Settings {
                     | "--max-per-user"
                     | "--max-tcp-connections"
                     | "--bytes-per-second"
+                    | "--aggregate-bytes-per-second"
             ) {
                 return Err(ARGUMENT);
             }
@@ -351,6 +363,14 @@ impl Settings {
                 .ok_or(BANDWIDTH)?,
             None => HOME_BYTES_PER_SECOND,
         };
+        let aggregate_bytes_per_second = match single.get("--aggregate-bytes-per-second") {
+            Some(value) => decimal(value)
+                .then(|| value.parse::<u64>().ok())
+                .flatten()
+                .filter(|value| (1..=MAX_BYTES_PER_SECOND).contains(value))
+                .ok_or(AGGREGATE)?,
+            None => HOME_AGGREGATE_BYTES_PER_SECOND,
+        };
         Ok(Self {
             secret,
             local_test,
@@ -367,6 +387,7 @@ impl Settings {
             per_user,
             connections,
             bytes_per_second,
+            aggregate_bytes_per_second,
         })
     }
 
@@ -404,14 +425,60 @@ impl Settings {
         config.max_per_user = self.per_user as usize;
         config.max_connections = self.connections as usize;
         config.bytes_per_second = self.bytes_per_second;
+        config.aggregate_bytes_per_second = Some(self.aggregate_bytes_per_second);
         config.allow_loopback_peers = self.local_test && self.bind.is_loopback();
         config
     }
 }
 
+/// What the status line reports, published by the forwarding thread after
+/// each poll and read by the monitor. Three numbers and nothing else: the
+/// relay never hands the monitor an address, a login or a key.
+#[derive(Default)]
+struct Counts {
+    allocations: AtomicU64,
+    bytes_relayed: AtomicU64,
+    /// Unix seconds of the newest allocation from a non-local address; 0 for
+    /// none (no real allocation is made at the epoch).
+    last_allocation: AtomicU64,
+}
+impl Counts {
+    fn publish(&self, server: &Server) {
+        self.allocations
+            .store(server.allocation_count() as u64, Ordering::Relaxed);
+        self.bytes_relayed
+            .store(server.stats().forwarded_bytes, Ordering::Relaxed);
+        self.last_allocation.store(
+            server.last_remote_allocation().unwrap_or(0),
+            Ordering::Relaxed,
+        );
+    }
+    fn snapshot(&self) -> (u64, u64, Option<u64>) {
+        let last = self.last_allocation.load(Ordering::Relaxed);
+        (
+            self.allocations.load(Ordering::Relaxed),
+            self.bytes_relayed.load(Ordering::Relaxed),
+            (last != 0).then_some(last),
+        )
+    }
+}
+
+/// The one status line shape: counts only, fixed keys, so its size is
+/// bounded and a supervisor can show it as it stands.
+fn status_line((allocations, bytes_relayed, last): (u64, u64, Option<u64>)) -> Value {
+    json!({
+        "v":1,
+        "event":"status",
+        "allocations":allocations,
+        "bytesRelayed":bytes_relayed,
+        "lastAllocation":last,
+    })
+}
+
 /// The TURN relay, in this process, so one stdin guard ends both.
 struct EmbeddedRelay {
     stop: Arc<AtomicBool>,
+    counts: Arc<Counts>,
     thread: Option<thread::JoinHandle<()>>,
 }
 impl EmbeddedRelay {
@@ -419,6 +486,8 @@ impl EmbeddedRelay {
         let mut server = Server::bind(config)?;
         let stop = Arc::new(AtomicBool::new(false));
         let running = stop.clone();
+        let counts = Arc::new(Counts::default());
+        let published = counts.clone();
         let thread = thread::Builder::new()
             .name("spry-forwarding".into())
             .spawn(move || {
@@ -426,10 +495,12 @@ impl EmbeddedRelay {
                     if server.poll_once(Duration::from_millis(50)).is_err() {
                         break;
                     }
+                    published.publish(&server);
                 }
             })?;
         Ok(Self {
             stop,
+            counts,
             thread: Some(thread),
         })
     }
@@ -437,6 +508,9 @@ impl EmbeddedRelay {
         self.thread
             .as_ref()
             .is_some_and(|thread| !thread.is_finished())
+    }
+    fn counts(&self) -> (u64, u64, Option<u64>) {
+        self.counts.snapshot()
     }
 }
 impl Drop for EmbeddedRelay {
@@ -586,8 +660,11 @@ async fn run(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         "urls":settings.urls(),
         "relayPortMap":settings.mappings,
     }));
+    let mut reported = relay.counts();
+    line(status_line(reported));
     let mut monitor = tokio::time::interval(Duration::from_secs(1));
     let mut connected = 0;
+    let mut seconds = 0_u64;
     #[cfg(unix)]
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     let result = loop {
@@ -603,6 +680,16 @@ async fn run(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
                     line(json!({"v":1,"event":"control","relays":active}));
                 }
                 connected = active;
+                // Counts again only when they have moved, and no faster than
+                // every few seconds, so the line is bounded and silent when idle.
+                seconds += 1;
+                if seconds % STATUS_SECONDS == 0 {
+                    let counts = relay.counts();
+                    if counts != reported {
+                        line(status_line(counts));
+                        reported = counts;
+                    }
+                }
             }
         }
     };

@@ -18,6 +18,15 @@
   allocation, raisable to the standard maximums. `--exit-on-stdin-close` is
   required. Unknown options and any other `SPRY_` variable refuse startup.
   Without the `supervised` argument `spry-node` is unchanged.
+- Add an aggregate bandwidth cap and a counts-only status line to supervised
+  mode. `--aggregate-bytes-per-second` (1 to 67108864, default 625000) limits
+  relayed payload bytes across every allocation together, in addition to the
+  per-allocation limit, by dropping what is over. The node prints
+  `{"v":1,"event":"status","allocations":N,"bytesRelayed":N,"lastAllocation":N|null}`
+  after `ready` and then at most every 5 seconds when a count changes; it
+  carries no address, key, login or room. `turn::Config` gains
+  `aggregate_bytes_per_second` (`None`, unchanged, by default) and `Server`
+  gains `last_remote_allocation()`.
 - Add the `spry-standard-v1` node card (kind 24183, no address) in
   `spry_link::standard`, returned with supervised grant and credential
   answers, and a reproducible `standardNode` entry in

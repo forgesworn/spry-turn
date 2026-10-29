@@ -71,6 +71,10 @@ pub struct Config {
     pub max_connections: usize,
     /// Aggregate bytes across both directions per allocation.
     pub bytes_per_second: u64,
+    /// Relayed payload bytes per second, both directions, summed over every
+    /// allocation. None leaves the total unlimited; Some must be non-zero.
+    /// The per-allocation limit still applies first.
+    pub aggregate_bytes_per_second: Option<u64>,
     #[cfg(feature = "tls")]
     pub tls: Option<(SocketAddr, Arc<rustls::ServerConfig>)>,
 }
@@ -700,6 +704,164 @@ mod policy_tests {
             std::thread::yield_now();
         }
         assert_eq!(received, expected);
+    }
+
+    /// Two datagram clients with one allocation each, as the fixture for the
+    /// aggregate cap. Returns the server, each client's socket, each peer's
+    /// socket and each allocation's relay token and address.
+    #[cfg(all(feature = "connected-udp", unix))]
+    #[allow(clippy::type_complexity)]
+    fn two_allocations(
+        aggregate: Option<u64>,
+    ) -> (
+        Server,
+        Vec<std::net::UdpSocket>,
+        Vec<std::net::UdpSocket>,
+        Vec<(Token, SocketAddr)>,
+    ) {
+        let mut config = Config::local(vec![1; 32]);
+        config.listen.set_port(0);
+        config.aggregate_bytes_per_second = aggregate;
+        let mut server = Server::bind(config).unwrap();
+        let (mut clients, mut peers, mut relays) = (Vec::new(), Vec::new(), Vec::new());
+        for index in 0..2 {
+            let client = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+            let peer = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+            let key = Client::Datagram(client.local_addr().unwrap());
+            let relay_socket = UdpSocket::bind("127.0.0.1:0".parse().unwrap()).unwrap();
+            let address = relay_socket.local_addr().unwrap();
+            let token = server.relays.reserve(key);
+            let expires = Instant::now() + Duration::from_secs(60);
+            server.allocations.insert(
+                key,
+                Allocation {
+                    socket: relay_socket,
+                    client_socket: None,
+                    token,
+                    bound_address: address,
+                    advertised_address: address,
+                    username: format!("aggregate-fixture-{index}"),
+                    transaction: [1; 12],
+                    expires,
+                    permissions: vec![Permission {
+                        ip: peer.local_addr().unwrap().ip(),
+                        expires,
+                    }],
+                    channels: Vec::new(),
+                    bandwidth: Bucket::new(64 * 1024 * 1024, 128 * 1024 * 1024, Instant::now()),
+                },
+            );
+            relays.push((token, address));
+            clients.push(client);
+            peers.push(peer);
+        }
+        (server, clients, peers, relays)
+    }
+
+    #[test]
+    #[cfg(all(feature = "connected-udp", unix))]
+    fn aggregate_cap_is_spent_by_all_allocations_together() {
+        for (aggregate, forwarded, dropped) in [(Some(3000), 3000, 1), (None, 4000, 0)] {
+            let (mut server, _clients, peers, relays) = two_allocations(aggregate);
+            let payload = [0x42; 1000];
+            // Two packets for each allocation: four thousand bytes in all,
+            // far inside every allocation's own allowance.
+            for (peer, (_, address)) in peers.iter().zip(&relays) {
+                peer.send_to(&payload, address).unwrap();
+                peer.send_to(&payload, address).unwrap();
+            }
+            std::thread::sleep(Duration::from_millis(50));
+            let mut scratch = vec![0; MAX_PACKET + HEADROOM];
+            for (token, _) in &relays {
+                server.receive_peer(*token, &mut scratch);
+            }
+            assert_eq!(
+                (server.stats.forwarded_bytes, server.stats.dropped_packets),
+                (forwarded, dropped),
+                "aggregate {aggregate:?}"
+            );
+            if aggregate.is_some() {
+                // The second allocation was the one cut short, though it had
+                // used nothing itself: the cap belongs to the total.
+                assert_eq!(server.stats.forwarded_packets, 3);
+            }
+        }
+    }
+
+    #[test]
+    fn a_refusal_by_the_aggregate_returns_the_allocations_own_tokens() {
+        let now = Instant::now();
+        let mut allocation = Bucket::new(1000, 1000, now);
+        let mut aggregate = Some(Bucket::new(500, 500, now));
+        assert!(!Server::within_budget(
+            &mut allocation,
+            &mut aggregate,
+            600,
+            now
+        ));
+        // The allocation still holds its whole second, and the aggregate
+        // was not charged for the packet it refused.
+        assert!(Server::within_budget(&mut allocation, &mut None, 1000, now));
+        assert!(Server::within_budget(
+            &mut Bucket::new(1000, 1000, now),
+            &mut aggregate,
+            500,
+            now
+        ));
+        // Without an aggregate only the allocation's own limit applies.
+        assert!(!Server::within_budget(
+            &mut Bucket::new(1000, 1000, now),
+            &mut None,
+            1001,
+            now
+        ));
+    }
+
+    #[test]
+    fn a_zero_aggregate_is_refused_at_bind() {
+        let mut config = Config::local(vec![1; 32]);
+        config.listen.set_port(0);
+        config.aggregate_bytes_per_second = Some(0);
+        assert!(Server::bind(config).is_err());
+    }
+
+    #[test]
+    fn only_addresses_beyond_the_hosts_own_networks_count_as_remote() {
+        let mut config = Config::local(vec![1; 32]);
+        config.relay_ip = "198.51.100.20".parse().unwrap();
+        config.advertised_ip = Some("203.0.113.7".parse().unwrap());
+        for local in [
+            "127.0.0.1",
+            "0.0.0.0",
+            "10.1.2.3",
+            "172.16.0.9",
+            "192.168.1.5",
+            "169.254.7.7",
+            "224.0.0.1",
+            "255.255.255.255",
+            "::1",
+            "::",
+            "fd00::1",
+            "fe80::1",
+            "ff02::1",
+            "::ffff:192.168.1.5",
+            "::ffff:127.0.0.1",
+            // The host itself, through its router or on its own interface.
+            "203.0.113.7",
+            "198.51.100.20",
+            "::ffff:203.0.113.7",
+        ] {
+            assert!(
+                !remote_client(local.parse().unwrap(), &config),
+                "{local} is local"
+            );
+        }
+        for remote in ["198.51.100.99", "100.64.0.1", "8.8.8.8", "2001:db8::1"] {
+            assert!(
+                remote_client(remote.parse().unwrap(), &config),
+                "{remote} is remote"
+            );
+        }
     }
 
     #[test]
@@ -1455,6 +1617,7 @@ impl Config {
             max_per_user: 8,
             max_connections: 256,
             bytes_per_second: 64 * 1024 * 1024,
+            aggregate_bytes_per_second: None,
             #[cfg(feature = "tls")]
             tls: None,
         }
@@ -1786,6 +1949,42 @@ pub struct Server {
     sweep_at: Instant,
     input: Vec<u8>,
     stats: Stats,
+    /// One bucket shared by every allocation, when configured.
+    aggregate: Option<Bucket>,
+    /// Unix seconds of the newest allocation made from a non-local address.
+    last_remote_allocation: Option<u64>,
+}
+
+/// Whether an allocation's client address counts as someone else's device:
+/// not loopback, unspecified, private, link-local or unique-local, and not
+/// this relay's own bind or advertised address (a host reaching its own relay
+/// through the router shows up as one of those).
+pub fn remote_client(ip: IpAddr, config: &Config) -> bool {
+    let ip = ip.to_canonical();
+    if ip == config.relay_ip.to_canonical()
+        || config
+            .advertised_ip
+            .is_some_and(|own| own.to_canonical() == ip)
+    {
+        return false;
+    }
+    match ip {
+        IpAddr::V4(ip) => {
+            !(ip.is_unspecified()
+                || ip.is_loopback()
+                || ip.is_private()
+                || ip.is_link_local()
+                || ip.is_multicast()
+                || ip.is_broadcast())
+        }
+        IpAddr::V6(ip) => {
+            !(ip.is_unspecified()
+                || ip.is_loopback()
+                || ip.is_multicast()
+                || ip.segments()[0] & 0xfe00 == 0xfc00
+                || ip.segments()[0] & 0xffc0 == 0xfe80)
+        }
+    }
 }
 
 pub fn unix_time() -> u64 {
@@ -1939,6 +2138,7 @@ impl Server {
             || config.max_per_user == 0
             || config.max_connections == 0
             || config.bytes_per_second == 0
+            || config.aggregate_bytes_per_second == Some(0)
         {
             return Err(io::Error::other(
                 "invalid configuration (secret requires at least 32 bytes)",
@@ -1996,6 +2196,9 @@ impl Server {
         };
         let now = Instant::now();
         let next_relay_port = config.relay_port_range.map_or(0, |(first, _)| first);
+        let aggregate = config
+            .aggregate_bytes_per_second
+            .map(|rate| Bucket::new(rate, rate, now));
         Ok(Self {
             config,
             poll,
@@ -2019,6 +2222,8 @@ impl Server {
             sweep_at: now + SWEEP_INTERVAL,
             input: vec![0; MAX_PACKET + HEADROOM],
             stats: Stats::default(),
+            aggregate,
+            last_remote_allocation: None,
         })
     }
 
@@ -2030,6 +2235,35 @@ impl Server {
     }
     pub fn allocation_count(&self) -> usize {
         self.allocations.len()
+    }
+    /// Unix seconds of the newest allocation whose client was not a local
+    /// address (see [`remote_client`]), or None if there has been none.
+    /// Only the time is kept, never the address.
+    pub fn last_remote_allocation(&self) -> Option<u64> {
+        self.last_remote_allocation
+    }
+
+    /// Admit a relayed payload against the allocation's own bucket and then
+    /// the shared aggregate bucket. A packet the aggregate refuses gives the
+    /// allocation's tokens back, so the total cap cannot also exhaust one
+    /// allocation's own allowance.
+    fn within_budget(
+        allocation: &mut Bucket,
+        aggregate: &mut Option<Bucket>,
+        amount: usize,
+        now: Instant,
+    ) -> bool {
+        if !allocation.take(amount, now) {
+            return false;
+        }
+        if aggregate
+            .as_mut()
+            .is_some_and(|total| !total.take(amount, now))
+        {
+            allocation.give_back(amount);
+            return false;
+        }
+        true
     }
 
     /// Update only the explicitly configured bridge's authorised peer aliases.
@@ -2554,7 +2788,7 @@ impl Server {
                 .permissions
                 .iter()
                 .any(|p| p.ip == channel.peer.ip() && p.expires > now)
-                || !a.bandwidth.take(data.len(), now)
+                || !Self::within_budget(&mut a.bandwidth, &mut self.aggregate, data.len(), now)
             {
                 self.stats.dropped_packets += 1;
                 return;
@@ -2759,6 +2993,9 @@ impl Server {
         self.relay_ports.insert(bound_address.port());
         self.advertised_relay_ports
             .insert(advertised_address.port());
+        if remote_client(peer.ip(), &self.config) {
+            self.last_remote_allocation = Some(unix_time());
+        }
         #[cfg(not(feature = "direct-index"))]
         self.relays.insert(token, client);
         self.allocated(client, peer, m, &key);
@@ -3076,7 +3313,7 @@ impl Server {
             .permissions
             .iter()
             .any(|p| p.ip == peer.ip() && p.expires > now)
-            || !a.bandwidth.take(data.len(), now)
+            || !Self::within_budget(&mut a.bandwidth, &mut self.aggregate, data.len(), now)
         {
             self.stats.dropped_packets += 1;
             return;
@@ -3113,7 +3350,7 @@ impl Server {
                 .permissions
                 .iter()
                 .any(|p| p.ip == peer.ip() && p.expires > now)
-                || !a.bandwidth.take(n, now)
+                || !Self::within_budget(&mut a.bandwidth, &mut self.aggregate, n, now)
             {
                 self.stats.dropped_packets += 1;
                 continue;
