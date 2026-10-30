@@ -233,6 +233,7 @@ already receives it.
 {"v":1,"event":"ready", ...}
 {"v":1,"event":"portmap","state":"changed","method":"pcp","allocationPorts":8,"requested":8,"permanent":false,"reason":"address"}
 {"v":1,"event":"urls","urls":["turn:<public IP>:51000?transport=udp","turn:<public IP>:51001?transport=tcp"],"relayPortMap":[[49200,51002]]}
+{"v":1,"event":"portmap","state":"restored","restored":2}
 {"v":1,"event":"portmap","state":"lost","reason":"expired"}
 {"v":1,"event":"portmap","state":"released","removed":10,"remaining":0}
 ```
@@ -243,6 +244,7 @@ already receives it.
 | `mapped` | The first grant, before the relay starts and before `ready`. `method` is `pcp`, `natpmp` or `upnp`. `allocationPorts` of `requested` were granted. `permanent` is true if any mapping has no lease end. |
 | `changed` | A value the relay hands out has changed; `reason` is `address`, `port` or `ports` (an allocation port was lost). Followed by `urls` once the relay is running again. |
 | `urls` | The new `urls` and `relayPortMap`, in the same shape as in `ready`. Replaces what `ready` said. |
+| `restored` | The router had dropped this many of the node's mappings before their lease ended, and they were put back with the same values. The node checks every mapping once a minute between renewals: UPnP routers are asked whether they still hold it, and PCP and NAT-PMP mappings are renewed that often, since those protocols have no query. A mapping the router will not take back is handled as a lost lease: an allocation port leaves the map (`changed`, `ports`), the listener ends hosting (`lost`). |
 | `failed` | Nothing is mapped and the node exits with code 3. No `ready` follows. |
 | `lost` | The relay can no longer be reached and the node exits with code 3. |
 | `released` | The last line, after the relay stopped: how many mappings were removed and how many records remain. It may be missing if the supervisor has already gone. |
@@ -252,7 +254,8 @@ Reasons for `failed` and `lost`: `no-gateway` (no default route), `vpn`,
 NAT-PMP or UPnP), `refused`, `failed` (another error), `carrier-grade-nat`,
 `double-nat`, `unusable-address`, `too-few-ports`, `record` (the record could
 not be saved, so the node does not keep a mapping it cannot clean up),
-`expired` (a lease ended and could not be renewed).
+`expired` (a lease ended, or the router dropped a listener mapping, and it
+could not be renewed).
 
 ### Exit codes
 
