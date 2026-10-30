@@ -719,3 +719,151 @@ fn the_thread_reports_the_grant_a_change_and_the_release_in_order() {
     );
     assert!(gateway.mappings().is_empty());
 }
+
+/// Drop the given mappings from the fake router, as the router seen on 30
+/// October 2026 did long before their lease ended.
+fn drop_from(upnp: &FakeUpnpGateway, gone: &[(Protocol, u16)]) {
+    let kept: Vec<UpnpMapping> = upnp
+        .mappings()
+        .into_iter()
+        .filter(|m| !gone.contains(&(m.protocol, m.external_port)))
+        .collect();
+    upnp.clear();
+    for mapping in kept {
+        upnp.insert(mapping);
+    }
+}
+
+fn count(upnp: &FakeUpnpGateway, action: &str) -> usize {
+    upnp.actions().iter().filter(|a| a.contains(action)).count()
+}
+
+#[test]
+fn a_upnp_mapping_the_router_drops_mid_lease_is_put_back_within_a_minute() {
+    let (nat, scratch, fixture) = (nat(), Scratch::new(), Fixture::new());
+    let upnp = FakeUpnpGateway::start(UpnpBehaviour::default());
+    let plan = plan(&nat, Some(&upnp), &[Method::Upnp], &scratch, &fixture);
+    let mut session = start(&plan).unwrap();
+    let values = session.values();
+    let allocation = values.map[1].1;
+    let asked = count(&upnp, "GetSpecificPortMappingEntry");
+    drop_from(
+        &upnp,
+        &[(Protocol::Udp, LISTEN), (Protocol::Udp, allocation)],
+    );
+    assert_eq!(upnp.mappings().len(), 6);
+    fixture.advance(59);
+    assert_eq!(session.tick(), Tick::Idle);
+    assert_eq!(upnp.mappings().len(), 6, "nothing is asked before a minute");
+    assert_eq!(count(&upnp, "GetSpecificPortMappingEntry"), asked);
+    fixture.advance(2);
+    assert_eq!(
+        session.tick(),
+        Tick::Idle,
+        "the same values come back, so the relay keeps running"
+    );
+    assert_eq!(session.take_restored(), 2);
+    assert_eq!(session.take_restored(), 0);
+    assert_eq!(upnp.mappings().len(), 8);
+    assert_eq!(session.values(), values);
+    assert!(
+        upnp.mappings()
+            .iter()
+            .any(|m| m.protocol == Protocol::Udp && m.external_port == LISTEN)
+    );
+    assert_eq!(scratch.entries().len(), 8);
+}
+
+#[test]
+fn a_check_that_finds_everything_held_adds_nothing() {
+    let (nat, scratch, fixture) = (nat(), Scratch::new(), Fixture::new());
+    let upnp = FakeUpnpGateway::start(UpnpBehaviour::default());
+    let plan = plan(&nat, Some(&upnp), &[Method::Upnp], &scratch, &fixture);
+    let mut session = start(&plan).unwrap();
+    let adds = count(&upnp, "AddPortMapping");
+    let asked = count(&upnp, "GetSpecificPortMappingEntry");
+    fixture.advance(61);
+    assert_eq!(session.tick(), Tick::Idle);
+    assert_eq!(count(&upnp, "GetSpecificPortMappingEntry"), asked + 8);
+    assert_eq!(count(&upnp, "AddPortMapping"), adds);
+    assert_eq!(session.take_restored(), 0);
+    fixture.advance(30);
+    assert_eq!(session.tick(), Tick::Idle);
+    assert_eq!(
+        count(&upnp, "GetSpecificPortMappingEntry"),
+        asked + 8,
+        "each mapping is asked at most once a minute"
+    );
+}
+
+#[test]
+fn a_dropped_allocation_port_the_router_will_not_take_back_shrinks_the_map() {
+    let (nat, scratch, fixture) = (nat(), Scratch::new(), Fixture::new());
+    let upnp = FakeUpnpGateway::start(UpnpBehaviour::default());
+    let plan = plan(&nat, Some(&upnp), &[Method::Upnp], &scratch, &fixture);
+    let mut session = start(&plan).unwrap();
+    let allocation = session.values().map[0].1;
+    drop_from(&upnp, &[(Protocol::Udp, allocation)]);
+    upnp.set(UpnpBehaviour {
+        refuse: Some(718),
+        ..UpnpBehaviour::default()
+    });
+    fixture.advance(61);
+    assert_eq!(session.tick(), Tick::Changed("ports"));
+    assert_eq!(session.info().allocation_ports, 5);
+    assert!(
+        session
+            .values()
+            .map
+            .iter()
+            .all(|(_, external)| *external != allocation)
+    );
+    assert_eq!(scratch.entries().len(), 7);
+}
+
+#[test]
+fn a_dropped_listener_the_router_will_not_take_back_is_a_loss() {
+    let (nat, scratch, fixture) = (nat(), Scratch::new(), Fixture::new());
+    let upnp = FakeUpnpGateway::start(UpnpBehaviour::default());
+    let plan = plan(&nat, Some(&upnp), &[Method::Upnp], &scratch, &fixture);
+    let mut session = start(&plan).unwrap();
+    drop_from(&upnp, &[(Protocol::Udp, LISTEN)]);
+    upnp.set(UpnpBehaviour {
+        refuse: Some(718),
+        ..UpnpBehaviour::default()
+    });
+    fixture.advance(61);
+    assert_eq!(session.tick(), Tick::Lost(Reason::Expired));
+}
+
+#[test]
+fn pcp_mappings_are_renewed_every_minute_since_pcp_cannot_be_asked() {
+    let (scratch, fixture) = (Scratch::new(), Fixture::new());
+    let gateway = FakeNatGateway::start(NatBehaviour::default());
+    let plan = plan(&gateway, None, &[Method::Pcp], &scratch, &fixture);
+    let mut session = start(&plan).unwrap();
+    let before = gateway.requests().len();
+    fixture.advance(59);
+    assert_eq!(session.tick(), Tick::Idle);
+    assert_eq!(
+        gateway.requests().len(),
+        before,
+        "a 7200 s lease, nothing due yet"
+    );
+    fixture.advance(2);
+    assert_eq!(session.tick(), Tick::Idle);
+    assert_eq!(
+        gateway.requests().len(),
+        before + 8,
+        "every mapping renewed, which puts back any the router lost"
+    );
+}
+
+#[test]
+fn a_restore_is_reported_as_a_count_only() {
+    let line = Update::Restored { count: 5 }.event().unwrap();
+    assert_eq!(
+        line,
+        json!({"v":1,"event":"portmap","state":"restored","restored":5})
+    );
+}

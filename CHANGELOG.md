@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Supervised mode checks every router mapping once a minute between
+  renewals and puts back any the router dropped, reporting
+  `{"v":1,"event":"portmap","state":"restored","restored":N}`. A real home
+  router dropped half of a node's UPnP mappings, the UDP listener among them,
+  within 12 minutes of a 3600 s lease, and the node only renewed at half the
+  lease, so the relay was unreachable for up to 20 minutes without a word.
+  UPnP is asked with `GetSpecificPortMappingEntry`; PCP and NAT-PMP have no
+  query, so their mappings are renewed every minute instead. New
+  `PortMapper::present` in `spry-portmap`.
 - Run supervised mode inside a host app's own process.
   `spry_service::embedded::start` takes the same options as
   `spry-node supervised` (without `--exit-on-stdin-close`, which is refused

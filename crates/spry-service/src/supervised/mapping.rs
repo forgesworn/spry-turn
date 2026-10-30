@@ -3,7 +3,9 @@
 //! A [`Task`] owns one [`PortMapper`] on its own thread, because the mapper is
 //! blocking. It removes whatever a crashed run recorded, asks the router for
 //! the listener (UDP, then TCP) and then for the allocation ports, reports
-//! the granted values, renews at half the lease, and reports every change
+//! the granted values, renews at half the lease, checks every minute that
+//! the router still holds each mapping (some routers drop UPnP mappings long
+//! before their lease ends), puts back any it lost, and reports every change
 //! the relay must follow. When it is stopped it removes only the mappings it
 //! made. Everything it tells the rest of the node is a count, a state or a
 //! fixed reason token: no gateway address and no router detail.
@@ -49,6 +51,12 @@ const RETRY: Duration = Duration::from_secs(30);
 const PERMANENT_REFRESH: Duration = Duration::from_secs(1800);
 /// Failed refreshes of a permanent lease before it counts as lost.
 const PERMANENT_FAILURES: u32 = 5;
+/// How often each mapping is checked between renewals. A router seen on 30
+/// October 2026 dropped half its UPnP mappings within 12 minutes of a
+/// 3600 s lease; this bounds such an outage to about a minute. UPnP is asked
+/// (`GetSpecificPortMappingEntry`); PCP and NAT-PMP have no query, so they
+/// are renewed this often instead, which puts a lost mapping back.
+const CHECK: Duration = Duration::from_secs(60);
 /// Removal on stop is bounded, so the node exits soon after its supervisor
 /// closes the pipe. Anything unfinished stays recorded for the next launch.
 pub(crate) const RELEASE_BUDGET: Duration = Duration::from_secs(2);
@@ -149,6 +157,9 @@ pub(crate) enum Update {
     /// A listener mapping was lost while running; the relay cannot be
     /// reached any more.
     Lost(Reason),
+    /// The router had dropped this many mappings before their lease ended;
+    /// they were put back with the same values.
+    Restored { count: usize },
     /// The task has removed what it could.
     Released { removed: usize, remaining: usize },
 }
@@ -186,6 +197,7 @@ impl Update {
             Self::Failed(Reason::Cancelled) => return None,
             Self::Failed(reason) => state("failed", json!({"reason":reason.token()})),
             Self::Lost(reason) => state("lost", json!({"reason":reason.token()})),
+            Self::Restored { count } => state("restored", json!({"restored":count})),
             Self::Released { removed, remaining } => {
                 state("released", json!({"removed":removed,"remaining":remaining}))
             }
@@ -256,6 +268,9 @@ struct Slot {
     mapping: Mapping,
     retry_at: Option<Instant>,
     failures: u32,
+    /// When the router last showed it holds this mapping (a grant, a
+    /// renewal or a check).
+    checked_at: Instant,
 }
 
 /// The result of looking at the clock.
@@ -264,6 +279,12 @@ pub(crate) enum Tick {
     Idle,
     Changed(&'static str),
     Lost(Reason),
+}
+
+enum Checked {
+    Held,
+    Restored(Option<&'static str>),
+    Lost,
 }
 
 enum Renewed {
@@ -289,6 +310,8 @@ pub(crate) struct Session {
     ports: RangeInclusive<u16>,
     local_test: bool,
     requests: usize,
+    /// Mappings put back since the last [`Session::take_restored`].
+    restored: usize,
 }
 
 /// Whether a failed removal leaves the record worth keeping.
@@ -347,6 +370,7 @@ impl Session {
             ports: plan.ports.clone(),
             local_test: plan.local_test,
             requests: 0,
+            restored: 0,
         };
         if let Err(reason) = session.acquire(stop) {
             session.release(RELEASE_BUDGET);
@@ -397,10 +421,12 @@ impl Session {
 
     fn adopt(&mut self, mapping: Mapping) -> Result<(), Reason> {
         let recorded = self.record(&mapping);
+        let checked_at = self.now();
         self.slots.push(Slot {
             mapping,
             retry_at: None,
             failures: 0,
+            checked_at,
         });
         recorded.map_err(|_| Reason::Record)
     }
@@ -544,11 +570,19 @@ impl Session {
         }
     }
 
-    fn due_at(slot: &Slot) -> Instant {
+    fn due_at(&self, slot: &Slot) -> Instant {
         slot.retry_at.unwrap_or_else(|| {
-            slot.mapping
+            let renew = slot
+                .mapping
                 .renew_at()
-                .unwrap_or(slot.mapping.granted_at + PERMANENT_REFRESH)
+                .unwrap_or(slot.mapping.granted_at + PERMANENT_REFRESH);
+            // PCP and NAT-PMP cannot be asked, so they are renewed as often
+            // as UPnP is checked.
+            if self.mapper.method() == Some(Method::Upnp) {
+                renew
+            } else {
+                renew.min(slot.checked_at + CHECK)
+            }
         })
     }
 
@@ -599,6 +633,7 @@ impl Session {
             mapping,
             retry_at: None,
             failures: 0,
+            checked_at: now,
         };
         Renewed::Kept { changed, restarted }
     }
@@ -614,7 +649,7 @@ impl Session {
         let mut silent = false;
         for pass in 0..2 {
             for (index, done) in handled.iter_mut().enumerate() {
-                if *done || (pass == 0 && Self::due_at(&self.slots[index]) > now) {
+                if *done || (pass == 0 && self.due_at(&self.slots[index]) > now) {
                     continue;
                 }
                 *done = true;
@@ -639,6 +674,23 @@ impl Session {
                 break;
             }
         }
+        for (index, done) in handled.iter().enumerate() {
+            if *done || silent {
+                continue;
+            }
+            match self.check_slot(index, now, &mut silent) {
+                Checked::Held => {}
+                Checked::Restored(reason) => {
+                    self.restored += 1;
+                    changed = changed.or(reason);
+                }
+                Checked::Lost if index < 2 => return Tick::Lost(Reason::Expired),
+                Checked::Lost => {
+                    lost.push(index);
+                    changed = changed.or(Some("ports"));
+                }
+            }
+        }
         if !lost.is_empty() {
             let dropped: Vec<Entry> = lost
                 .iter()
@@ -661,6 +713,71 @@ impl Session {
             return Tick::Lost(reason);
         }
         Tick::Changed(reason)
+    }
+
+    /// Ask a UPnP router whether it still holds a mapping that is not due
+    /// for renewal, at most once per [`CHECK`], and add it again if not.
+    fn check_slot(&mut self, index: usize, now: Instant, silent: &mut bool) -> Checked {
+        let slot = &self.slots[index];
+        if self.mapper.method() != Some(Method::Upnp) || slot.checked_at + CHECK > now {
+            return Checked::Held;
+        }
+        let old = slot.mapping.clone();
+        let present = self.mapper.present(&old);
+        if let Err(Error::NoAnswer) = present {
+            // Asked again next minute; the lease is still running.
+            *silent = true;
+            self.slots[index].checked_at = now;
+            return Checked::Held;
+        }
+        if let Ok(true) = present {
+            self.slots[index].checked_at = now;
+            return Checked::Held;
+        }
+        // Gone, held by someone else, or a router that cannot answer the
+        // query: add it again with the same values, as a renewal would.
+        let unknown = present.is_err();
+        match self.mapper.renew(&old) {
+            Ok(renewal) => {
+                let mapping = renewal.mapping;
+                let reason = if mapping.external.ip() != old.external.ip() {
+                    Some("address")
+                } else if mapping.external.port() != old.external.port() {
+                    Some("port")
+                } else {
+                    None
+                };
+                let _ = self.record(&mapping);
+                self.slots[index] = Slot {
+                    mapping,
+                    retry_at: None,
+                    failures: 0,
+                    checked_at: now,
+                };
+                if unknown {
+                    Checked::Held
+                } else {
+                    Checked::Restored(reason)
+                }
+            }
+            Err(error) => {
+                *silent |= error == Error::NoAnswer;
+                self.slots[index].checked_at = now;
+                // A router that cannot answer the query keeps its lease
+                // until renewal says otherwise; a mapping it showed gone and
+                // will not take back is lost.
+                if unknown || error == Error::NoAnswer {
+                    Checked::Held
+                } else {
+                    Checked::Lost
+                }
+            }
+        }
+    }
+
+    /// Mappings put back since the last call.
+    pub(crate) fn take_restored(&mut self) -> usize {
+        std::mem::take(&mut self.restored)
     }
 
     /// Remove the mappings this run made, newest first, within `budget`.
@@ -788,7 +905,12 @@ fn work(plan: &Plan, stop: &Stop, updates: &UnboundedSender<Update>) {
         info: session.info(),
     });
     while !stop.wait(TICK) {
-        match session.tick() {
+        let tick = session.tick();
+        let restored = session.take_restored();
+        if restored > 0 {
+            send(Update::Restored { count: restored });
+        }
+        match tick {
             Tick::Idle => {}
             Tick::Changed(reason) => send(Update::Changed {
                 values: session.values(),

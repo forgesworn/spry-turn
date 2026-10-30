@@ -623,6 +623,36 @@ impl PortMapper {
         })
     }
 
+    /// Whether the gateway still holds a UPnP mapping as this process made
+    /// it: same client, port and tag. Some routers drop mappings long before
+    /// their lease ends, so a holder asks between renewals. `Ok(false)` means
+    /// gone or held by someone else; PCP and NAT-PMP have no query, so they
+    /// answer [`Error::WrongMethod`] and are renewed instead.
+    pub fn present(&mut self, mapping: &Mapping) -> Result<bool, Error> {
+        if mapping.gateway != self.gateway {
+            return Err(Error::OffLan);
+        }
+        let Owner::Upnp {
+            control,
+            service,
+            description,
+        } = &mapping.owner
+        else {
+            return Err(Error::WrongMethod);
+        };
+        let igd = self.igd_for(control, *service)?;
+        match igd.entry(mapping.protocol, mapping.external.port()) {
+            Ok(entry) => Ok(entry.internal == mapping.internal
+                && entry.description == *description
+                && entry.enabled),
+            Err(Error::Refused {
+                code: upnp::NO_SUCH_ENTRY,
+                ..
+            }) => Ok(false),
+            Err(error) => Err(error),
+        }
+    }
+
     /// Remove a mapping this process created.
     pub fn remove(&mut self, mapping: &Mapping) -> Result<(), Error> {
         if mapping.gateway != self.gateway {
