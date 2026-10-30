@@ -1,6 +1,12 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 — 30 October 2026
+
+Public MIT prerelease, the first built by the release workflow: both
+executables for macOS arm64, Windows x64 (unsigned) and Linux x64 and arm64,
+and the Android library with its C ABI and JNI shim. Supervised mode, port
+mapping and in-process embedding are what KithMoot's built-in call relay
+runs on.
 
 - Supervised mode checks every router mapping once a minute between
   renewals and puts back any the router dropped, reporting

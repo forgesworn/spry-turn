@@ -2,7 +2,7 @@
 
 > Lightweight Rust STUN/TURN server, embeddable native relay and WASM packet codec. MIT; maintained by TheCryptoDonkey under ForgeSworn.
 
-Version 0.3.0. Source and GitHub prereleases are public, under MIT, copyright 2026 TheCryptoDonkey. There is no crates.io, docs.rs or npm publication, hosted relay, credential service or public documentation site.
+Version 0.4.0. Source and GitHub prereleases are public, under MIT, copyright 2026 TheCryptoDonkey. There is no crates.io, docs.rs or npm publication, hosted relay, credential service or public documentation site.
 
 The existing Linux verify job is configured to upload a three-day CI artefact containing both TLS-enabled standalone executables, exact committed source, dependency licences, checksums and ELF/GLIBC provenance. This is separate from formal release downloads and operator deployment or network acceptance.
 
