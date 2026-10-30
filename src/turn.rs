@@ -1600,6 +1600,69 @@ mod policy_tests {
     }
 
     #[test]
+    fn own_public_addresses_stay_on_the_host_both_ways() {
+        let mut config = Config::local(vec![1; 32]);
+        config.relay_ip = "192.168.1.20".parse().unwrap();
+        config.advertised_ip = Some("203.0.113.7".parse().unwrap());
+        let public_to_local = HashMap::from([(51000, 41000)]);
+        let local_to_public = HashMap::from([(41000, 51000)]);
+        let target = |config: &Config, peer: &str| {
+            Server::own_local_target(config, &public_to_local, peer.parse().unwrap())
+        };
+        assert_eq!(
+            target(&config, "203.0.113.7:51000"),
+            "192.168.1.20:41000".parse().unwrap()
+        );
+        // Other public ports, other hosts and the local address pass through.
+        for peer in [
+            "203.0.113.7:51001",
+            "198.51.100.1:51000",
+            "192.168.1.20:41000",
+        ] {
+            assert_eq!(target(&config, peer), peer.parse().unwrap());
+        }
+        let now = Instant::now();
+        let public = vec![Permission {
+            ip: "203.0.113.7".parse().unwrap(),
+            expires: now + Duration::from_secs(60),
+        }];
+        let source = |permissions: &[Permission], from: &str| {
+            Server::own_public_source(
+                &config,
+                &local_to_public,
+                permissions,
+                now,
+                from.parse().unwrap(),
+            )
+        };
+        assert_eq!(
+            source(&public, "192.168.1.20:41000"),
+            "203.0.113.7:51000".parse().unwrap()
+        );
+        // Without a permission for the public IP, or from a port that is not
+        // a live allocation, the real source is kept.
+        assert_eq!(
+            source(&[], "192.168.1.20:41000"),
+            "192.168.1.20:41000".parse().unwrap()
+        );
+        assert_eq!(
+            source(&public, "192.168.1.20:41001"),
+            "192.168.1.20:41001".parse().unwrap()
+        );
+        assert_eq!(
+            source(&public, "198.51.100.1:41000"),
+            "198.51.100.1:41000".parse().unwrap()
+        );
+        // With no distinct advertised address there is nothing to translate.
+        let mut plain = config.clone();
+        plain.advertised_ip = None;
+        assert_eq!(
+            target(&plain, "203.0.113.7:51000"),
+            "203.0.113.7:51000".parse().unwrap()
+        );
+    }
+
+    #[test]
     fn own_address_is_limited_to_live_relay_ports() {
         let mut config = Config::local(vec![1; 32]);
         config.relay_ip = "203.0.113.1".parse().unwrap();
@@ -1977,6 +2040,9 @@ pub struct Server {
     relays: RelaySlots,
     relay_ports: HashSet<u16>,
     advertised_relay_ports: HashSet<u16>,
+    /// Live allocations' advertised relay port to local relay port, and back.
+    own_public_to_local: HashMap<u16, u16>,
+    own_local_to_public: HashMap<u16, u16>,
     next_relay_mapping: usize,
     next_relay_port: u16,
     connections: HashMap<Token, Connection>,
@@ -2249,6 +2315,8 @@ impl Server {
             relays: Default::default(),
             relay_ports: HashSet::new(),
             advertised_relay_ports: HashSet::new(),
+            own_public_to_local: HashMap::new(),
+            own_local_to_public: HashMap::new(),
             next_relay_mapping: 0,
             next_relay_port,
             connections: HashMap::new(),
@@ -2678,6 +2746,10 @@ impl Server {
             self.relay_ports.remove(&allocation.bound_address.port());
             self.advertised_relay_ports
                 .remove(&allocation.advertised_address.port());
+            self.own_public_to_local
+                .remove(&allocation.advertised_address.port());
+            self.own_local_to_public
+                .remove(&allocation.bound_address.port());
             let _ = self.poll.registry().deregister(&mut allocation.socket);
             self.relays.remove(&allocation.token);
         }
@@ -2831,7 +2903,9 @@ impl Server {
                 self.stats.dropped_packets += 1;
                 return;
             }
-            if a.socket.send_to(data, channel.peer).is_ok() {
+            let target =
+                Self::own_local_target(&self.config, &self.own_public_to_local, channel.peer);
+            if a.socket.send_to(data, target).is_ok() {
                 self.stats.forwarded_packets += 1;
                 self.stats.forwarded_bytes += data.len() as u64;
             } else {
@@ -3031,6 +3105,10 @@ impl Server {
         self.relay_ports.insert(bound_address.port());
         self.advertised_relay_ports
             .insert(advertised_address.port());
+        self.own_public_to_local
+            .insert(advertised_address.port(), bound_address.port());
+        self.own_local_to_public
+            .insert(bound_address.port(), advertised_address.port());
         if remote_client(peer.ip(), &self.config) {
             self.last_remote_allocation = Some(unix_time());
         }
@@ -3142,6 +3220,53 @@ impl Server {
             &self.advertised_relay_ports,
             address,
         )
+    }
+
+    /// Where to send a packet addressed to `peer`. A router without NAT
+    /// loopback drops what the host sends to its own public address, so a
+    /// packet for another live allocation's advertised address goes straight
+    /// to that allocation's local socket instead. Policy and permissions are
+    /// still checked against the advertised address.
+    fn own_local_target(
+        config: &Config,
+        public_to_local: &HashMap<u16, u16>,
+        peer: SocketAddr,
+    ) -> SocketAddr {
+        match config.advertised_ip {
+            Some(public) if public != config.relay_ip && peer.ip() == public => public_to_local
+                .get(&peer.port())
+                .map_or(peer, |&local| SocketAddr::new(config.relay_ip, local)),
+            _ => peer,
+        }
+    }
+
+    /// How a packet from `source` is shown to the receiving allocation. One
+    /// sent by another live allocation arrives from its local socket; when
+    /// the receiver has a permission for the advertised IP, the packet is
+    /// shown as coming from that allocation's advertised address, which is
+    /// the only one its client ever learnt.
+    fn own_public_source(
+        config: &Config,
+        local_to_public: &HashMap<u16, u16>,
+        permissions: &[Permission],
+        now: Instant,
+        source: SocketAddr,
+    ) -> SocketAddr {
+        match config.advertised_ip {
+            Some(public) if public != config.relay_ip && source.ip() == config.relay_ip => {
+                match local_to_public.get(&source.port()) {
+                    Some(&port)
+                        if permissions
+                            .iter()
+                            .any(|p| p.ip == public && p.expires > now) =>
+                    {
+                        SocketAddr::new(public, port)
+                    }
+                    _ => source,
+                }
+            }
+            _ => source,
+        }
     }
 
     fn allowed_peer(
@@ -3356,7 +3481,8 @@ impl Server {
             self.stats.dropped_packets += 1;
             return;
         }
-        if a.socket.send_to(data, peer).is_ok() {
+        let target = Self::own_local_target(&self.config, &self.own_public_to_local, peer);
+        if a.socket.send_to(data, target).is_ok() {
             self.stats.forwarded_packets += 1;
             self.stats.forwarded_bytes += data.len() as u64;
         } else {
@@ -3384,6 +3510,13 @@ impl Server {
                 Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
                 Err(_) => return,
             };
+            let peer = Self::own_public_source(
+                &self.config,
+                &self.own_local_to_public,
+                &a.permissions,
+                now,
+                peer,
+            );
             if !a
                 .permissions
                 .iter()

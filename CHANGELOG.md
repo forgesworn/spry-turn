@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Two allocations on one relay now reach each other by their advertised
+  addresses behind a router without NAT loopback. Before, a packet for the
+  relay's own public address went out to the router, which dropped it, so a
+  host's own device could not use its relay to reach a guest using the same
+  relay. Such packets now go straight to the other allocation's local socket
+  and arrive shown as from the sender's advertised address. Peer policy is
+  unchanged: private addresses are still refused.
+
 ## 0.4.0 — 30 October 2026
 
 Public MIT prerelease, the first built by the release workflow: both
