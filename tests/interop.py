@@ -776,6 +776,40 @@ class Interop(unittest.TestCase):
                     self.assertEqual(client.request(4, [(LIFETIME, bytes(4))])[0], 0x104)
                 for client in (a, b, c): client.close()
 
+    def test_own_public_relay_addresses_reach_each_other_without_nat_loopback(self):
+        # A router without NAT loopback drops what the host sends to its own
+        # public address (203.0.113.7 goes nowhere here). Two allocations on
+        # one relay must still reach each other by their public addresses.
+        first, reserved = self.reserve_relay_range()
+        f = Fixture(BINARY, tls=TLS, limits=(
+            "--relay-port-map", f"{first}:10001", "--relay-port-map", f"{first + 2}:10003",
+            "--public-ip", "203.0.113.7"))
+        self.addCleanup(f.close)
+        reserved[0].close(); reserved[2].close()
+        for mode in ["udp", "tcp"] + (["tls"] if TLS else []):
+            with self.subTest(mode=mode):
+                a, b = [Client(f, mode=mode) for _ in range(2)]
+                for client in (a, b): self.addCleanup(client.close)
+                self.assertEqual({a.allocate(), b.allocate()},
+                                 {("203.0.113.7", 10001), ("203.0.113.7", 10003)})
+                self.assertEqual(a.peer_request(9, b.relay, 0x4000)[0], 0x109)
+                self.assertEqual(b.peer_request(8, a.relay)[0], 0x108)
+                a.send(struct.pack("!HH", 0x4000, 6) + b"public")
+                _, fields, tid = parse(b.receive())
+                self.assertEqual(fields[DATA], b"public")
+                self.assertEqual(address(fields[PEER], tid), a.relay)
+                tid = secrets.token_bytes(12)
+                b.send(packet(6, [(PEER, peer_attr(a.relay, tid)), (DATA, b"reply")],
+                              tid=tid, indication=True))
+                response = a.receive()
+                self.assertEqual(struct.unpack_from("!HH", response), (0x4000, 5))
+                self.assertEqual(response[4:9], b"reply")
+                # A public port that is not a live allocation stays refused.
+                self.assertEqual(error_code(b.peer_request(8, ("203.0.113.7", 10002))[1]), 403)
+                for client in (a, b):
+                    self.assertEqual(client.request(4, [(LIFETIME, bytes(4))])[0], 0x104)
+                    client.close()
+
     def test_invalid_mapped_relay_port_cli_refuses_startup(self):
         options = [("--relay-port-map", value) for value in
                    ("0:1", "1:0", "65536:1", "1:65536", "-1:9", "1", "1:2:3")]

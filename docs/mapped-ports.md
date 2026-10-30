@@ -87,9 +87,18 @@ source disappearance and missing routes without exposing raw endpoint errors.
 No VPN setting or owner Archipelago node was changed.
 
 Actual forwarding must be proved in both directions through each advertised
-endpoint from an independent network. Same-server NAT hairpin behaviour,
-physical sleep/wake, lease loss, reconnect, sustained media and performance
-remain separate acceptance gates. No destination rewrite shortcut is provided.
+endpoint from an independent network. Physical sleep/wake, lease loss,
+reconnect, sustained media and performance remain separate acceptance gates.
+
+Many home routers have no NAT loopback: what the host sends to its own public
+address never comes back. Traffic between two allocations on the same relay
+therefore stays on the host. A packet for a live allocation's advertised
+address goes to that allocation's local socket, and the receiver sees it as
+coming from the sender's advertised address when it holds a permission for
+the advertised IP. Policy and permissions are still checked against the
+advertised address, and no other destination is rewritten, so a host's own
+device can use its relay to reach a guest on the same relay without the
+relay ever forwarding to a private address.
 The current public Nostr advert format and private ULA access profile also need
 explicit compatible adapters before describing a dynamic desktop endpoint.
 

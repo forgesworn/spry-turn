@@ -134,6 +134,8 @@ Private, loopback, link-local and multicast peers are blocked by default.
 The CLI's `--allow-loopback-peers` exists for generated local tests and
 requires a loopback-only listener. It is not a public deployment option.
 Do not relax peer restrictions to work around a reachability problem.
+Two allocations on the same relay reach each other by their advertised
+addresses without the router: see [Mapped ports](mapped-ports.md).
 
 TLS requires `--features tls`, an explicit listener and operator-provided
 PEM certificate/key files. Use a certificate trusted by the intended

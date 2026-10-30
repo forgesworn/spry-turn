@@ -1584,6 +1584,8 @@ Private, loopback, link-local and multicast peers are blocked by default.
 The CLI's `--allow-loopback-peers` exists for generated local tests and
 requires a loopback-only listener. It is not a public deployment option.
 Do not relax peer restrictions to work around a reachability problem.
+Two allocations on the same relay reach each other by their advertised
+addresses without the router: see [Mapped ports](https://github.com/forgesworn/spry-turn/blob/main/docs/mapped-ports.md).
 
 TLS requires `--features tls`, an explicit listener and operator-provided
 PEM certificate/key files. Use a certificate trusted by the intended
@@ -2431,9 +2433,18 @@ source disappearance and missing routes without exposing raw endpoint errors.
 No VPN setting or owner Archipelago node was changed.
 
 Actual forwarding must be proved in both directions through each advertised
-endpoint from an independent network. Same-server NAT hairpin behaviour,
-physical sleep/wake, lease loss, reconnect, sustained media and performance
-remain separate acceptance gates. No destination rewrite shortcut is provided.
+endpoint from an independent network. Physical sleep/wake, lease loss,
+reconnect, sustained media and performance remain separate acceptance gates.
+
+Many home routers have no NAT loopback: what the host sends to its own public
+address never comes back. Traffic between two allocations on the same relay
+therefore stays on the host. A packet for a live allocation's advertised
+address goes to that allocation's local socket, and the receiver sees it as
+coming from the sender's advertised address when it holds a permission for
+the advertised IP. Policy and permissions are still checked against the
+advertised address, and no other destination is rewritten, so a host's own
+device can use its relay to reach a guest on the same relay without the
+relay ever forwarding to a private address.
 The current public Nostr advert format and private ULA access profile also need
 explicit compatible adapters before describing a dynamic desktop endpoint.
 
@@ -3944,6 +3955,16 @@ Do not silently remove transport support required by existing clients.
 Canonical source: [CHANGELOG.md](https://github.com/forgesworn/spry-turn/blob/main/CHANGELOG.md)
 
 # Changelog
+
+## Unreleased
+
+- Two allocations on one relay now reach each other by their advertised
+  addresses behind a router without NAT loopback. Before, a packet for the
+  relay's own public address went out to the router, which dropped it, so a
+  host's own device could not use its relay to reach a guest using the same
+  relay. Such packets now go straight to the other allocation's local socket
+  and arrive shown as from the sender's advertised address. Peer policy is
+  unchanged: private addresses are still refused.
 
 ## 0.4.0 — 30 October 2026
 
