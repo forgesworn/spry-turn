@@ -2,7 +2,7 @@
 
 > Lightweight Rust STUN/TURN server, embeddable native relay and WASM packet codec. MIT; maintained by TheCryptoDonkey under ForgeSworn.
 
-Version 0.4.0. Source and GitHub prereleases are public, under MIT, copyright 2026 TheCryptoDonkey. There is no crates.io, docs.rs or npm publication, hosted relay, credential service or public documentation site.
+Version 0.4.1. Source and GitHub prereleases are public, under MIT, copyright 2026 TheCryptoDonkey. There is no crates.io, docs.rs or npm publication, hosted relay, credential service or public documentation site.
 
 The existing Linux verify job is configured to upload a three-day CI artefact containing both TLS-enabled standalone executables, exact committed source, dependency licences, checksums and ELF/GLIBC provenance. This is separate from formal release downloads and operator deployment or network acceptance.
 
@@ -344,21 +344,23 @@ cd spry-turn
 ```
 
 Source is the portable installation path. Cargo and npm publication are
-disabled. The public v0.4.0 GitHub prerelease is the first built by the
-release workflow: both executables (`spry-turn` and `spry-node`) for macOS
-arm64, Windows x64 (unsigned) and Linux x64 and arm64, the Android library,
-the exact source, `release-manifest.json` and `SHA256SUMS`; see
+disabled. The public v0.4.1 GitHub prerelease carries both executables
+(`spry-turn` and `spry-node`) for macOS arm64, Windows x64 (unsigned) and
+Linux x64 and arm64, the Android library, the exact source,
+`release-manifest.json` and `SHA256SUMS`; see
 [the release artefacts](https://github.com/forgesworn/spry-turn/blob/main/docs/embedding.md#what-is-in-a-release). Fetch and verify
 it in an empty directory:
 
 ```sh
-gh release download v0.4.0 --repo forgesworn/spry-turn
+gh release download v0.4.1 --repo forgesworn/spry-turn
 shasum -a 256 -c SHA256SUMS
 ```
 
-[Download v0.4.0](https://github.com/forgesworn/spry-turn/releases/tag/v0.4.0).
+[Download v0.4.1](https://github.com/forgesworn/spry-turn/releases/tag/v0.4.1).
 WASM is a source build.
-The older [v0.3.0](https://github.com/forgesworn/spry-turn/releases/tag/v0.3.0)
+The older [v0.4.0](https://github.com/forgesworn/spry-turn/releases/tag/v0.4.0)
+(the first workflow-built release),
+[v0.3.0](https://github.com/forgesworn/spry-turn/releases/tag/v0.3.0)
 (macOS ARM64 `spry-turn` only) and
 [v0.2.1](https://github.com/forgesworn/spry-turn/releases/tag/v0.2.1) (macOS/Linux
 ARM64 and WASM) releases retain their original archives; those do not contain
@@ -808,7 +810,7 @@ Canonical source: [docs/api.md](https://github.com/forgesworn/spry-turn/blob/mai
 
 # Rust and WASM API reference
 
-Version 0.4.0. Source is authoritative; there is no published crates.io,
+Version 0.4.1. Source is authoritative; there is no published crates.io,
 docs.rs or npm package. Authorised users can generate local Rust API pages
 with `cargo doc --locked --all-features --no-deps`.
 
@@ -3956,7 +3958,10 @@ Canonical source: [CHANGELOG.md](https://github.com/forgesworn/spry-turn/blob/ma
 
 # Changelog
 
-## Unreleased
+## 0.4.1 (30 October 2026)
+
+Public MIT prerelease, built by the release workflow like 0.4.0, for
+KithMoot's built-in call relay behind home routers without NAT loopback.
 
 - Two allocations on one relay now reach each other by their advertised
   addresses behind a router without NAT loopback. Before, a packet for the
