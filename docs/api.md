@@ -1,6 +1,6 @@
 # Rust and WASM API reference
 
-Version 0.4.0. Source is authoritative; there is no published crates.io,
+Version 0.4.1. Source is authoritative; there is no published crates.io,
 docs.rs or npm package. Authorised users can generate local Rust API pages
 with `cargo doc --locked --all-features --no-deps`.
 

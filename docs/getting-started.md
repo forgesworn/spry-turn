@@ -14,21 +14,23 @@ cd spry-turn
 ```
 
 Source is the portable installation path. Cargo and npm publication are
-disabled. The public v0.4.0 GitHub prerelease is the first built by the
-release workflow: both executables (`spry-turn` and `spry-node`) for macOS
-arm64, Windows x64 (unsigned) and Linux x64 and arm64, the Android library,
-the exact source, `release-manifest.json` and `SHA256SUMS`; see
+disabled. The public v0.4.1 GitHub prerelease carries both executables
+(`spry-turn` and `spry-node`) for macOS arm64, Windows x64 (unsigned) and
+Linux x64 and arm64, the Android library, the exact source,
+`release-manifest.json` and `SHA256SUMS`; see
 [the release artefacts](embedding.md#what-is-in-a-release). Fetch and verify
 it in an empty directory:
 
 ```sh
-gh release download v0.4.0 --repo forgesworn/spry-turn
+gh release download v0.4.1 --repo forgesworn/spry-turn
 shasum -a 256 -c SHA256SUMS
 ```
 
-[Download v0.4.0](https://github.com/forgesworn/spry-turn/releases/tag/v0.4.0).
+[Download v0.4.1](https://github.com/forgesworn/spry-turn/releases/tag/v0.4.1).
 WASM is a source build.
-The older [v0.3.0](https://github.com/forgesworn/spry-turn/releases/tag/v0.3.0)
+The older [v0.4.0](https://github.com/forgesworn/spry-turn/releases/tag/v0.4.0)
+(the first workflow-built release),
+[v0.3.0](https://github.com/forgesworn/spry-turn/releases/tag/v0.3.0)
 (macOS ARM64 `spry-turn` only) and
 [v0.2.1](https://github.com/forgesworn/spry-turn/releases/tag/v0.2.1) (macOS/Linux
 ARM64 and WASM) releases retain their original archives; those do not contain

@@ -1,6 +1,9 @@
 # Changelog
 
-## Unreleased
+## 0.4.1 (30 October 2026)
+
+Public MIT prerelease, built by the release workflow like 0.4.0, for
+KithMoot's built-in call relay behind home routers without NAT loopback.
 
 - Two allocations on one relay now reach each other by their advertised
   addresses behind a router without NAT loopback. Before, a packet for the
