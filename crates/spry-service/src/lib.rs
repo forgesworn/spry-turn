@@ -335,6 +335,11 @@ fn public_v4(ip: Ipv4Addr) -> bool {
         || (a == 198 && (b == 18 || b == 19))
         || (a == 192 && b == 0 && c == 0))
 }
+// Explicit fixtures may bind a host-only/LAN interface for emulator media.
+// Normal installs retain the public-address requirement.
+fn fixture_address(address: Ipv4Addr, enabled: bool) -> bool {
+    enabled && (address.is_loopback() || address.is_private())
+}
 fn node_address() -> Option<Ipv4Addr> {
     if let Ok(explicit) = env::var("SPRY_RELAY_IP") {
         return explicit.parse().ok();
@@ -369,7 +374,10 @@ fn node_address() -> Option<Ipv4Addr> {
 }
 async fn start_relay(state: &State, settings: &standard::Settings) -> Option<Child> {
     let address = node_address()?;
-    let local_test = address.is_loopback() && env::var("SPRY_LOCAL_TEST").as_deref() == Ok("true");
+    let local_test = fixture_address(
+        address,
+        env::var("SPRY_LOCAL_TEST").as_deref() == Ok("true"),
+    );
     let public = env::var("SPRY_PUBLIC_IP").ok();
     if !local_test
         && !public_v4(address)
@@ -594,8 +602,10 @@ pub async fn run_with_assets(
         let address = node_address().ok_or(public::SetupError(
             "SPRY_RELAY_IP must name a reachable interface",
         ))?;
-        let local_test =
-            address.is_loopback() && env::var("SPRY_LOCAL_TEST").as_deref() == Ok("true");
+        let local_test = fixture_address(
+            address,
+            env::var("SPRY_LOCAL_TEST").as_deref() == Ok("true"),
+        );
         let mut config = settings.relay_config(address, secret.as_bytes().to_vec())?;
         let public = env::var("SPRY_PUBLIC_IP")
             .ok()
@@ -743,6 +753,27 @@ pub fn main_with_assets(assets: UiAssets) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn private_relay_interfaces_require_explicit_fixture_mode() {
+        for ip in ["127.0.0.1", "10.0.2.2", "172.16.0.1", "192.168.64.1"] {
+            let ip = ip.parse().unwrap();
+            assert!(super::fixture_address(ip, true));
+            assert!(!super::fixture_address(ip, false));
+            assert!(!super::public_v4(ip));
+        }
+        for ip in [
+            "0.0.0.0",
+            "169.254.169.254",
+            "100.64.0.1",
+            "192.0.2.1",
+            "224.0.0.1",
+            "255.255.255.255",
+            "8.8.8.8",
+        ] {
+            assert!(!super::fixture_address(ip.parse().unwrap(), true));
+        }
+    }
+
     use super::*;
     use signalling::ControlHandler;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
