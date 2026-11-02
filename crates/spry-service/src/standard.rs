@@ -10,9 +10,13 @@ pub(crate) struct Settings {
     pub tls_port: u16,
     pub relay_ports: (u16, u16),
     pub bytes_per_second: u64,
+    pub aggregate_bytes_per_second: Option<u64>,
     limits: Limits,
     direct_tls: bool,
     advertise_tls: bool,
+    tls_443: bool,
+    certificate: String,
+    key: String,
 }
 
 /// Relay admission limits. Each default is also the maximum: an operator can
@@ -36,6 +40,8 @@ const RELAY_PORTS: SetupError = SetupError(
 );
 const BANDWIDTH: SetupError =
     SetupError("SPRY_BYTES_PER_SECOND must be an integer from 1 to 67108864");
+const AGGREGATE: SetupError =
+    SetupError("SPRY_AGGREGATE_BYTES_PER_SECOND must be an integer from 1 to 67108864");
 const ALLOCATIONS: SetupError =
     SetupError("SPRY_MAX_ALLOCATIONS must be a decimal integer from 1 to 32");
 const PER_USER: SetupError = SetupError(
@@ -43,6 +49,9 @@ const PER_USER: SetupError = SetupError(
 );
 const CONNECTIONS: SetupError =
     SetupError("SPRY_MAX_TCP_CONNECTIONS must be a decimal integer from 1 to 32");
+const TLS_FILES: SetupError = SetupError(
+    "SPRY_TLS_CERT_FILE and SPRY_TLS_KEY_FILE must name certificate and key files together",
+);
 
 fn port(value: &str) -> Option<u16> {
     (!value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit()))
@@ -139,9 +148,13 @@ impl Settings {
             tls_port,
             relay_ports: (first, last),
             bytes_per_second,
+            aggregate_bytes_per_second: None,
             limits: Limits::default(),
             direct_tls: false,
             advertise_tls: false,
+            tls_443: false,
+            certificate: "/data/tls/fullchain.pem".into(),
+            key: "/data/tls/privkey.pem".into(),
         })
     }
 
@@ -164,10 +177,36 @@ impl Settings {
             per_user.as_deref(),
             connections.as_deref(),
         )?;
-        settings.direct_tls = Path::new("/data/tls/fullchain.pem").is_file()
-            && Path::new("/data/tls/privkey.pem").is_file();
+        settings.aggregate_bytes_per_second =
+            setting("SPRY_AGGREGATE_BYTES_PER_SECOND", AGGREGATE)?
+                .map(|value| {
+                    bounded(&value, MAX_BYTES_PER_SECOND as u32)
+                        .map(u64::from)
+                        .ok_or(AGGREGATE)
+                })
+                .transpose()?;
+        let certificate = setting("SPRY_TLS_CERT_FILE", TLS_FILES)?;
+        let key = setting("SPRY_TLS_KEY_FILE", TLS_FILES)?;
+        let explicit = certificate.is_some() || key.is_some();
+        if certificate.is_some() != key.is_some() {
+            return Err(TLS_FILES);
+        }
+        if let (Some(certificate), Some(key)) = (certificate, key) {
+            settings.certificate = certificate;
+            settings.key = key;
+        }
+        settings.direct_tls =
+            Path::new(&settings.certificate).is_file() && Path::new(&settings.key).is_file();
+        if explicit && !settings.direct_tls {
+            return Err(TLS_FILES);
+        }
         settings.advertise_tls =
             settings.direct_tls || env::var("SPRY_TLS_GATE").as_deref() == Ok("true");
+        settings.tls_443 = match setting("SPRY_TLS_443", TLS_PORT)?.as_deref() {
+            None | Some("false") => false,
+            Some("true") => true,
+            Some(_) => return Err(SetupError("SPRY_TLS_443 must be true or false")),
+        };
         Ok(settings)
     }
 
@@ -178,6 +217,9 @@ impl Settings {
         ];
         if self.advertise_tls {
             urls.push(format!("turns:{host}:{}?transport=tcp", self.tls_port));
+        }
+        if self.tls_443 {
+            urls.push(format!("turns:turn.{host}:443?transport=tcp"));
         }
         urls
     }
@@ -200,22 +242,90 @@ impl Settings {
             "--bytes-per-second",
             &self.bytes_per_second.to_string(),
         ]);
+        if let Some(rate) = self.aggregate_bytes_per_second {
+            command.args(["--aggregate-bytes-per-second", &rate.to_string()]);
+        }
         if self.direct_tls {
             command.args([
                 "--tls-listen",
                 &format!("{address}:{}", self.tls_port),
                 "--tls-cert",
-                "/data/tls/fullchain.pem",
+                &self.certificate,
                 "--tls-key",
-                "/data/tls/privkey.pem",
+                &self.key,
             ]);
         }
+    }
+
+    pub(crate) fn relay_config(
+        &self,
+        address: Ipv4Addr,
+        secret: Vec<u8>,
+    ) -> std::io::Result<spry_turn::turn::Config> {
+        let mut config = spry_turn::turn::Config::local(secret);
+        config.listen = (address, self.turn_port).into();
+        config.relay_ip = address.into();
+        config.relay_port_range = Some(self.relay_ports);
+        config.max_allocations = self.limits.allocations as usize;
+        config.max_per_user = self.limits.per_user as usize;
+        config.max_connections = self.limits.connections as usize;
+        config.bytes_per_second = self.bytes_per_second;
+        config.aggregate_bytes_per_second = self.aggregate_bytes_per_second;
+        if self.direct_tls {
+            use std::{
+                fs::File,
+                io::{self, BufReader},
+                sync::Arc,
+            };
+            let certs = rustls_pemfile::certs(&mut BufReader::new(File::open(&self.certificate)?))
+                .collect::<io::Result<Vec<_>>>()?;
+            let key = rustls_pemfile::private_key(&mut BufReader::new(File::open(&self.key)?))?
+                .ok_or_else(|| io::Error::other("TLS key unavailable"))?;
+            let tls = rustls::ServerConfig::builder()
+                .with_no_client_auth()
+                .with_single_cert(certs, key)
+                .map_err(|_| io::Error::other("TLS configuration unavailable"))?;
+            config.tls = Some(((address, self.tls_port).into(), Arc::new(tls)));
+        }
+        Ok(config)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn node_front_door_and_aggregate_settings_reach_the_relay_configuration() {
+        let mut settings = Settings::parse(None, None, None, None).unwrap();
+        settings.tls_443 = true;
+        settings.advertise_tls = true;
+        settings.aggregate_bytes_per_second = Some(50_000);
+        assert_eq!(
+            settings.urls("node.example"),
+            [
+                "turn:node.example:3478?transport=udp",
+                "turn:node.example:3478?transport=tcp",
+                "turns:node.example:5349?transport=tcp",
+                "turns:turn.node.example:443?transport=tcp"
+            ]
+        );
+        let config = settings
+            .relay_config(Ipv4Addr::LOCALHOST, vec![1; 32])
+            .unwrap();
+        assert_eq!(config.aggregate_bytes_per_second, Some(50_000));
+        let mut command = Command::new("synthetic-relay");
+        settings.configure_command(&mut command, Ipv4Addr::LOCALHOST);
+        let args: Vec<_> = command
+            .as_std()
+            .get_args()
+            .map(|a| a.to_str().unwrap())
+            .collect();
+        assert!(
+            args.windows(2)
+                .any(|a| a == ["--aggregate-bytes-per-second", "50000"])
+        );
+    }
 
     #[test]
     fn defaults_and_configured_transport_share_urls_and_child_arguments() {

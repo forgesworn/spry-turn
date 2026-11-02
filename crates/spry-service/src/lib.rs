@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 pub mod mesh;
 mod node;
+mod node_profile;
 pub mod portmap;
 pub mod public;
 pub mod resolver;
@@ -237,10 +238,14 @@ async fn dispatch(
             ),
             "/v1/status" => {
                 let authority = state.lock().map_err(|_| Refused(503, "Unavailable."))?;
-                json_response(
-                    200,
-                    json!({"ready":authority.config.ready,"endpoint":authority.config.endpoint,"audience":authority.config.audience,"privateRelay":authority.config.audience.is_some(),"controlReady":state.private()?.is_some_and(|private|private.control_ready()),"message":if authority.config.ready { "Ready to pair with KithMoot." } else { authority.config.readiness }}),
-                )
+                if let Some(policy) = &state.node_policy {
+                    json_response(200, policy.status(authority.config.ready))
+                } else {
+                    json_response(
+                        200,
+                        json!({"ready":authority.config.ready,"endpoint":authority.config.endpoint,"audience":authority.config.audience,"privateRelay":authority.config.audience.is_some(),"controlReady":state.private()?.is_some_and(|private|private.control_ready()),"message":if authority.config.ready { "Ready to pair with KithMoot." } else { authority.config.readiness }}),
+                    )
+                }
             }
             _ => return Err(Refused(404, "Not found.")),
         });
@@ -459,6 +464,20 @@ pub async fn run_with_assets(
         Err(env::VarError::NotUnicode(_)) => return Err(ROOM_SEAL.into()),
     };
     let private_settings = PrivateSettings::from_environment(secret.as_bytes())?;
+    let pairing_key = match env::var("SPRY_PAIRING_KEY") {
+        Ok(key) => Some(key),
+        Err(env::VarError::NotPresent) => None,
+        Err(env::VarError::NotUnicode(_)) => {
+            return Err(public::SetupError("SPRY_PAIRING_KEY must be a valid signing key").into());
+        }
+    };
+    if pairing_key.is_some()
+        && (private_settings.is_some()
+            || env::var("SPRY_PUBLIC").as_deref() == Ok("true")
+            || seal != Seal::Required)
+    {
+        return Err(public::SetupError("SPRY_PAIRING_KEY needs the standard profile, public mode off and SPRY_ROOM_SEAL=required").into());
+    }
     if private_settings.is_some() && env::var("SPRY_PUBLIC").as_deref() == Ok("true") {
         return Err(public::PRIVATE_PROFILE.into());
     }
@@ -550,7 +569,15 @@ pub async fn run_with_assets(
     if private_settings.is_none() && authority.config.transport_endpoint.is_some() {
         return Err("Private relay settings require a peer network".into());
     }
-    let state = Arc::new(ServiceState::new(authority));
+    let state = Arc::new(if let Some(key) = pairing_key {
+        let pairing = authority
+            .trust_pairing(&key, now())
+            .map_err(|_| public::SetupError("SPRY_PAIRING_KEY must be a valid signing key"))?;
+        authority.set_vouching(false);
+        ServiceState::node(authority, pairing)
+    } else {
+        ServiceState::new(authority)
+    });
     let bind: SocketAddr = format!(
         "{}:{}",
         env::var("SPRY_HTTP_BIND").unwrap_or_else(|_| "127.0.0.1".into()),
@@ -561,8 +588,41 @@ pub async fn run_with_assets(
         return Err("The control service must sit behind an HTTPS reverse proxy".into());
     }
     let listener = TcpListener::bind(bind).await?;
-    let mut relay = if let Some(settings) = &standard_settings {
-        start_relay(&state, settings).await
+    let _node_relay = if let (Some(settings), Some(policy)) =
+        (&standard_settings, &state.node_policy)
+    {
+        let address = node_address().ok_or(public::SetupError(
+            "SPRY_RELAY_IP must name a reachable interface",
+        ))?;
+        let local_test =
+            address.is_loopback() && env::var("SPRY_LOCAL_TEST").as_deref() == Ok("true");
+        let mut config = settings.relay_config(address, secret.as_bytes().to_vec())?;
+        let public = env::var("SPRY_PUBLIC_IP")
+            .ok()
+            .map(|value| value.parse::<Ipv4Addr>())
+            .transpose()?;
+        if !local_test && !public_v4(address) && !public.is_some_and(public_v4) {
+            return Err(public::SetupError(
+                "SPRY_RELAY_IP needs a public address or SPRY_PUBLIC_IP",
+            )
+            .into());
+        }
+        if public.is_some_and(|address| !public_v4(address)) {
+            return Err(public::SetupError("SPRY_PUBLIC_IP must be a public IPv4 address").into());
+        }
+        config.advertised_ip = public.map(IpAddr::V4);
+        config.allow_loopback_peers = local_test;
+        let relay = node_profile::Relay::start(config, state.clone(), policy.clone())?;
+        Some(relay)
+    } else {
+        None
+    };
+    let mut relay = if state.node_policy.is_none() {
+        if let Some(settings) = &standard_settings {
+            start_relay(&state, settings).await
+        } else {
+            None
+        }
     } else {
         None
     };

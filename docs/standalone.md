@@ -27,6 +27,66 @@ Build both standalone executables:
 cargo build --locked --release --workspace --features tls
 ```
 
+## Keeper-controlled node profile
+
+Set `SPRY_PAIRING_KEY` to the supervising grant desk's signing public key,
+alongside `SPRY_ROOM_SEAL=required` and public mode off. This opt-in standard
+profile uses the same packet library in process so revocation changes the
+running relay's admission policy directly. It accepts only the desk's
+deterministic pre-trusted pairing; owner claim codes, extra pairings and
+member vouching are refused. The normal standalone, private and supervised
+profiles retain their existing behaviour when the setting is absent.
+
+The desk uses the existing signed grant creation, device registration and
+grant removal paths. In this profile a device registration that adds keys
+also supplies `expiration`, taken from their keeper-signed grant. Batch
+keys with the same expiration together. The live policy and the returned
+TURN login both stop at that deadline, even if the desk never runs again.
+The field is a node-profile extension; ordinary registrations are unchanged.
+It also sends signed `POST /v1/node/lease` with
+`{"v":1,"pairing":"<pairing-id>"}` after reconciling its current ledger,
+and renews that lease before 15 seconds elapse. No logins work before the
+first lease. Losing the lease refuses new credentials and ends existing
+allocations; renewing a lapsed lease cannot revive old cached credentials.
+The desk must reconcile again before renewing after an interruption.
+
+Each issued username is fresh randomness, bound in memory to its grant and
+signing device; a later mint cannot revive a revoked cached username.
+Removing a device or grant updates that live allowlist before the API
+acknowledgement. Allocate and Refresh reject cached logins as well as new
+credential requests. Every payload path checks the same policy, and the
+relay polls it at most 50 ms apart to free idle revoked allocations. Revoking
+one room does not rotate the common secret or end another room's calls.
+Restarting the service starts with no issued usernames or desk lease.
+
+Signed `POST /v1/node/status`, with the same body as the lease request,
+returns only readiness, lease state, allocation count and forwarded byte
+count. The profile's unauthenticated `GET /v1/status` has the same bounded
+shape, with no address, room id, key or login. Issued username state has a
+16,384-entry cap; reaching it refuses further issuance rather than evicting
+live logins.
+
+`SPRY_AGGREGATE_BYTES_PER_SECOND` optionally caps payload traffic over all
+allocations together, from 1 to 67,108,864 bytes per second, while the
+per-allocation cap remains. It is available to ordinary standard profiles
+too; unset retains their previous unlimited aggregate. The standalone relay
+also accepts `--aggregate-bytes-per-second`.
+
+`SPRY_TLS_443=true` adds `turns:turn.<node-host>:443?transport=tcp` to the
+issued URL list. It only advertises the front door: the operator must supply
+the certificate and configure the TLS front to route that hostname to Spry's
+TCP listener. The node clients must support the fourth URL before using it.
+No firewall, certificate or public deployment is created by this setting.
+`SPRY_TLS_CERT_FILE` and `SPRY_TLS_KEY_FILE` can name the node's own certificate
+files instead of the existing `/data/tls/fullchain.pem` and
+`/data/tls/privkey.pem` defaults. Supply both together; explicit missing files
+refuse startup. This supports a plain Linux installation with its own data
+directory as well as the existing container layout.
+
+These are backend controls, not qualification of a complete hosted node.
+Shelter integration, client support and real cross-network/device acceptance
+remain separate gates. No Archipelago UI is changed here.
+
 ## Linux CI artefact
 
 The existing verify workflow is configured to build both TLS-enabled standalone

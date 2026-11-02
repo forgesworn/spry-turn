@@ -16,6 +16,7 @@ Options:\n\
   --max-per-user COUNT           Per-credential allocation limit (8)\n\
   --max-connections COUNT        TCP/TLS connection limit (256)\n\
   --bytes-per-second COUNT       Per-allocation aggregate bandwidth (67108864)\n\
+  --aggregate-bytes-per-second N Total relayed bandwidth cap (unset by default)\n\
   --allow-loopback-peers         Local interop tests only; requires loopback listener\n\
   --exit-on-stdin-close          Serve only: exit when the supervisor's stdin pipe closes\n\
   --tls-listen ADDRESS           Optional TLS listener (requires tls build feature)\n\
@@ -119,6 +120,9 @@ fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
             "--max-per-user" => config.max_per_user = value.parse()?,
             "--max-connections" => config.max_connections = value.parse()?,
             "--bytes-per-second" => config.bytes_per_second = value.parse()?,
+            "--aggregate-bytes-per-second" => {
+                config.aggregate_bytes_per_second = Some(value.parse()?)
+            }
             "--ttl" if credential => ttl = value.parse()?,
             "--label" if credential => label = value,
             "--tls-listen" => tls_address = Some(value.parse()?),

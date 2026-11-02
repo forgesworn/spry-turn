@@ -9,7 +9,6 @@ use mio::{
     net::{TcpListener, TcpStream, UdpSocket},
 };
 use std::collections::{HashMap, VecDeque};
-#[cfg(feature = "tls")]
 use std::sync::Arc;
 use std::{
     collections::HashSet,
@@ -24,6 +23,10 @@ const TLS: Token = Token(2);
 const MAX_PACKET: usize = 65_536;
 const HEADROOM: usize = 64;
 const MAX_QUEUE: usize = 131_072;
+
+/// Live, host-owned admission for a short-lived TURN username. A host must
+/// return promptly and deny when its authorisation state is unavailable.
+pub type CredentialAuthorizer = Arc<dyn Fn(&str) -> bool + Send + Sync>;
 // Keep ordinary control replies admissible when relayed UDP fills the queue.
 // Control traffic retains the full queue cap and its existing close policy.
 const STREAM_CONTROL_RESERVE: usize = 1024;
@@ -75,6 +78,9 @@ pub struct Config {
     /// allocation. None leaves the total unlimited; Some must be non-zero.
     /// The per-allocation limit still applies first.
     pub aggregate_bytes_per_second: Option<u64>,
+    /// Optional live admission check for issued usernames. The host must keep
+    /// this callback bounded and non-blocking. Losing its state must deny.
+    pub credential_authorizer: Option<CredentialAuthorizer>,
     #[cfg(feature = "tls")]
     pub tls: Option<(SocketAddr, Arc<rustls::ServerConfig>)>,
 }
@@ -772,6 +778,116 @@ mod policy_tests {
             peers.push(peer);
         }
         (server, clients, peers, relays)
+    }
+
+    #[test]
+    fn revoked_cached_login_cannot_allocate_or_refresh_again() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let allowed = Arc::new(AtomicBool::new(true));
+        let gate = allowed.clone();
+        let mut config = Config::local(vec![1; 32]);
+        config.listen.set_port(0);
+        config.allow_loopback_peers = true;
+        config.credential_authorizer = Some(Arc::new(move |_| gate.load(Ordering::Acquire)));
+        let mut server = bind_server(config);
+        let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let peer = socket.local_addr().unwrap();
+        let username = format!("{}:revocation-fixture", unix_time() + 300);
+        let password = auth::credential(&server.config.secret, &username);
+        let key = auth::key(&username, &server.config.realm, &password);
+        let nonce = server
+            .nonces
+            .issue(unix_time(), peer.ip(), &server.config.realm);
+        let request = |method, transaction| {
+            let mut request = Builder::new(method, 0, [transaction; 12]);
+            request.attr(USERNAME, username.as_bytes());
+            request.attr(REALM, b"spry-turn");
+            request.attr(NONCE, nonce.as_bytes());
+            request.attr(TRANSPORT, &[17, 0, 0, 0]);
+            request.finish(Some(&key))
+        };
+        server.receive(Client::Datagram(peer), peer, &request(ALLOCATE, 1));
+        assert_eq!(server.allocation_count(), 1);
+        allowed.store(false, Ordering::Release);
+        server.poll_once(Duration::ZERO).unwrap();
+        assert_eq!(server.allocation_count(), 0);
+        for method in [ALLOCATE, REFRESH] {
+            server.receive(Client::Datagram(peer), peer, &request(method, 2));
+            assert_eq!(
+                server.allocation_count(),
+                0,
+                "cached credential restored access"
+            );
+        }
+    }
+
+    #[test]
+    fn revocation_closes_the_stream_and_a_new_stream_cannot_reuse_its_login() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let allowed = Arc::new(AtomicBool::new(true));
+        let gate = allowed.clone();
+        let mut config = Config::local(vec![1; 32]);
+        config.listen.set_port(0);
+        config.allow_loopback_peers = true;
+        config.credential_authorizer = Some(Arc::new(move |_| gate.load(Ordering::Acquire)));
+        let mut server = bind_server(config);
+        let address = server.local_addr().unwrap();
+        let mut client = std::net::TcpStream::connect(address).unwrap();
+        accept_stream(&mut server);
+        let username = format!("{}:stream-revocation-fixture", unix_time() + 300);
+        let password = auth::credential(&server.config.secret, &username);
+        let key = auth::key(&username, &server.config.realm, &password);
+        let nonce = server.nonces.issue(
+            unix_time(),
+            client.local_addr().unwrap().ip(),
+            &server.config.realm,
+        );
+        let mut request = Builder::new(ALLOCATE, 0, [7; 12]);
+        request.attr(USERNAME, username.as_bytes());
+        request.attr(REALM, b"spry-turn");
+        request.attr(NONCE, nonce.as_bytes());
+        request.attr(TRANSPORT, &[17, 0, 0, 0]);
+        let request = request.finish(Some(&key));
+        client.write_all(&request).unwrap();
+        drive_until(&mut server, |server| server.allocation_count() == 1);
+        allowed.store(false, Ordering::Release);
+        server.poll_once(Duration::ZERO).unwrap();
+        assert_eq!(server.allocation_count(), 0);
+        assert!(server.connections.is_empty());
+        let mut retry = std::net::TcpStream::connect(address).unwrap();
+        retry
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        accept_stream(&mut server);
+        retry.write_all(&request).unwrap();
+        drive_until(&mut server, |server| {
+            server
+                .connections
+                .values()
+                .any(|c| c.last_active > c.created)
+        });
+        let mut header = [0; 20];
+        retry.read_exact(&mut header).unwrap();
+        let mut response = header.to_vec();
+        response.resize(20 + u16::from_be_bytes([header[2], header[3]]) as usize, 0);
+        retry.read_exact(&mut response[20..]).unwrap();
+        let response = Message::parse(&response).unwrap();
+        assert_eq!((response.method, response.class), (ALLOCATE, 3));
+        assert_eq!(server.allocation_count(), 0);
+    }
+
+    #[test]
+    #[cfg(all(feature = "connected-udp", unix))]
+    fn a_live_credential_policy_removes_only_the_revoked_allocation() {
+        let (mut server, _clients, _peers, _) = two_allocations(None);
+        server.config.credential_authorizer =
+            Some(Arc::new(|username| username == "aggregate-fixture-1"));
+        server.poll_once(Duration::ZERO).unwrap();
+        assert_eq!(server.allocation_count(), 1);
+        assert_eq!(
+            server.allocations.values().next().unwrap().username,
+            "aggregate-fixture-1"
+        );
     }
 
     #[test]
@@ -1719,6 +1835,7 @@ impl Config {
             max_connections: 256,
             bytes_per_second: 64 * 1024 * 1024,
             aggregate_bytes_per_second: None,
+            credential_authorizer: None,
             #[cfg(feature = "tls")]
             tls: None,
         }
@@ -2051,6 +2168,7 @@ pub struct Server {
     nonces: auth::Nonces,
     requests: Bucket,
     sweep_at: Instant,
+    policy_at: Instant,
     input: Vec<u8>,
     stats: Stats,
     /// One bucket shared by every allocation, when configured.
@@ -2326,6 +2444,7 @@ impl Server {
                 .map_err(|_| io::Error::other("OS randomness unavailable"))?,
             requests: Bucket::new(2000, 4000, now),
             sweep_at: now + SWEEP_INTERVAL,
+            policy_at: now,
             input: vec![0; MAX_PACKET + HEADROOM],
             stats: Stats::default(),
             aggregate,
@@ -2430,6 +2549,12 @@ impl Server {
     }
 
     pub fn poll_once(&mut self, timeout: Duration) -> io::Result<()> {
+        self.revoke_unauthorised();
+        let timeout = if self.config.credential_authorizer.is_some() {
+            timeout.min(Duration::from_millis(50))
+        } else {
+            timeout
+        };
         let mut events = std::mem::replace(&mut self.events, Events::with_capacity(0));
         let wait = if self.pending_streams.is_empty() {
             timeout.min(self.sweep_at.saturating_duration_since(Instant::now()))
@@ -2755,6 +2880,29 @@ impl Server {
         }
     }
 
+    /// Drop allocations whose live grant ended, without rotating a shared
+    /// secret or interrupting other rooms. Every payload path also checks the
+    /// policy, so a continuously readable socket cannot postpone revocation.
+    fn revoke_unauthorised(&mut self) {
+        self.policy_at = Instant::now() + Duration::from_millis(50);
+        let Some(authorizer) = &self.config.credential_authorizer else {
+            return;
+        };
+        let revoked: Vec<_> = self
+            .allocations
+            .iter()
+            .filter_map(|(client, allocation)| {
+                (!authorizer(&allocation.username)).then_some(*client)
+            })
+            .collect();
+        for client in revoked {
+            match client {
+                Client::Stream(token) => self.close(token),
+                Client::Datagram(_) => self.remove_allocation(client),
+            }
+        }
+    }
+
     fn sweep(&mut self) {
         let now = Instant::now();
         let expired: Vec<_> = self
@@ -2837,6 +2985,11 @@ impl Server {
         };
         if m.attr(REALM) != Some(self.config.realm.as_bytes())
             || auth::expires(username).is_none_or(|expiry| expiry <= unix_time())
+            || self
+                .config
+                .credential_authorizer
+                .as_ref()
+                .is_some_and(|allow| !allow(username))
         {
             self.error(client, peer, m, 401, None);
             return None;
@@ -2866,16 +3019,22 @@ impl Server {
     }
 
     fn receive(&mut self, client: Client, peer: SocketAddr, bytes: &[u8]) {
+        if self.config.credential_authorizer.is_some() && Instant::now() >= self.policy_at {
+            self.revoke_unauthorised();
+        }
         if bytes.first().is_some_and(|b| b >> 6 == 1) {
             let Some((number, data)) = wire::channel(bytes) else {
                 return;
             };
             let now = Instant::now();
-            let Some(a) = self
-                .allocations
-                .get_mut(&client)
-                .filter(|a| a.expires > now)
-            else {
+            let Some(a) = self.allocations.get_mut(&client).filter(|a| {
+                a.expires > now
+                    && self
+                        .config
+                        .credential_authorizer
+                        .as_ref()
+                        .is_none_or(|allow| allow(&a.username))
+            }) else {
                 return;
             };
             let Some(channel) = a
@@ -3465,11 +3624,14 @@ impl Server {
             return;
         }
         let now = Instant::now();
-        let Some(a) = self
-            .allocations
-            .get_mut(&client)
-            .filter(|a| a.expires > now)
-        else {
+        let Some(a) = self.allocations.get_mut(&client).filter(|a| {
+            a.expires > now
+                && self
+                    .config
+                    .credential_authorizer
+                    .as_ref()
+                    .is_none_or(|allow| allow(&a.username))
+        }) else {
             return;
         };
         if !a
@@ -3496,11 +3658,14 @@ impl Server {
         };
         loop {
             let now = Instant::now();
-            let Some(a) = self
-                .allocations
-                .get_mut(&client)
-                .filter(|a| a.expires > now)
-            else {
+            let Some(a) = self.allocations.get_mut(&client).filter(|a| {
+                a.expires > now
+                    && self
+                        .config
+                        .credential_authorizer
+                        .as_ref()
+                        .is_none_or(|allow| allow(&a.username))
+            }) else {
                 return;
             };
             // Receive directly after room for the largest TURN header. Return
