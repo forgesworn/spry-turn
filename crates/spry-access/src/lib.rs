@@ -1038,7 +1038,7 @@ impl Authority {
                     .map_err(|_| Refused(503, "Spry is temporarily unavailable."))?;
                 mac.update(username.as_bytes());
                 Ok(
-                    json!({"urls":self.config.urls,"username":username,"credential":STANDARD.encode(mac.finalize().into_bytes()),"expiresAt":expires,"accessExpiresAt":access_expires}),
+                    json!({"urls":self.config.urls,"username":username,"credential":STANDARD.encode(mac.finalize().into_bytes()),"issuedAt":now,"expiresAt":expires,"accessExpiresAt":access_expires}),
                 )
             }
             _ => Err(Refused(404, "Not found.")),

@@ -207,7 +207,7 @@ without a reachable private node.
 including remote DNS. A configured proxy has no direct-connect fallback.
 `SPRY_CONTROL_CA_FILE` optionally adds a bounded PEM CA bundle to normal TLS
 trust for explicitly selected control relays. Certificate and hostname
-validation remain enabled. `SPRY_LOCAL_TEST=true` is for generated fixtures;
+validation remain enabled. `SPRY_LOCAL_TEST=true` is for generated fixtures, including a private IPv4 interface reachable from a task-owned Android emulator;
 never enable it in a deployed node.
 
 Run the independent packet test with `python3 tests/mesh.py --binary <Linux
@@ -272,3 +272,10 @@ macOS replace `cargo build` above with `cargo zigbuild`. Keep the existing
 worktree's target directory. The fixture removes its containers, networks
 and binary snapshot on exit. Remove downloaded binaries, archives and the
 task-owned fixture image after retaining the required receipt privately.
+
+Node device credential responses include `issuedAt` alongside `expiresAt`.
+The issued lifetime remains at most 300 seconds. Clients may accommodate a
+small authenticated server clock difference while separately capping cached
+credential use at 300 seconds of monotonic time. Missing issuance timestamps
+retain the older strict local-clock bound. This does not extend credentials
+or change the normal installation address policy.

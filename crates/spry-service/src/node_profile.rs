@@ -519,6 +519,8 @@ mod tests {
             .unwrap();
         assert_eq!(answer["expiresAt"], expiration);
         assert_eq!(answer["accessExpiresAt"], expiration);
+        assert_eq!(answer["issuedAt"], at);
+        assert!(answer["expiresAt"].as_u64().unwrap() - at <= 300);
         assert!(
             answer["username"]
                 .as_str()
