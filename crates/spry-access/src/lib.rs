@@ -361,6 +361,7 @@ impl Grant {
 }
 pub struct Authority {
     pub config: Config,
+    vouching: bool,
     pairs: HashMap<String, Pairing>,
     pending: HashMap<String, u64>,
     grants: HashMap<String, Grant>,
@@ -382,6 +383,7 @@ impl Authority {
     pub fn new(config: Config) -> Self {
         Self {
             config,
+            vouching: true,
             pairs: HashMap::new(),
             pending: HashMap::new(),
             grants: HashMap::new(),
@@ -407,6 +409,23 @@ impl Authority {
 
     pub fn has_pairing(&self, pairing: &str) -> bool {
         self.pairs.contains_key(pairing)
+    }
+
+    /// A supervising node can require that only its keeper admits devices.
+    /// This policy is supplied at startup, never changed by a room member.
+    pub fn set_vouching(&mut self, enabled: bool) {
+        self.vouching = enabled;
+    }
+
+    /// Whether a previously issued credential still has a live room/device
+    /// grant. This does not mint or renew access and reveals no identifiers.
+    pub fn credential_access(&self, token: &str, key: &str, now: u64) -> bool {
+        self.config.ready
+            && self.grants.get(&hash(token)).is_some_and(|grant| {
+                grant.expires > now
+                    && self.pairs.contains_key(&grant.pair)
+                    && (!self.enforced(grant) || grant.admits(key, now))
+            })
     }
 
     /// Whether a grant refuses signing keys it does not list.
@@ -771,6 +790,18 @@ impl Authority {
         Ok(event.pubkey)
     }
     pub fn handle(&mut self, path: &str, key: &str, body: &Value, now: u64) -> Result<Value> {
+        self.handle_limited(path, key, body, now, None)
+    }
+    /// A trusted host may shorten a credential to its independently verified
+    /// device grant. This can reduce access, never extend the normal lease.
+    pub fn handle_limited(
+        &mut self,
+        path: &str,
+        key: &str,
+        body: &Value,
+        now: u64,
+        deadline: Option<u64>,
+    ) -> Result<Value> {
         self.sweep(now);
         need(body.is_object(), 400, "Invalid request.")?;
         match path {
@@ -936,6 +967,7 @@ impl Authority {
             "/v1/grants/devices" => self.register(key, body, now),
             "/v1/grants/vouch" => self.vouch(key, body, now),
             "/v1/credentials" => {
+                need(deadline.is_none_or(|end| end > now), 403, EXPIRED)?;
                 need(self.config.ready, 503, self.config.readiness)?;
                 let token = text(body, "grant")?;
                 need(is_token(token), 403, EXPIRED)?;
@@ -973,9 +1005,10 @@ impl Authority {
                     }
                     grant.used.insert(key.into(), now);
                 }
-                let access_expires = grant.expires;
+                let renewed_expiration = grant.expires;
+                let access_expires = renewed_expiration.min(deadline.unwrap_or(u64::MAX));
                 let expires = (now + 300).min(access_expires);
-                if (old != access_expires || old_lease.is_some()) && self.save().is_err() {
+                if (old != renewed_expiration || old_lease.is_some()) && self.save().is_err() {
                     let grant = self
                         .grants
                         .get_mut(&id)
@@ -992,7 +1025,14 @@ impl Authority {
                 let mut mac = Hmac::<Sha256>::new_from_slice(&self.config.secret)
                     .map_err(|_| Refused(503, "Spry is temporarily unavailable."))?;
                 mac.update(format!("spry-device-v1:{token}:{key}").as_bytes());
-                let label = hex(&mac.finalize().into_bytes());
+                let label = if deadline.is_some() {
+                    let mut label = [0u8; 12];
+                    getrandom::fill(&mut label)
+                        .map_err(|_| Refused(503, "Spry is temporarily unavailable."))?;
+                    hex(&label)
+                } else {
+                    hex(&mac.finalize().into_bytes())
+                };
                 let username = format!("{expires}:{}", &label[..24]);
                 let mut mac = Hmac::<Sha1>::new_from_slice(&self.config.secret)
                     .map_err(|_| Refused(503, "Spry is temporarily unavailable."))?;
@@ -1115,6 +1155,7 @@ impl Authority {
     /// `/v1/grants/vouch`: a confirmed member admits a newcomer for a day.
     /// Vouched keys cannot vouch, and nothing here evicts or renews.
     fn vouch(&mut self, key: &str, body: &Value, now: u64) -> Result<Value> {
+        need(self.vouching, 403, EXPIRED)?;
         shape(body, &["v", "grant", "add"])?;
         let token = text(body, "grant")?;
         let add = keys(body, "add", MAX_VOUCH)?;

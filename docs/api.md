@@ -42,6 +42,7 @@ Source: [src/turn.rs](../src/turn.rs).
 | `max_connections` | `256`, TCP/TLS connections |
 | `bytes_per_second` | `67108864`, aggregate byte rate per allocation across both directions |
 | `aggregate_bytes_per_second` | `None`; `Some(rate)` (non-zero) also limits payload bytes per second across every allocation together, after the per-allocation limit |
+| `credential_authorizer` | `None`; an optional `CredentialAuthorizer` callback for live host-owned username admission. Denial refuses Allocate/Refresh and payload forwarding and removes existing allocations. The callback must be bounded, prompt and deny when its state is unavailable |
 | `tls` | `None`; with `tls`, an optional address and `Arc<rustls::ServerConfig>` |
 
 `Server::bind(config)` validates configuration and binds listeners. Realm

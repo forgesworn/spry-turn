@@ -924,6 +924,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "rustls",
+ "rustls-pemfile",
  "secp256k1",
  "serde_json",
  "socket2",

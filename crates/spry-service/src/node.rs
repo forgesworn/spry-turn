@@ -20,12 +20,21 @@ use std::{
 pub(crate) struct ServiceState {
     authority: Mutex<Authority>,
     private: RwLock<Option<Arc<PrivateBridge>>>,
+    pub(crate) node_policy: Option<Arc<crate::node_profile::Policy>>,
 }
 impl ServiceState {
     pub(crate) fn new(authority: Authority) -> Self {
         Self {
             authority: Mutex::new(authority),
             private: RwLock::new(None),
+            node_policy: None,
+        }
+    }
+    pub(crate) fn node(authority: Authority, pairing: String) -> Self {
+        Self {
+            authority: Mutex::new(authority),
+            private: RwLock::new(None),
+            node_policy: Some(Arc::new(crate::node_profile::Policy::new(pairing))),
         }
     }
     pub(crate) fn lock(&self) -> std::sync::LockResult<std::sync::MutexGuard<'_, Authority>> {
@@ -50,6 +59,11 @@ impl ServiceState {
             .lock()
             .map_err(|_| Refused(503, "Spry is temporarily unavailable."))?;
         authority.key_rate(key, now)?;
+        if let Some(policy) = &self.node_policy {
+            if let Some(answer) = policy.before(&authority, key, path, body, now)? {
+                return Ok(answer);
+            }
+        }
         let private = self.private()?;
         if path == "/v1/peers" {
             let private = private.ok_or(Refused(404, "Not found."))?;
@@ -92,7 +106,24 @@ impl ServiceState {
             *registry = next;
             return Ok(json!({"ok":true,"connectedPeers":private.mesh.connected_peers()}));
         }
-        let mut value = authority.handle(path, key, body, now)?;
+        let deadline = if path == "/v1/credentials" {
+            self.node_policy
+                .as_ref()
+                .map(|policy| policy.deadline(key, body, now))
+                .transpose()?
+        } else {
+            None
+        };
+        let mut request_body = body.clone();
+        if self.node_policy.is_some() && path == "/v1/grants/devices" {
+            if let Some(body) = request_body.as_object_mut() {
+                body.remove("expiration");
+            }
+        }
+        let mut value = authority.handle_limited(path, key, &request_body, now, deadline)?;
+        if let Some(policy) = &self.node_policy {
+            policy.synchronise(&authority, key, path, body, &value, now)?;
+        }
         if let Some(private) = private {
             if matches!(path, "/v1/pairings/remove" | "/v1/pairings/remove-self") {
                 let mut registry = private
