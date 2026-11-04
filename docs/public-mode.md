@@ -89,7 +89,7 @@ whether public mode is on or off:
 | `SPRY_BYTES_PER_SECOND` | `1000000` | Per-allocation aggregate payload budget, in bytes per second, across both directions |
 | `SPRY_MAX_ALLOCATIONS` | `32` | Total concurrent allocations |
 | `SPRY_MAX_ALLOCATIONS_PER_USER` | `8` | Allocations per credential username; follows a lowered total when unset |
-| `SPRY_MAX_TCP_CONNECTIONS` | `32` | Accepted TCP/TLS client connections |
+| `SPRY_MAX_TCP_CONNECTIONS` | `64` | Accepted TCP/TLS client connections |
 
 TURN and TLS ports must be decimal integers from 1 to 65535, must differ,
 and must lie outside the ordered, non-zero relay range. The bandwidth must
@@ -142,7 +142,7 @@ not the external TLS gate or public network route.
 
 The rate is per allocation, with one second of burst capacity, rather than
 a global server cap. Unless lowered with the `SPRY_MAX_*` settings above, the
-bounds remain 32 allocations, 8 per username and 32 client connections; size
+bounds remain 32 allocations, 8 per username and 64 client connections; size
 host resources separately. These caps do not change the public credential
 issuance limits below, which count issued credentials rather than relay use. An
 8 MiB/s aggregate allocation budget can carry two directions sharing that
@@ -334,3 +334,13 @@ expected verdict for each: `open`, `withdrawn` or the refusal's name, and in
 predate `privacy` accept the privacy-link cases' events as open adverts;
 that is harmless, since they never show the link. Signing uses fixed auxiliary bytes, so regenerating
 gives the same file. Clients test against that file.
+
+### TCP handshakes during a route change
+
+The standard profile permits 64 TCP/TLS connections while keeping 32 relay
+allocations and eight allocations per username. Old-route sockets and new
+handshakes can coexist when a browser changes networks. Sharing the same
+32-slot limit for connections and allocations can refuse replacement handshakes
+while most relay ports are still free. The extra connection headroom does not
+reserve additional relay ports or increase the bandwidth quota. Operators can
+still lower the connection limit. Supervised mode keeps its default of 16.

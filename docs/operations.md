@@ -86,7 +86,7 @@ shared secret to calling clients.
 | `--bytes-per-second` | 67108864 | Aggregate byte rate per allocation across both directions |
 
 The `spry-node` standard profile starts the relay with 32 allocations, 8 per
-credential, 32 connections and 1000000 bytes per second. An operator can lower
+credential, 64 connections and 1000000 bytes per second. An operator can lower
 the first three with `SPRY_MAX_ALLOCATIONS`, `SPRY_MAX_ALLOCATIONS_PER_USER` and
 `SPRY_MAX_TCP_CONNECTIONS` (decimal integers from 1 to those values; the
 per-credential cap may not exceed the total), and set the rate with

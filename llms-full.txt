@@ -1266,7 +1266,7 @@ whether public mode is on or off:
 | `SPRY_BYTES_PER_SECOND` | `1000000` | Per-allocation aggregate payload budget, in bytes per second, across both directions |
 | `SPRY_MAX_ALLOCATIONS` | `32` | Total concurrent allocations |
 | `SPRY_MAX_ALLOCATIONS_PER_USER` | `8` | Allocations per credential username; follows a lowered total when unset |
-| `SPRY_MAX_TCP_CONNECTIONS` | `32` | Accepted TCP/TLS client connections |
+| `SPRY_MAX_TCP_CONNECTIONS` | `64` | Accepted TCP/TLS client connections |
 
 TURN and TLS ports must be decimal integers from 1 to 65535, must differ,
 and must lie outside the ordered, non-zero relay range. The bandwidth must
@@ -1319,7 +1319,7 @@ not the external TLS gate or public network route.
 
 The rate is per allocation, with one second of burst capacity, rather than
 a global server cap. Unless lowered with the `SPRY_MAX_*` settings above, the
-bounds remain 32 allocations, 8 per username and 32 client connections; size
+bounds remain 32 allocations, 8 per username and 64 client connections; size
 host resources separately. These caps do not change the public credential
 issuance limits below, which count issued credentials rather than relay use. An
 8 MiB/s aggregate allocation budget can carry two directions sharing that
@@ -1512,6 +1512,16 @@ predate `privacy` accept the privacy-link cases' events as open adverts;
 that is harmless, since they never show the link. Signing uses fixed auxiliary bytes, so regenerating
 gives the same file. Clients test against that file.
 
+### TCP handshakes during a route change
+
+The standard profile permits 64 TCP/TLS connections while keeping 32 relay
+allocations and eight allocations per username. Old-route sockets and new
+handshakes can coexist when a browser changes networks. Sharing the same
+32-slot limit for connections and allocations can refuse replacement handshakes
+while most relay ports are still free. The extra connection headroom does not
+reserve additional relay ports or increase the bandwidth quota. Operators can
+still lower the connection limit. Supervised mode keeps its default of 16.
+
 ---
 
 ## Source: Independent operation
@@ -1606,7 +1616,7 @@ shared secret to calling clients.
 | `--bytes-per-second` | 67108864 | Aggregate byte rate per allocation across both directions |
 
 The `spry-node` standard profile starts the relay with 32 allocations, 8 per
-credential, 32 connections and 1000000 bytes per second. An operator can lower
+credential, 64 connections and 1000000 bytes per second. An operator can lower
 the first three with `SPRY_MAX_ALLOCATIONS`, `SPRY_MAX_ALLOCATIONS_PER_USER` and
 `SPRY_MAX_TCP_CONNECTIONS` (decimal integers from 1 to those values; the
 per-credential cap may not exceed the total), and set the rate with
@@ -1765,7 +1775,7 @@ existing standard or private-node profile exactly as before.
 | `--relay-port-map LOCAL:PUBLIC` | Yes, 1 to 64 times, unless `--map-ports` | UDP allocation port pairs, each 1024 to 65535, every local and every public port used once. No local port may be the listener port and no public port the listener's public UDP port. |
 | `--max-allocations` | No | 1 to 32, default 8. With `--map-ports` it is also how many allocation ports are asked of the router, and the relay never holds more allocations than ports granted. |
 | `--max-per-user` | No | 1 to 8 and at most `--max-allocations`, default 2 (or the total, if lower) |
-| `--max-tcp-connections` | No | 1 to 32, default 16 |
+| `--max-tcp-connections` | No | 1 to 64, default 16 |
 | `--bytes-per-second` | No | Per allocation, 1 to 67108864, default 125000 |
 | `--aggregate-bytes-per-second` | No | For every allocation together, 1 to 67108864, default 625000. See [the aggregate cap](https://github.com/forgesworn/spry-turn/blob/main/docs/supervised-mode.md#the-aggregate-bandwidth-cap). |
 

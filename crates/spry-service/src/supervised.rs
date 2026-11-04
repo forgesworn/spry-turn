@@ -110,7 +110,7 @@ const PER_USER: SetupError = SetupError(
     "--max-per-user must be a decimal integer from 1 to 8 and not exceed --max-allocations",
 );
 const CONNECTIONS: SetupError =
-    SetupError("--max-tcp-connections must be a decimal integer from 1 to 32");
+    SetupError("--max-tcp-connections must be a decimal integer from 1 to 64");
 const BANDWIDTH: SetupError =
     SetupError("--bytes-per-second must be a decimal integer from 1 to 67108864");
 const AGGREGATE: SetupError =

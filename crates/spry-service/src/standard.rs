@@ -30,7 +30,9 @@ struct Limits {
 
 pub(crate) const MAX_ALLOCATIONS: u32 = 32;
 pub(crate) const MAX_PER_USER: u32 = 8;
-pub(crate) const MAX_CONNECTIONS: u32 = 32;
+// Leave bounded room for new-route handshakes while old sockets unwind.
+// The allocation and per-user quotas remain independent.
+pub(crate) const MAX_CONNECTIONS: u32 = 64;
 pub(crate) const MAX_BYTES_PER_SECOND: u64 = 64 * 1024 * 1024;
 const TURN_PORT: SetupError = SetupError("SPRY_TURN_PORT must be an integer from 1 to 65535");
 const TLS_PORT: SetupError =
@@ -48,7 +50,7 @@ const PER_USER: SetupError = SetupError(
     "SPRY_MAX_ALLOCATIONS_PER_USER must be a decimal integer from 1 to 8 and not exceed SPRY_MAX_ALLOCATIONS",
 );
 const CONNECTIONS: SetupError =
-    SetupError("SPRY_MAX_TCP_CONNECTIONS must be a decimal integer from 1 to 32");
+    SetupError("SPRY_MAX_TCP_CONNECTIONS must be a decimal integer from 1 to 64");
 const TLS_FILES: SetupError = SetupError(
     "SPRY_TLS_CERT_FILE and SPRY_TLS_KEY_FILE must name certificate and key files together",
 );
@@ -296,6 +298,62 @@ mod tests {
     use super::*;
 
     #[test]
+    fn replacement_turn_handshakes_have_headroom_without_more_relay_slots() {
+        use std::io::{Read, Write};
+        use std::time::Duration;
+
+        let settings = Settings::parse(None, None, None, None).unwrap();
+        let mut config = settings
+            .relay_config(Ipv4Addr::LOCALHOST, vec![1; 32])
+            .unwrap();
+        config.listen.set_port(0);
+        assert_eq!(config.max_allocations, 32);
+        assert_eq!(config.max_per_user, 8);
+        let mut server = spry_turn::turn::Server::bind(config).unwrap();
+        let mut clients = Vec::new();
+        // Old-route sockets and replacement handshakes coexist. These are
+        // real TCP/STUN round trips; none reserves an extra relay allocation.
+        let mut binding = [0u8; 20];
+        binding[1] = 1;
+        binding[4..8].copy_from_slice(&[0x21, 0x12, 0xa4, 0x42]);
+        for index in 0..64 {
+            let mut client = std::net::TcpStream::connect(server.local_addr().unwrap()).unwrap();
+            client
+                .set_read_timeout(Some(Duration::from_millis(100)))
+                .unwrap();
+            client.set_nodelay(true).unwrap();
+            server.poll_once(Duration::from_millis(1)).unwrap();
+            binding[19] = index;
+            client.write_all(&binding).unwrap();
+            for _ in 0..4 {
+                server.poll_once(Duration::from_millis(1)).unwrap();
+            }
+            let mut response = [0u8; 40];
+            client
+                .read_exact(&mut response)
+                .unwrap_or_else(|error| panic!("handshake {} refused: {error}", index + 1));
+            assert_eq!(&response[..2], &[1, 1]);
+            assert_eq!(&response[8..20], &binding[8..20]);
+            clients.push(client);
+        }
+        let mut excess = std::net::TcpStream::connect(server.local_addr().unwrap()).unwrap();
+        excess
+            .set_read_timeout(Some(Duration::from_millis(100)))
+            .unwrap();
+        server.poll_once(Duration::from_millis(1)).unwrap();
+        assert_eq!(
+            excess.read(&mut [0u8; 1]).unwrap(),
+            0,
+            "the TCP cap remains bounded"
+        );
+        clients[0].write_all(&binding).unwrap();
+        for _ in 0..4 {
+            server.poll_once(Duration::from_millis(1)).unwrap();
+        }
+        clients[0].read_exact(&mut [0u8; 40]).unwrap();
+    }
+
+    #[test]
     fn node_front_door_and_aggregate_settings_reach_the_relay_configuration() {
         let mut settings = Settings::parse(None, None, None, None).unwrap();
         settings.tls_443 = true;
@@ -377,7 +435,7 @@ mod tests {
             ["--tls-listen", "127.0.0.1:5350"],
             ["--max-allocations", "32"],
             ["--max-per-user", "8"],
-            ["--max-connections", "32"],
+            ["--max-connections", "64"],
         ] {
             assert!(args.windows(2).any(|window| window == pair), "{pair:?}");
         }
@@ -390,7 +448,7 @@ mod tests {
             Limits {
                 allocations: 32,
                 per_user: 8,
-                connections: 32
+                connections: 64
             }
         );
         assert_eq!(Limits::default(), Limits::parse(None, None, None).unwrap());
@@ -402,7 +460,7 @@ mod tests {
         for pair in [
             ["--max-allocations", "32"],
             ["--max-per-user", "8"],
-            ["--max-connections", "32"],
+            ["--max-connections", "64"],
             ["--bytes-per-second", "1000000"],
         ] {
             assert!(args.windows(2).any(|window| window == pair), "{pair:?}");
@@ -424,7 +482,7 @@ mod tests {
         ] {
             assert!(args.windows(2).any(|window| window == pair), "{pair:?}");
         }
-        assert!(Limits::parse(Some("32"), Some("8"), Some("32")).is_ok());
+        assert!(Limits::parse(Some("32"), Some("8"), Some("64")).is_ok());
         assert!(Limits::parse(Some("1"), Some("1"), Some("1")).is_ok());
         // An unset per-user limit follows a lowered total.
         assert_eq!(Limits::parse(Some("4"), None, None).unwrap().per_user, 4);
@@ -451,11 +509,19 @@ mod tests {
                 Limits::parse(Some(bad), None, None).unwrap_err(),
                 ALLOCATIONS
             );
-            assert_eq!(
-                Limits::parse(None, None, Some(bad)).unwrap_err(),
-                CONNECTIONS
-            );
+            if bad != "33" {
+                assert_eq!(
+                    Limits::parse(None, None, Some(bad)).unwrap_err(),
+                    CONNECTIONS
+                );
+            }
         }
+        assert!(Limits::parse(None, None, Some("32")).is_ok());
+        assert!(Limits::parse(None, None, Some("33")).is_ok());
+        assert_eq!(
+            Limits::parse(None, None, Some("65")).unwrap_err(),
+            CONNECTIONS
+        );
         for bad in ["", "0", "-1", "+1", " 1", "9", "NaN"] {
             assert_eq!(Limits::parse(None, Some(bad), None).unwrap_err(), PER_USER);
         }
