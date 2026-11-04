@@ -117,7 +117,7 @@ fn caps_may_be_raised_to_the_standard_maximum_and_no_further() {
     raised.extend([
         ("--max-allocations", "32".to_owned()),
         ("--max-per-user", "8".to_owned()),
-        ("--max-tcp-connections", "32".to_owned()),
+        ("--max-tcp-connections", "64".to_owned()),
         ("--bytes-per-second", "67108864".to_owned()),
     ]);
     let settings = parse(&raised).unwrap();
@@ -128,7 +128,7 @@ fn caps_may_be_raised_to_the_standard_maximum_and_no_further() {
             settings.connections,
             settings.bytes_per_second
         ),
-        (32, 8, 32, 67_108_864)
+        (32, 8, 64, 67_108_864)
     );
     // An unset per-user cap follows a lowered total.
     assert_eq!(parse(&with("--max-allocations", "1")).unwrap().per_user, 1);
@@ -138,7 +138,7 @@ fn caps_may_be_raised_to_the_standard_maximum_and_no_further() {
         ("--max-allocations", "+8", ALLOCATIONS),
         ("--max-per-user", "9", PER_USER),
         ("--max-per-user", "0", PER_USER),
-        ("--max-tcp-connections", "33", CONNECTIONS),
+        ("--max-tcp-connections", "65", CONNECTIONS),
         ("--max-tcp-connections", "", CONNECTIONS),
         ("--bytes-per-second", "67108865", BANDWIDTH),
         ("--bytes-per-second", "0", BANDWIDTH),
