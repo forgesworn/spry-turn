@@ -57,6 +57,7 @@ loopback-only listener; embedding hosts must enforce the same policy.
 | `server.local_addr()` | `io::Result<SocketAddr>` |
 | `server.poll_once(timeout: Duration)` | `io::Result<()>`; processes readiness and expiry work |
 | `server.stats()` | Copy of `limits::Stats` aggregate counters |
+| `server.relay_metrics()` | Copy of `turn::RelayMetrics`: UDP/stream allocation gauges, open streams, per-transport forwarded payload bytes, forwarded/dropped packets, stream errors and capacity refusals |
 | `server.allocation_count()` | Current number of allocations |
 | `server.last_remote_allocation()` | Unix seconds of the newest allocation from a non-local client address (`turn::remote_client`), or `None`; the time only, never the address |
 | `turn::unix_time()` | Current epoch seconds |
@@ -65,6 +66,32 @@ The library starts no threads. A host must keep polling and drop `Server`
 when it wants to close listeners and allocations. `Stats` contains
 `forwarded_packets`, `forwarded_bytes` and `dropped_packets`; these are
 process-local counters, not a remote monitoring or billing API.
+
+### Private node observation
+
+In the private-node profile, `POST /v1/node/status` requires the existing
+paired authority and signed HTTP proof. It adds `metrics` to the legacy
+status fields. The unauthenticated `GET /v1/status` shape stays unchanged.
+No participant addresses, usernames, room identifiers or content appear.
+
+`metrics` is `null` until the relay has produced a sample. Version 1 contains
+`v`, a random per-start `epoch`, monotonic `elapsedMillis`, sample
+`ageMillis`, `udpAllocations`, `streamAllocations`, `streamConnections`,
+`udpForwardedBytes`, `streamForwardedBytes`, `forwardedPackets`,
+`droppedPackets`, `streamErrors` and `refusedStreams`. Counters start at
+zero on relay start; gauges describe the sample. A consumer must reject
+stale observations and reset rate calculations after an outage, epoch
+change, non-increasing elapsed time or counter decrease.
+
+Forwarded bytes count accepted payload in both directions, excluding
+STUN/TURN/TLS headers. Stream bytes count payload accepted into the output
+queue; they do not prove delivery or measure billable network usage. The
+stream bucket includes TCP and TLS, including TLS terminated by a host
+proxy; it cannot distinguish those transports or listener ports.
+`streamErrors` counts fatal relay stream framing, queue and socket errors;
+normal EOF and revocation do not count. `refusedStreams` counts connection
+capacity refusals. These are relay observations, not a count of failed
+calls or failures at an external TLS terminator.
 
 ## Wire and authentication helpers
 
