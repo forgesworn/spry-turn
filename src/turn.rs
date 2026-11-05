@@ -72,6 +72,9 @@ pub struct Config {
     pub max_allocations: usize,
     pub max_per_user: usize,
     pub max_connections: usize,
+    /// Maximum lease returned by Allocate or Refresh, in seconds (1..=3600).
+    /// This never extends the authenticated username's own expiry.
+    pub max_allocation_lifetime: u32,
     /// Aggregate bytes across both directions per allocation.
     pub bytes_per_second: u64,
     /// Relayed payload bytes per second, both directions, summed over every
@@ -808,6 +811,109 @@ mod policy_tests {
             peers.push(peer);
         }
         (server, clients, peers, relays)
+    }
+
+    #[test]
+    fn invalid_allocation_lifetime_caps_are_refused_before_binding() {
+        for lifetime in [0, 3601] {
+            let mut config = Config::local(vec![1; 32]);
+            config.listen.set_port(0);
+            config.max_allocation_lifetime = lifetime;
+            assert!(Server::bind(config).is_err());
+        }
+    }
+
+    #[test]
+    fn short_allocation_leases_refresh_and_free_an_orphaned_stream_port() {
+        let reserved = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let port = reserved.local_addr().unwrap().port();
+        let mut config = Config::local(vec![1; 32]);
+        config.listen.set_port(0);
+        config.relay_port_range = Some((port, port));
+        config.max_allocation_lifetime = 30;
+        let mut server = bind_server(config);
+        let mut client = std::net::TcpStream::connect(server.local_addr().unwrap()).unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        accept_stream(&mut server);
+        let token = *server.connections.keys().next().unwrap();
+        let address = client.local_addr().unwrap();
+        drop(reserved);
+        let username = format!("{}:lease-fixture", unix_time() + 300);
+        let key = auth::key(
+            &username,
+            &server.config.realm,
+            &auth::credential(&server.config.secret, &username),
+        );
+        let nonce = server
+            .nonces
+            .issue(unix_time(), address.ip(), &server.config.realm);
+        let request = |method, lifetime| {
+            let mut value = Builder::new(method, 0, [7; 12]);
+            value.attr(USERNAME, username.as_bytes());
+            value.attr(REALM, b"spry-turn");
+            value.attr(NONCE, nonce.as_bytes());
+            value.attr(TRANSPORT, &[17, 0, 0, 0]);
+            value.number(LIFETIME, lifetime);
+            value.finish(Some(&key))
+        };
+        let answer = |client: &mut std::net::TcpStream, method| {
+            let mut header = [0; 20];
+            client.read_exact(&mut header).unwrap();
+            let mut bytes = header.to_vec();
+            bytes.resize(
+                20 + usize::from(u16::from_be_bytes([header[2], header[3]])),
+                0,
+            );
+            client.read_exact(&mut bytes[20..]).unwrap();
+            let value = Message::parse(&bytes).unwrap();
+            assert_eq!((value.method, value.class), (method, 2));
+            assert!(value.verify(&key));
+            value.number(LIFETIME).unwrap()
+        };
+        server.receive(Client::Stream(token), address, &request(ALLOCATE, 3600));
+        assert_eq!(answer(&mut client, ALLOCATE), 30);
+        let allocation = server.allocations.get_mut(&Client::Stream(token)).unwrap();
+        allocation.expires = Instant::now() + Duration::from_secs(1);
+        server.receive(Client::Stream(token), address, &request(REFRESH, 3600));
+        assert_eq!(answer(&mut client, REFRESH), 30);
+        assert!(
+            server.allocations[&Client::Stream(token)].expires
+                > Instant::now() + Duration::from_secs(29)
+        );
+        // Model an abandoned transport after its thirty-second lease. Sweep
+        // must release its one reserved port even though the client stays open.
+        server
+            .allocations
+            .get_mut(&Client::Stream(token))
+            .unwrap()
+            .expires = Instant::now();
+        server.connections.get_mut(&token).unwrap().created =
+            Instant::now() - Duration::from_secs(31);
+        server.sweep();
+        assert_eq!(server.allocation_count(), 0);
+        assert!(!server.connections.contains_key(&token));
+        assert!(server.relay_ports.is_empty());
+        assert_eq!(client.read(&mut [0]).unwrap(), 0);
+        let mut replacement = std::net::TcpStream::connect(server.local_addr().unwrap()).unwrap();
+        replacement
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        accept_stream(&mut server);
+        let token = *server.connections.keys().next().unwrap();
+        let address = replacement.local_addr().unwrap();
+        server.receive(Client::Stream(token), address, &request(ALLOCATE, 3600));
+        assert_eq!(answer(&mut replacement, ALLOCATE), 30);
+        assert_eq!(
+            server.allocations[&Client::Stream(token)]
+                .bound_address
+                .port(),
+            port
+        );
+        server.receive(Client::Stream(token), address, &request(REFRESH, 0));
+        assert_eq!(answer(&mut replacement, REFRESH), 0);
+        assert_eq!(server.allocation_count(), 0);
     }
 
     #[test]
@@ -1883,6 +1989,7 @@ impl Config {
             max_allocations: 1024,
             max_per_user: 8,
             max_connections: 256,
+            max_allocation_lifetime: 3600,
             bytes_per_second: 64 * 1024 * 1024,
             aggregate_bytes_per_second: None,
             credential_authorizer: None,
@@ -2434,6 +2541,7 @@ impl Server {
             || config.max_allocations == 0
             || config.max_per_user == 0
             || config.max_connections == 0
+            || !(1..=3600).contains(&config.max_allocation_lifetime)
             || config.bytes_per_second == 0
             || config.aggregate_bytes_per_second == Some(0)
         {
@@ -3351,7 +3459,10 @@ impl Server {
         let now = Instant::now();
         let lifetime = credential_lifetime(
             &username,
-            m.number(LIFETIME).unwrap_or(600).clamp(600, 3600),
+            m.number(LIFETIME)
+                .unwrap_or(600)
+                .clamp(600, 3600)
+                .min(self.config.max_allocation_lifetime),
             SystemTime::now(),
         );
         #[cfg(feature = "connected-udp")]
@@ -3473,7 +3584,9 @@ impl Server {
         }
         let duration = credential_lifetime(
             &a.username,
-            m.number(LIFETIME).unwrap_or(600).min(3600),
+            m.number(LIFETIME)
+                .unwrap_or(600)
+                .min(self.config.max_allocation_lifetime),
             SystemTime::now(),
         );
         a.expires = Instant::now() + duration;
