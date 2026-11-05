@@ -95,7 +95,9 @@ impl Policy {
                 "streamConnections":value.stream_connections,
                 "udpForwardedBytes":value.udp_forwarded_bytes,"streamForwardedBytes":value.stream_forwarded_bytes,
                 "forwardedPackets":value.forwarded_packets,"droppedPackets":value.dropped_packets,
-                "streamErrors":value.stream_errors,"refusedStreams":value.refused_streams})
+                "streamErrors":value.stream_errors,"refusedStreams":value.refused_streams,
+                "allocationQuotaRefusals":value.allocation_quota_refusals,
+                "userQuotaRefusals":value.user_quota_refusals,"relayBindFailures":value.relay_bind_failures})
         });
         Ok(answer)
     }
@@ -566,6 +568,9 @@ mod tests {
                 dropped_packets: 5,
                 stream_errors: 6,
                 refused_streams: 7,
+                allocation_quota_refusals: 8,
+                user_quota_refusals: 9,
+                relay_bind_failures: 10,
             },
         });
         let body = json!({"v":1,"pairing":pairing});
@@ -583,9 +588,12 @@ mod tests {
         assert_eq!(private["metrics"]["streamAllocations"], 1);
         assert_eq!(private["metrics"]["streamErrors"], 6);
         assert_eq!(private["metrics"]["refusedStreams"], 7);
+        assert_eq!(private["metrics"]["allocationQuotaRefusals"], 8);
+        assert_eq!(private["metrics"]["userQuotaRefusals"], 9);
+        assert_eq!(private["metrics"]["relayBindFailures"], 10);
         assert!(private["metrics"].get("ageMillis").unwrap().is_u64());
         assert!(policy.status(true).get("metrics").is_none());
-        assert_eq!(private["metrics"].as_object().unwrap().len(), 13);
+        assert_eq!(private["metrics"].as_object().unwrap().len(), 16);
         assert!(!private.to_string().contains(&keeper));
         assert!(!private.to_string().contains(&pairing));
     }

@@ -814,6 +814,154 @@ mod policy_tests {
     }
 
     #[test]
+    fn new_allocations_reclaim_expired_capacity_before_the_periodic_sweep() {
+        for resource in ["node", "user", "port"] {
+            let reserved = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+            let port = reserved.local_addr().unwrap().port();
+            let mut config = Config::local(vec![1; 32]);
+            config.listen.set_port(0);
+            if resource == "node" {
+                config.max_allocations = 1;
+            } else if resource == "user" {
+                config.max_per_user = 1;
+            } else {
+                config.relay_port_range = Some((port, port));
+            }
+            let mut server = bind_server(config);
+            drop(reserved);
+            let first = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+            let replacement = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+            replacement
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let username = format!("{}:capacity-fixture", unix_time() + 300);
+            let key = auth::key(
+                &username,
+                &server.config.realm,
+                &auth::credential(&server.config.secret, &username),
+            );
+            let nonce = server.nonces.issue(
+                unix_time(),
+                first.local_addr().unwrap().ip(),
+                &server.config.realm,
+            );
+            let mut request = Builder::new(ALLOCATE, 0, [7; 12]);
+            request.attr(USERNAME, username.as_bytes());
+            request.attr(REALM, b"spry-turn");
+            request.attr(NONCE, nonce.as_bytes());
+            request.attr(TRANSPORT, &[17, 0, 0, 0]);
+            let request = request.finish(Some(&key));
+            let address = first.local_addr().unwrap();
+            server.receive(Client::Datagram(address), address, &request);
+            assert_eq!(server.allocation_count(), 1);
+            server
+                .allocations
+                .get_mut(&Client::Datagram(address))
+                .unwrap()
+                .expires = Instant::now();
+            // A new NAT path can arrive between expiry and the next timer
+            // sweep. Its authenticated Allocate must not count expired leases.
+            let address = replacement.local_addr().unwrap();
+            server.receive(Client::Datagram(address), address, &request);
+            let mut bytes = [0; 2048];
+            let length = replacement.recv(&mut bytes).unwrap();
+            let answer = Message::parse(&bytes[..length]).unwrap();
+            assert!(answer.verify(&key));
+            assert_eq!(answer.class, 2, "expired {resource} capacity was refused");
+            assert_eq!(server.allocation_count(), 1);
+            assert!(server.allocations.contains_key(&Client::Datagram(address)));
+            if resource == "port" {
+                assert_eq!(server.allocated_relay_ports().collect::<Vec<_>>(), [port]);
+            }
+        }
+    }
+
+    #[test]
+    fn authenticated_capacity_refusals_have_distinct_aggregate_counters() {
+        for resource in ["node", "user", "port"] {
+            let reserved = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+            let port = reserved.local_addr().unwrap().port();
+            let mut config = Config::local(vec![1; 32]);
+            config.listen.set_port(0);
+            if resource == "node" {
+                config.max_allocations = 1;
+            } else if resource == "user" {
+                config.max_per_user = 1;
+            } else {
+                config.relay_port_range = Some((port, port));
+            }
+            let mut server = bind_server(config);
+            drop(reserved);
+            let first = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+            let second = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+            for client in [&first, &second] {
+                client
+                    .set_read_timeout(Some(Duration::from_secs(2)))
+                    .unwrap();
+            }
+            let username = format!("{}:quota-fixture", unix_time() + 300);
+            let key = auth::key(
+                &username,
+                &server.config.realm,
+                &auth::credential(&server.config.secret, &username),
+            );
+            let nonce = server.nonces.issue(
+                unix_time(),
+                first.local_addr().unwrap().ip(),
+                &server.config.realm,
+            );
+            let mut request = Builder::new(ALLOCATE, 0, [7; 12]);
+            request.attr(USERNAME, username.as_bytes());
+            request.attr(REALM, b"spry-turn");
+            request.attr(NONCE, nonce.as_bytes());
+            request.attr(TRANSPORT, &[17, 0, 0, 0]);
+            let request = request.finish(Some(&key));
+            // Retransmissions from the allocated tuple succeed, even at the
+            // limit. Unauthenticated requests must not inflate the counters.
+            for (client, bytes, expected, error_code) in [
+                (&first, request.clone(), 2, None),
+                (&first, request.clone(), 2, None),
+                (
+                    &second,
+                    Builder::new(ALLOCATE, 0, [8; 12]).finish(None),
+                    3,
+                    Some(401),
+                ),
+                (
+                    &second,
+                    request,
+                    3,
+                    Some(if resource == "port" { 508 } else { 486 }),
+                ),
+            ] {
+                let address = client.local_addr().unwrap();
+                server.receive(Client::Datagram(address), address, &bytes);
+                let mut answer = [0; 2048];
+                let length = client.recv(&mut answer).unwrap();
+                let answer = Message::parse(&answer[..length]).unwrap();
+                assert_eq!(answer.class, expected);
+                if let Some(expected_code) = error_code {
+                    let error = answer.attr(ERROR).unwrap();
+                    let code = u16::from(error[2]) * 100 + u16::from(error[3]);
+                    assert_eq!(code, expected_code);
+                    if code != 401 {
+                        assert!(answer.verify(&key));
+                    }
+                }
+            }
+            let metrics = server.relay_metrics();
+            assert_eq!(
+                metrics.allocation_quota_refusals,
+                u64::from(resource == "node")
+            );
+            assert_eq!(metrics.user_quota_refusals, u64::from(resource == "user"));
+            assert_eq!(metrics.relay_bind_failures, u64::from(resource == "port"));
+            assert_eq!(metrics.refused_streams, 0);
+            assert_eq!(server.allocation_count(), 1);
+        }
+    }
+
+    #[test]
     fn invalid_allocation_lifetime_caps_are_refused_before_binding() {
         for lifetime in [0, 3601] {
             let mut config = Config::local(vec![1; 32]);
@@ -2019,6 +2167,9 @@ pub struct RelayMetrics {
     pub dropped_packets: u64,
     pub stream_errors: u64,
     pub refused_streams: u64,
+    pub allocation_quota_refusals: u64,
+    pub user_quota_refusals: u64,
+    pub relay_bind_failures: u64,
 }
 
 #[derive(Default)]
@@ -2027,6 +2178,9 @@ struct TransportCounters {
     stream_bytes: u64,
     stream_errors: u64,
     refused_streams: u64,
+    allocation_quota_refusals: u64,
+    user_quota_refusals: u64,
+    relay_bind_failures: u64,
 }
 
 /// Generation-tagged slots for internally assigned readiness tokens. Client
@@ -2661,6 +2815,9 @@ impl Server {
             dropped_packets: self.stats.dropped_packets,
             stream_errors: self.transport.stream_errors,
             refused_streams: self.transport.refused_streams,
+            allocation_quota_refusals: self.transport.allocation_quota_refusals,
+            user_quota_refusals: self.transport.user_quota_refusals,
+            relay_bind_failures: self.transport.relay_bind_failures,
         }
     }
     fn forwarded(&mut self, client: Client, bytes: usize) {
@@ -3128,8 +3285,7 @@ impl Server {
         }
     }
 
-    fn sweep(&mut self) {
-        let now = Instant::now();
+    fn expire_allocations(&mut self, now: Instant) {
         let expired: Vec<_> = self
             .allocations
             .iter()
@@ -3138,6 +3294,11 @@ impl Server {
         for client in expired {
             self.remove_allocation(client);
         }
+    }
+
+    fn sweep(&mut self) {
+        let now = Instant::now();
+        self.expire_allocations(now);
         for a in self.allocations.values_mut() {
             a.permissions.retain(|p| p.expires > now);
             a.channels.retain(|c| c.expires > now);
@@ -3412,19 +3573,31 @@ impl Server {
             self.error(client, peer, m, 440, Some(&key));
             return;
         }
-        if self.allocations.len() >= self.config.max_allocations
-            || self
-                .allocations
-                .values()
-                .filter(|a| a.username == username)
-                .count()
-                >= self.config.max_per_user
+        // Timer sweeps are periodic. An authenticated replacement must not
+        // lose quota or a bounded relay port to a lease that already ended.
+        self.expire_allocations(Instant::now());
+        if self.allocations.len() >= self.config.max_allocations {
+            self.transport.allocation_quota_refusals =
+                self.transport.allocation_quota_refusals.saturating_add(1);
+            self.error(client, peer, m, 486, Some(&key));
+            return;
+        }
+        if self
+            .allocations
+            .values()
+            .filter(|a| a.username == username)
+            .count()
+            >= self.config.max_per_user
         {
+            self.transport.user_quota_refusals =
+                self.transport.user_quota_refusals.saturating_add(1);
             self.error(client, peer, m, 486, Some(&key));
             return;
         }
         let socket = self.bind_relay_socket();
         let Ok(mut socket) = socket else {
+            self.transport.relay_bind_failures =
+                self.transport.relay_bind_failures.saturating_add(1);
             self.error(client, peer, m, 508, Some(&key));
             return;
         };
