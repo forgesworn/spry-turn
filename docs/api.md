@@ -109,7 +109,8 @@ requests refused at the whole-server allocation limit; `userQuotaRefusals`
 counts those refused at the username limit after passing that server limit.
 Both return TURN 486. `relayBindFailures` counts relay socket bind failures,
 including exhausted bounded port ranges or mappings, which return TURN 508.
-An Allocate retransmission does not count as a new allocation or refusal.
+Retransmitting a successful Allocate on its allocated client tuple does not
+count as a new allocation or refusal. Repeated refused requests each count.
 Expired leases are reclaimed before checking new allocation capacity, even
 between periodic sweeps; live leases are never displaced to make room.
 These are relay observations, not a count of failed
