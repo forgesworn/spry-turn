@@ -29,6 +29,13 @@ struct View {
     limits: HashMap<(String, String), u64>,
 }
 
+struct MetricsSnapshot {
+    epoch: String,
+    elapsed_millis: u64,
+    observed: Instant,
+    value: spry_turn::turn::RelayMetrics,
+}
+
 pub(crate) struct Policy {
     pairing: String,
     view: Arc<RwLock<View>>,
@@ -36,6 +43,7 @@ pub(crate) struct Policy {
     healthy: Arc<AtomicBool>,
     pub allocations: AtomicU64,
     pub forwarded_bytes: AtomicU64,
+    metrics: Mutex<Option<MetricsSnapshot>>,
 }
 
 impl Policy {
@@ -60,6 +68,7 @@ impl Policy {
             healthy: Arc::new(AtomicBool::new(true)),
             allocations: AtomicU64::new(0),
             forwarded_bytes: AtomicU64::new(0),
+            metrics: Mutex::new(None),
         }
     }
     fn live(&self) -> bool {
@@ -71,6 +80,24 @@ impl Policy {
         json!({"v":1,"ready":ready,"leaseActive":self.live(),
             "allocations":self.allocations.load(Ordering::Relaxed),
             "forwardedBytes":self.forwarded_bytes.load(Ordering::Relaxed)})
+    }
+    fn private_status(&self, ready: bool) -> Result<Value> {
+        let metrics = self
+            .metrics
+            .lock()
+            .map_err(|_| Refused(503, "Unavailable."))?;
+        let mut answer = self.status(ready);
+        answer["metrics"] = metrics.as_ref().map_or(Value::Null, |snapshot| {
+            let value = snapshot.value;
+            json!({"v":1,"epoch":snapshot.epoch,"elapsedMillis":snapshot.elapsed_millis,
+                "ageMillis":snapshot.observed.elapsed().as_millis().min(u128::from(u64::MAX)) as u64,
+                "udpAllocations":value.udp_allocations,"streamAllocations":value.stream_allocations,
+                "streamConnections":value.stream_connections,
+                "udpForwardedBytes":value.udp_forwarded_bytes,"streamForwardedBytes":value.stream_forwarded_bytes,
+                "forwardedPackets":value.forwarded_packets,"droppedPackets":value.dropped_packets,
+                "streamErrors":value.stream_errors,"refusedStreams":value.refused_streams})
+        });
+        Ok(answer)
     }
     pub fn authorizer(&self) -> CredentialAuthorizer {
         let view = self.view.clone();
@@ -144,7 +171,7 @@ impl Policy {
                         view.lease = Some(Instant::now() + Duration::from_secs(LEASE_SECONDS));
                         return Ok(Some(json!({"v":1,"leaseSeconds":LEASE_SECONDS})));
                     }
-                    return Ok(Some(self.status(authority.config.ready)));
+                    return Ok(Some(self.private_status(authority.config.ready)?));
                 }
                 Ok(None)
             }
@@ -239,6 +266,11 @@ impl Relay {
     ) -> std::io::Result<Self> {
         config.credential_authorizer = Some(policy.authorizer());
         let mut server = Server::bind(config)?;
+        let mut random = [0; 16];
+        getrandom::fill(&mut random)
+            .map_err(|_| std::io::Error::other("OS randomness unavailable"))?;
+        let epoch = spry_access::hash(random);
+        let started = Instant::now();
         state
             .lock()
             .map_err(|_| std::io::Error::other("Authority unavailable"))?
@@ -260,6 +292,23 @@ impl Relay {
                     policy
                         .forwarded_bytes
                         .store(server.stats().forwarded_bytes, Ordering::Relaxed);
+                    let Ok(mut snapshot) = policy.metrics.lock() else {
+                        break;
+                    };
+                    if let Some(snapshot) = snapshot.as_mut() {
+                        snapshot.elapsed_millis =
+                            started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+                        snapshot.observed = Instant::now();
+                        snapshot.value = server.relay_metrics();
+                    } else {
+                        *snapshot = Some(MetricsSnapshot {
+                            epoch: epoch.clone(),
+                            elapsed_millis: started.elapsed().as_millis().min(u128::from(u64::MAX))
+                                as u64,
+                            observed: Instant::now(),
+                            value: server.relay_metrics(),
+                        });
+                    }
                 }
                 if let Ok(mut authority) = state.lock() {
                     authority.config.ready = false;
@@ -416,6 +465,48 @@ mod tests {
     }
 
     #[test]
+    fn private_metrics_require_the_pairing_authority_and_do_not_expand_public_status() {
+        let (state, pairing, keeper) = fixture();
+        let policy = state.node_policy.as_ref().unwrap();
+        *policy.metrics.lock().unwrap() = Some(MetricsSnapshot {
+            epoch: "fixture-epoch".into(),
+            elapsed_millis: 1234,
+            observed: Instant::now(),
+            value: spry_turn::turn::RelayMetrics {
+                udp_allocations: 2,
+                stream_allocations: 1,
+                stream_connections: 3,
+                udp_forwarded_bytes: 120,
+                stream_forwarded_bytes: 80,
+                forwarded_packets: 4,
+                dropped_packets: 5,
+                stream_errors: 6,
+                refused_streams: 7,
+            },
+        });
+        let body = json!({"v":1,"pairing":pairing});
+        assert_eq!(
+            state
+                .api(&key(3), "/v1/node/status", &body, crate::now())
+                .unwrap_err()
+                .0,
+            403
+        );
+        let private = state
+            .api(&keeper, "/v1/node/status", &body, crate::now())
+            .unwrap();
+        assert_eq!(private["metrics"]["udpForwardedBytes"], 120);
+        assert_eq!(private["metrics"]["streamAllocations"], 1);
+        assert_eq!(private["metrics"]["streamErrors"], 6);
+        assert_eq!(private["metrics"]["refusedStreams"], 7);
+        assert!(private["metrics"].get("ageMillis").unwrap().is_u64());
+        assert!(policy.status(true).get("metrics").is_none());
+        assert_eq!(private["metrics"].as_object().unwrap().len(), 13);
+        assert!(!private.to_string().contains(&keeper));
+        assert!(!private.to_string().contains(&pairing));
+    }
+
+    #[test]
     fn node_refuses_vouching_and_new_pairings_and_status_has_only_counts() {
         let (state, pairing, keeper) = fixture();
         for path in [
@@ -456,7 +547,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             status,
-            json!({"v":1,"ready":true,"leaseActive":false,"allocations":0,"forwardedBytes":0})
+            json!({"v":1,"ready":true,"leaseActive":false,"allocations":0,"forwardedBytes":0,"metrics":null})
         );
     }
 

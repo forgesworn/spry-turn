@@ -255,6 +255,7 @@ mod policy_tests {
         });
         assert_eq!(client.read(&mut [0]).unwrap(), 0);
         assert!(server.connections.contains_key(&healthy_token));
+        assert_eq!(server.relay_metrics().stream_errors, 1);
 
         healthy.write_all(&requests[3]).unwrap();
         drive_until(&mut server, |server| {
@@ -264,6 +265,35 @@ mod policy_tests {
         binding_response(&mut healthy, [4; 12]);
         drop(healthy);
         drive_until(&mut server, |server| server.connections.is_empty());
+        assert_eq!(
+            server.relay_metrics().stream_errors,
+            1,
+            "ordinary EOF is not a failure"
+        );
+        assert_eq!(
+            server.relay_metrics().stream_forwarded_bytes,
+            0,
+            "STUN replies are not relayed payload"
+        );
+    }
+
+    #[test]
+    fn stream_capacity_refusals_are_counted_without_displacing_the_live_socket() {
+        let mut config = Config::local(vec![1; 32]);
+        config.listen.set_port(0);
+        config.max_connections = 1;
+        let mut server = bind_server(config);
+        let live = std::net::TcpStream::connect(server.local_addr().unwrap()).unwrap();
+        accept_stream(&mut server);
+        let refused = std::net::TcpStream::connect(server.local_addr().unwrap()).unwrap();
+        drive_until(&mut server, |server| {
+            server.relay_metrics().refused_streams == 1
+        });
+        assert_eq!(server.relay_metrics().stream_connections, 1);
+        assert_eq!(server.relay_metrics().stream_errors, 0);
+        drop((live, refused));
+        drive_until(&mut server, |server| server.connections.is_empty());
+        assert_eq!(server.relay_metrics().stream_errors, 0);
     }
 
     #[test]
@@ -912,6 +942,12 @@ mod policy_tests {
                 (forwarded, dropped),
                 "aggregate {aggregate:?}"
             );
+            let metrics = server.relay_metrics();
+            assert_eq!(metrics.udp_allocations, 2);
+            assert_eq!(metrics.stream_allocations, 0);
+            assert_eq!(metrics.udp_forwarded_bytes, forwarded);
+            assert_eq!(metrics.stream_forwarded_bytes, 0);
+            assert_eq!(metrics.dropped_packets, dropped);
             if aggregate.is_some() {
                 // The second allocation was the one cut short, though it had
                 // used nothing itself: the cap belongs to the total.
@@ -1328,6 +1364,20 @@ mod policy_tests {
             (1, payload.len() as u64)
         );
         assert!(server.allocations.contains_key(&key));
+        let metrics = server.relay_metrics();
+        assert_eq!(
+            (
+                metrics.udp_allocations,
+                metrics.stream_allocations,
+                metrics.stream_connections
+            ),
+            (0, 1, 1)
+        );
+        assert_eq!(
+            (metrics.udp_forwarded_bytes, metrics.stream_forwarded_bytes),
+            (0, payload.len() as u64)
+        );
+        assert_eq!(metrics.stream_errors, 0);
         let conn = &server.connections[&token];
         assert!(conn.output.is_empty());
         assert!(
@@ -1848,6 +1898,30 @@ enum Client {
     Stream(Token),
 }
 
+/// Aggregate relay accounting only. No client address, username or peer is
+/// retained here. Stream payload accepted into a bounded output queue is
+/// counted as forwarded; it is not proof of delivery to a remote application.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct RelayMetrics {
+    pub udp_allocations: usize,
+    pub stream_allocations: usize,
+    pub stream_connections: usize,
+    pub udp_forwarded_bytes: u64,
+    pub stream_forwarded_bytes: u64,
+    pub forwarded_packets: u64,
+    pub dropped_packets: u64,
+    pub stream_errors: u64,
+    pub refused_streams: u64,
+}
+
+#[derive(Default)]
+struct TransportCounters {
+    udp_bytes: u64,
+    stream_bytes: u64,
+    stream_errors: u64,
+    refused_streams: u64,
+}
+
 /// Generation-tagged slots for internally assigned readiness tokens. Client
 /// addresses still use a keyed map; no untrusted input is used as a slot index.
 #[cfg(feature = "direct-index")]
@@ -2171,6 +2245,7 @@ pub struct Server {
     policy_at: Instant,
     input: Vec<u8>,
     stats: Stats,
+    transport: TransportCounters,
     /// One bucket shared by every allocation, when configured.
     aggregate: Option<Bucket>,
     /// Unix seconds of the newest allocation made from a non-local address.
@@ -2447,6 +2522,7 @@ impl Server {
             policy_at: now,
             input: vec![0; MAX_PACKET + HEADROOM],
             stats: Stats::default(),
+            transport: TransportCounters::default(),
             aggregate,
             last_remote_allocation: None,
         })
@@ -2460,6 +2536,37 @@ impl Server {
     }
     pub fn allocation_count(&self) -> usize {
         self.allocations.len()
+    }
+    pub fn relay_metrics(&self) -> RelayMetrics {
+        let udp_allocations = self
+            .allocations
+            .keys()
+            .filter(|client| matches!(client, Client::Datagram(_)))
+            .count();
+        RelayMetrics {
+            udp_allocations,
+            stream_allocations: self.allocations.len() - udp_allocations,
+            stream_connections: self.connections.len(),
+            udp_forwarded_bytes: self.transport.udp_bytes,
+            stream_forwarded_bytes: self.transport.stream_bytes,
+            forwarded_packets: self.stats.forwarded_packets,
+            dropped_packets: self.stats.dropped_packets,
+            stream_errors: self.transport.stream_errors,
+            refused_streams: self.transport.refused_streams,
+        }
+    }
+    fn forwarded(&mut self, client: Client, bytes: usize) {
+        self.stats.forwarded_packets += 1;
+        self.stats.forwarded_bytes += bytes as u64;
+        let counter = match client {
+            Client::Datagram(_) => &mut self.transport.udp_bytes,
+            Client::Stream(_) => &mut self.transport.stream_bytes,
+        };
+        *counter = counter.saturating_add(bytes as u64);
+    }
+    fn fail_stream(&mut self, token: Token) {
+        self.transport.stream_errors = self.transport.stream_errors.saturating_add(1);
+        self.close(token);
     }
     /// Unix seconds of the newest allocation whose client was not a local
     /// address (see [`remote_client`]), or None if there has been none.
@@ -2661,7 +2768,7 @@ impl Server {
                         })
                         .is_err()
                     {
-                        self.close(token);
+                        self.fail_stream(token);
                         self.stats.dropped_packets += 1;
                         return false;
                     }
@@ -2680,14 +2787,14 @@ impl Server {
                             .update_interest(self.poll.registry(), token, pending)
                             .is_err()
                         {
-                            self.close(token);
+                            self.fail_stream(token);
                             false
                         } else {
                             true
                         }
                     }
                     Err(_) => {
-                        self.close(token);
+                        self.fail_stream(token);
                         false
                     }
                 };
@@ -2722,6 +2829,7 @@ impl Server {
                 Err(_) => break,
             };
             if self.connections.len() >= self.config.max_connections {
+                self.transport.refused_streams = self.transport.refused_streams.saturating_add(1);
                 continue;
             }
             let token = self.token();
@@ -2732,6 +2840,7 @@ impl Server {
                     .register(&mut socket, token, Interest::READABLE)
                     .is_err()
             {
+                self.transport.stream_errors = self.transport.stream_errors.saturating_add(1);
                 continue;
             }
             let now = Instant::now();
@@ -2745,7 +2854,11 @@ impl Server {
                         conn.set_buffer_limit(Some(MAX_QUEUE));
                         Some(conn)
                     }
-                    Err(_) => continue,
+                    Err(_) => {
+                        self.transport.stream_errors =
+                            self.transport.stream_errors.saturating_add(1);
+                        continue;
+                    }
                 }
             } else {
                 None
@@ -2810,7 +2923,7 @@ impl Server {
                 }
             }
             if invalid {
-                self.close(token);
+                self.fail_stream(token);
                 return;
             }
             if let Some(conn) = self.connections.get_mut(&token) {
@@ -2827,8 +2940,12 @@ impl Server {
                         yielded = true;
                         break;
                     }
-                    Ok(StreamRead::Closed) | Err(_) => {
+                    Ok(StreamRead::Closed) => {
                         self.close(token);
+                        return;
+                    }
+                    Err(_) => {
+                        self.fail_stream(token);
                         return;
                     }
                 }
@@ -2841,10 +2958,10 @@ impl Server {
                         .update_interest(self.poll.registry(), token, pending)
                         .is_err()
                     {
-                        self.close(token);
+                        self.fail_stream(token);
                     }
                 }
-                Err(_) => self.close(token),
+                Err(_) => self.fail_stream(token),
             }
         }
         if yielded {
@@ -3065,8 +3182,7 @@ impl Server {
             let target =
                 Self::own_local_target(&self.config, &self.own_public_to_local, channel.peer);
             if a.socket.send_to(data, target).is_ok() {
-                self.stats.forwarded_packets += 1;
-                self.stats.forwarded_bytes += data.len() as u64;
+                self.forwarded(client, data.len());
             } else {
                 self.stats.dropped_packets += 1;
             }
@@ -3645,8 +3761,7 @@ impl Server {
         }
         let target = Self::own_local_target(&self.config, &self.own_public_to_local, peer);
         if a.socket.send_to(data, target).is_ok() {
-            self.stats.forwarded_packets += 1;
-            self.stats.forwarded_bytes += data.len() as u64;
+            self.forwarded(client, data.len());
         } else {
             self.stats.dropped_packets += 1;
         }
@@ -3737,8 +3852,7 @@ impl Server {
                     continue;
                 }
             }
-            self.stats.forwarded_packets += 1;
-            self.stats.forwarded_bytes += n as u64;
+            self.forwarded(client, n);
         }
     }
 }
