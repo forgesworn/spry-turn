@@ -917,6 +917,7 @@ Source: [src/turn.rs](https://github.com/forgesworn/spry-turn/blob/main/src/turn
 | `max_allocations` | `1024`, total logical allocation limit |
 | `max_per_user` | `8`, per-username allocation limit |
 | `max_connections` | `256`, TCP/TLS connections |
+| `max_allocation_lifetime` | `3600` seconds, positive maximum lease returned by Allocate/Refresh; the username's earlier expiry still wins |
 | `bytes_per_second` | `67108864`, aggregate byte rate per allocation across both directions |
 | `aggregate_bytes_per_second` | `None`; `Some(rate)` (non-zero) also limits payload bytes per second across every allocation together, after the per-allocation limit |
 | `credential_authorizer` | `None`; an optional `CredentialAuthorizer` callback for live host-owned username admission. Denial refuses Allocate/Refresh and payload forwarding and removes existing allocations. The callback must be bounded, prompt and deny when its state is unavailable |
@@ -945,6 +946,18 @@ when it wants to close listeners and allocations. `Stats` contains
 process-local counters, not a remote monitoring or billing API.
 
 ### Private node observation
+
+Private nodes cap allocation leases at 30 seconds. This is independent of the
+five-minute login limit: a healthy client refreshes its allocation while that
+login remains valid. An abandoned NAT path then releases its relay port within
+30 seconds plus the expiry sweep, allowing replacement connections to use the
+same bounded port range. The normal service keeps its existing lease defaults.
+Refresh with lifetime zero still deallocates immediately. Expired stream
+allocations are removed by the existing sweep and their idle connections close.
+
+WebRTC's [TURN refresh scheduler](https://webrtc.googlesource.com/src.git/+/945e5178cdc2ad9e8450c188f288ed6e56919ae0/p2p/base/turn_port.cc)
+uses half the advertised lifetime below two minutes, giving this profile a
+15-second native refresh interval. No room key or new admission is involved.
 
 In the private-node profile, `POST /v1/node/status` requires the existing
 paired authority and signed HTTP proof. It adds `metrics` to the legacy

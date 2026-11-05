@@ -265,6 +265,10 @@ impl Relay {
         policy: Arc<Policy>,
     ) -> std::io::Result<Self> {
         config.credential_authorizer = Some(policy.authorizer());
+        // Browsers refresh this lease independently of their five-minute
+        // login. A vanished NAT path must not hold a bounded relay port for
+        // the remainder of that login while its replacement needs a port.
+        config.max_allocation_lifetime = 30;
         let mut server = Server::bind(config)?;
         let mut random = [0; 16];
         getrandom::fill(&mut random)
@@ -386,6 +390,86 @@ mod tests {
                 crate::now(),
             )
             .unwrap();
+    }
+
+    #[test]
+    fn private_relay_advertises_short_refreshable_leases_without_shortening_the_login() {
+        use spry_turn::{auth, wire::*};
+        let (state, pairing, keeper) = fixture();
+        let device = key(2);
+        let token = grant(&state, &pairing, &keeper, 1, &device);
+        lease(&state, &pairing, &keeper);
+        let login = state
+            .api(
+                &device,
+                "/v1/credentials",
+                &json!({"grant":token}),
+                crate::now(),
+            )
+            .unwrap();
+        assert!((290..=300).contains(&(login["expiresAt"].as_u64().unwrap() - crate::now())));
+        let state = Arc::new(state);
+        let mut config =
+            spry_turn::turn::Config::local(b"synthetic-test-secret-not-for-deployment".to_vec());
+        let mut bound = None;
+        for _ in 0..8 {
+            let reservation = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+            config.listen = reservation.local_addr().unwrap();
+            drop(reservation);
+            match Relay::start(
+                config.clone(),
+                state.clone(),
+                state.node_policy.as_ref().unwrap().clone(),
+            ) {
+                Ok(relay) => {
+                    bound = Some(relay);
+                    break;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::AddrInUse => continue,
+                Err(error) => panic!("private relay: {error}"),
+            }
+        }
+        let _relay = bound.expect("private relay listeners");
+        let client = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let exchange = |request: &[u8]| {
+            client.send_to(request, config.listen).unwrap();
+            let mut bytes = vec![0; 2048];
+            let len = client.recv(&mut bytes).unwrap();
+            bytes.truncate(len);
+            bytes
+        };
+        let mut challenge = Builder::new(ALLOCATE, 0, [1; 12]);
+        challenge.attr(TRANSPORT, &[17, 0, 0, 0]);
+        let bytes = exchange(&challenge.finish(None));
+        let challenge = Message::parse(&bytes).unwrap();
+        assert_eq!(challenge.class, 3);
+        let nonce = challenge.attr(NONCE).unwrap();
+        let realm = challenge.attr(REALM).unwrap();
+        let username = login["username"].as_str().unwrap();
+        let key = auth::key(
+            username,
+            std::str::from_utf8(realm).unwrap(),
+            login["credential"].as_str().unwrap(),
+        );
+        for (method, lifetime) in [(ALLOCATE, 600), (REFRESH, 600), (REFRESH, 0)] {
+            let mut request = Builder::new(method, 0, [2; 12]);
+            request.attr(USERNAME, username.as_bytes());
+            request.attr(REALM, realm);
+            request.attr(NONCE, nonce);
+            request.attr(TRANSPORT, &[17, 0, 0, 0]);
+            request.number(LIFETIME, lifetime);
+            let bytes = exchange(&request.finish(Some(&key)));
+            let answer = Message::parse(&bytes).unwrap();
+            assert_eq!((answer.method, answer.class), (method, 2));
+            assert!(answer.verify(&key));
+            assert_eq!(
+                answer.number(LIFETIME),
+                Some(if lifetime == 0 { 0 } else { 30 })
+            );
+        }
     }
 
     #[test]
