@@ -58,7 +58,7 @@ loopback-only listener; embedding hosts must enforce the same policy.
 | `server.local_addr()` | `io::Result<SocketAddr>` |
 | `server.poll_once(timeout: Duration)` | `io::Result<()>`; processes readiness and expiry work |
 | `server.stats()` | Copy of `limits::Stats` aggregate counters |
-| `server.relay_metrics()` | Copy of `turn::RelayMetrics`: UDP/stream allocation gauges, open streams, per-transport forwarded payload bytes, forwarded/dropped packets, stream errors and capacity refusals |
+| `server.relay_metrics()` | Copy of `turn::RelayMetrics`: UDP/stream allocation gauges, open streams, per-transport forwarded payload bytes, forwarded/dropped packets, stream errors and separate connection/allocation capacity refusals |
 | `server.allocation_count()` | Current number of allocations |
 | `server.last_remote_allocation()` | Unix seconds of the newest allocation from a non-local client address (`turn::remote_client`), or `None`; the time only, never the address |
 | `turn::unix_time()` | Current epoch seconds |
@@ -91,7 +91,8 @@ No participant addresses, usernames, room identifiers or content appear.
 `v`, a random per-start `epoch`, monotonic `elapsedMillis`, sample
 `ageMillis`, `udpAllocations`, `streamAllocations`, `streamConnections`,
 `udpForwardedBytes`, `streamForwardedBytes`, `forwardedPackets`,
-`droppedPackets`, `streamErrors` and `refusedStreams`. Counters start at
+`droppedPackets`, `streamErrors`, `refusedStreams`, `allocationQuotaRefusals`,
+`userQuotaRefusals` and `relayBindFailures`. Counters start at
 zero on relay start; gauges describe the sample. A consumer must reject
 stale observations and reset rate calculations after an outage, epoch
 change, non-increasing elapsed time or counter decrease.
@@ -103,7 +104,16 @@ stream bucket includes TCP and TLS, including TLS terminated by a host
 proxy; it cannot distinguish those transports or listener ports.
 `streamErrors` counts fatal relay stream framing, queue and socket errors;
 normal EOF and revocation do not count. `refusedStreams` counts connection
-capacity refusals. These are relay observations, not a count of failed
+capacity refusals. `allocationQuotaRefusals` counts authenticated Allocate
+requests refused at the whole-server allocation limit; `userQuotaRefusals`
+counts those refused at the username limit after passing that server limit.
+Both return TURN 486. `relayBindFailures` counts relay socket bind failures,
+including exhausted bounded port ranges or mappings, which return TURN 508.
+Retransmitting a successful Allocate on its allocated client tuple does not
+count as a new allocation or refusal. Repeated refused requests each count.
+Expired leases are reclaimed before checking new allocation capacity, even
+between periodic sweeps; live leases are never displaced to make room.
+These are relay observations, not a count of failed
 calls or failures at an external TLS terminator.
 
 ## Wire and authentication helpers
