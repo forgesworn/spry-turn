@@ -87,17 +87,17 @@ whether public mode is on or off:
 | `SPRY_TLS_PORT` | `5349` | Direct TLS listener and advertised TLS port |
 | `SPRY_RELAY_PORTS` | `49160:49191` | Inclusive UDP allocation port range |
 | `SPRY_BYTES_PER_SECOND` | `1000000` | Per-allocation aggregate payload budget, in bytes per second, across both directions |
-| `SPRY_MAX_ALLOCATIONS` | `32` | Total concurrent allocations |
-| `SPRY_MAX_ALLOCATIONS_PER_USER` | `8` | Allocations per credential username; follows a lowered total when unset |
-| `SPRY_MAX_TCP_CONNECTIONS` | `64` | Accepted TCP/TLS client connections |
+| `SPRY_MAX_ALLOCATIONS` | `32` | Total concurrent allocations, configurable from 1 to 256 |
+| `SPRY_MAX_ALLOCATIONS_PER_USER` | `8` | Allocations per credential username, configurable from 1 to 32; follows a lowered total when unset |
+| `SPRY_MAX_TCP_CONNECTIONS` | `64` | Accepted TCP/TLS client connections, configurable from 1 to 256 |
 
 TURN and TLS ports must be decimal integers from 1 to 65535, must differ,
 and must lie outside the ordered, non-zero relay range. The bandwidth must
 be a decimal integer from 1 to 67108864; zero, overflow, signs and spaces
-are refused with the setting's name. The three `SPRY_MAX_*` caps may only
-be lowered: each takes a decimal integer from 1 up to its default (32, 8 and
-32), and anything else (empty, zero, signs, spaces, non-decimal or above the
-default) refuses startup with the setting's name. The per-user cap may not
+are refused with the setting's name. The three `SPRY_MAX_*` caps take decimal
+integers from 1 up to 256, 32 and 256 respectively. Empty, zero, signs,
+spaces, non-decimal and above-ceiling values refuse startup with the setting's
+name. Unset values retain the defaults of 32, 8 and 64. The per-user cap may not
 exceed the total; if it is unset it defaults to 8 or the total, whichever is
 lower. A small host can set, for example, `SPRY_MAX_ALLOCATIONS=8`,
 `SPRY_MAX_ALLOCATIONS_PER_USER=2`, `SPRY_MAX_TCP_CONNECTIONS=16` and
@@ -141,12 +141,20 @@ it ready. Readiness checks the live child and a valid Binding response,
 not the external TLS gate or public network route.
 
 The rate is per allocation, with one second of burst capacity, rather than
-a global server cap. Unless lowered with the `SPRY_MAX_*` settings above, the
-bounds remain 32 allocations, 8 per username and 64 client connections; size
+a global server cap. Unless explicitly configured with the `SPRY_MAX_*` settings
+above, the bounds remain 32 allocations, 8 per username and 64 client connections; size
 host resources separately. These caps do not change the public credential
 issuance limits below, which count issued credentials rather than relay use. An
 8 MiB/s aggregate allocation budget can carry two directions sharing that
 budget, but it is not a measured throughput promise.
+
+A seven-device full mesh needs at least 42 simultaneous allocations before
+candidate alternatives or overlapping credential replacements. An operator
+can explicitly select 256 allocations, 32 per username and 256 connections,
+with a matching 256-port range such as `49160:49415`. Keep an explicit aggregate
+bandwidth budget and adequate process file descriptors. Expanding the range
+does not open an operator's firewall or qualify their network; existing
+defaults and credential/admission/revocation checks remain unchanged.
 
 Custom ports are for explicitly configured clients. They do not broaden
 the signed advert rules: discovery still requires an HTTPS endpoint with
