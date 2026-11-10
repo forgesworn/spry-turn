@@ -87,15 +87,15 @@ whether public mode is on or off:
 | `SPRY_TLS_PORT` | `5349` | Direct TLS listener and advertised TLS port |
 | `SPRY_RELAY_PORTS` | `49160:49191` | Inclusive UDP allocation port range |
 | `SPRY_BYTES_PER_SECOND` | `1000000` | Per-allocation aggregate payload budget, in bytes per second, across both directions |
-| `SPRY_MAX_ALLOCATIONS` | `32` | Total concurrent allocations, configurable from 1 to 256 |
-| `SPRY_MAX_ALLOCATIONS_PER_USER` | `8` | Allocations per credential username, configurable from 1 to 32; follows a lowered total when unset |
-| `SPRY_MAX_TCP_CONNECTIONS` | `64` | Accepted TCP/TLS client connections, configurable from 1 to 256 |
+| `SPRY_MAX_ALLOCATIONS` | `32` | Total concurrent allocations, configurable from 1 to 512 |
+| `SPRY_MAX_ALLOCATIONS_PER_USER` | `8` | Allocations per credential username, configurable from 1 to 64; follows a lowered total when unset |
+| `SPRY_MAX_TCP_CONNECTIONS` | `64` | Accepted TCP/TLS client connections, configurable from 1 to 512 |
 
 TURN and TLS ports must be decimal integers from 1 to 65535, must differ,
 and must lie outside the ordered, non-zero relay range. The bandwidth must
 be a decimal integer from 1 to 67108864; zero, overflow, signs and spaces
 are refused with the setting's name. The three `SPRY_MAX_*` caps take decimal
-integers from 1 up to 256, 32 and 256 respectively. Empty, zero, signs,
+integers from 1 up to 512, 64 and 512 respectively. Empty, zero, signs,
 spaces, non-decimal and above-ceiling values refuse startup with the setting's
 name. Unset values retain the defaults of 32, 8 and 64. The per-user cap may not
 exceed the total; if it is unset it defaults to 8 or the total, whichever is
@@ -150,8 +150,8 @@ budget, but it is not a measured throughput promise.
 
 A seven-device full mesh needs at least 42 simultaneous allocations before
 candidate alternatives or overlapping credential replacements. An operator
-can explicitly select 256 allocations, 32 per username and 256 connections,
-with a matching 256-port range such as `49160:49415`. Keep an explicit aggregate
+can explicitly select 512 allocations, 64 per username and 512 connections,
+with a matching 512-port range such as `49160:49671`. Keep an explicit aggregate
 bandwidth budget and adequate process file descriptors. Expanding the range
 does not open an operator's firewall or qualify their network; existing
 defaults and credential/admission/revocation checks remain unchanged.
