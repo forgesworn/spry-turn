@@ -428,20 +428,22 @@ mod profiles {
                 _blocked_turn: blocked,
             };
             let deadline = Instant::now() + Duration::from_secs(8);
+            let mut last_status = None;
             loop {
                 assert!(
                     profile.child.try_wait().unwrap().is_none(),
                     "configured service exited"
                 );
                 if let Ok(status) = profile.http("GET", "/v1/status", "", None) {
-                    let ready = status.json()["ready"].as_bool().unwrap();
+                    last_status = Some(status.json());
+                    let ready = last_status.as_ref().unwrap()["ready"].as_bool().unwrap();
                     if ready == (!block_turn && !private) {
                         break;
                     }
                 }
                 assert!(
                     Instant::now() < deadline,
-                    "configured service did not reach its own readiness state"
+                    "configured service did not reach its own readiness state: http={http}, blocked={block_turn}, private={private}, last={last_status:?}"
                 );
                 std::thread::sleep(Duration::from_millis(10));
             }

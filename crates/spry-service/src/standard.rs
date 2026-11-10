@@ -19,8 +19,8 @@ pub(crate) struct Settings {
     key: String,
 }
 
-/// Relay admission limits. Each default is also the maximum: an operator can
-/// lower a limit for a small host but never raise it above the standard profile.
+/// Relay admission limits. Existing defaults stay small; an operator can
+/// explicitly budget a larger group without removing a finite ceiling.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Limits {
     allocations: u32,
@@ -28,11 +28,14 @@ struct Limits {
     connections: u32,
 }
 
-pub(crate) const MAX_ALLOCATIONS: u32 = 32;
-pub(crate) const MAX_PER_USER: u32 = 8;
+const DEFAULT_ALLOCATIONS: u32 = 32;
+const DEFAULT_PER_USER: u32 = 8;
+const DEFAULT_CONNECTIONS: u32 = 64;
+pub(crate) const MAX_ALLOCATIONS: u32 = 256;
+pub(crate) const MAX_PER_USER: u32 = 32;
 // Leave bounded room for new-route handshakes while old sockets unwind.
 // The allocation and per-user quotas remain independent.
-pub(crate) const MAX_CONNECTIONS: u32 = 64;
+pub(crate) const MAX_CONNECTIONS: u32 = 256;
 pub(crate) const MAX_BYTES_PER_SECOND: u64 = 64 * 1024 * 1024;
 const TURN_PORT: SetupError = SetupError("SPRY_TURN_PORT must be an integer from 1 to 65535");
 const TLS_PORT: SetupError =
@@ -45,12 +48,12 @@ const BANDWIDTH: SetupError =
 const AGGREGATE: SetupError =
     SetupError("SPRY_AGGREGATE_BYTES_PER_SECOND must be an integer from 1 to 67108864");
 const ALLOCATIONS: SetupError =
-    SetupError("SPRY_MAX_ALLOCATIONS must be a decimal integer from 1 to 32");
+    SetupError("SPRY_MAX_ALLOCATIONS must be a decimal integer from 1 to 256");
 const PER_USER: SetupError = SetupError(
-    "SPRY_MAX_ALLOCATIONS_PER_USER must be a decimal integer from 1 to 8 and not exceed SPRY_MAX_ALLOCATIONS",
+    "SPRY_MAX_ALLOCATIONS_PER_USER must be a decimal integer from 1 to 32 and not exceed SPRY_MAX_ALLOCATIONS",
 );
 const CONNECTIONS: SetupError =
-    SetupError("SPRY_MAX_TCP_CONNECTIONS must be a decimal integer from 1 to 64");
+    SetupError("SPRY_MAX_TCP_CONNECTIONS must be a decimal integer from 1 to 256");
 const TLS_FILES: SetupError = SetupError(
     "SPRY_TLS_CERT_FILE and SPRY_TLS_KEY_FILE must name certificate and key files together",
 );
@@ -73,9 +76,9 @@ pub(crate) fn bounded(value: &str, maximum: u32) -> Option<u32> {
 impl Default for Limits {
     fn default() -> Self {
         Self {
-            allocations: MAX_ALLOCATIONS,
-            per_user: MAX_PER_USER,
-            connections: MAX_CONNECTIONS,
+            allocations: DEFAULT_ALLOCATIONS,
+            per_user: DEFAULT_PER_USER,
+            connections: DEFAULT_CONNECTIONS,
         }
     }
 }
@@ -88,7 +91,7 @@ impl Limits {
     ) -> Result<Self, SetupError> {
         let allocations = match allocations {
             Some(value) => bounded(value, MAX_ALLOCATIONS).ok_or(ALLOCATIONS)?,
-            None => MAX_ALLOCATIONS,
+            None => DEFAULT_ALLOCATIONS,
         };
         // An unset per-user limit follows a lowered total rather than refusing
         // startup; an explicit one above the total is refused.
@@ -96,11 +99,11 @@ impl Limits {
             Some(value) => bounded(value, MAX_PER_USER)
                 .filter(|value| *value <= allocations)
                 .ok_or(PER_USER)?,
-            None => MAX_PER_USER.min(allocations),
+            None => DEFAULT_PER_USER.min(allocations),
         };
         let connections = match connections {
             Some(value) => bounded(value, MAX_CONNECTIONS).ok_or(CONNECTIONS)?,
-            None => MAX_CONNECTIONS,
+            None => DEFAULT_CONNECTIONS,
         };
         Ok(Self {
             allocations,
@@ -490,6 +493,45 @@ mod tests {
     }
 
     #[test]
+    fn explicit_group_budget_preserves_defaults_and_reaches_the_relay() {
+        let defaults = Limits::default();
+        assert_eq!(
+            (
+                defaults.allocations,
+                defaults.per_user,
+                defaults.connections
+            ),
+            (32, 8, 64)
+        );
+        // Seven devices need 42 directed peer connections, plus their
+        // candidate alternatives and overlapping credential replacements.
+        let limits = Limits::parse(Some("256"), Some("32"), Some("256")).unwrap();
+        let mut settings = Settings::parse(None, None, Some("49160:49415"), None).unwrap();
+        settings.limits = limits;
+        let relay = settings
+            .relay_config(Ipv4Addr::LOCALHOST, vec![7; 32])
+            .unwrap();
+        assert_eq!(
+            (
+                relay.max_allocations,
+                relay.max_per_user,
+                relay.max_connections
+            ),
+            (256, 32, 256)
+        );
+        let mut command = Command::new("synthetic-relay");
+        settings.configure_command(&mut command, Ipv4Addr::LOCALHOST);
+        let args: Vec<_> = command.as_std().get_args().collect();
+        for pair in [
+            ["--max-allocations", "256"],
+            ["--max-per-user", "32"],
+            ["--max-connections", "256"],
+        ] {
+            assert!(args.windows(2).any(|window| window == pair), "{pair:?}");
+        }
+    }
+
+    #[test]
     fn invalid_limits_refuse_startup_naming_the_setting() {
         for bad in [
             "",
@@ -501,7 +543,7 @@ mod tests {
             "0x10",
             "1.0",
             "NaN",
-            "33",
+            "257",
             "4294967296",
             "99999999999999999999",
         ] {
@@ -509,7 +551,7 @@ mod tests {
                 Limits::parse(Some(bad), None, None).unwrap_err(),
                 ALLOCATIONS
             );
-            if bad != "33" {
+            if bad != "257" {
                 assert_eq!(
                     Limits::parse(None, None, Some(bad)).unwrap_err(),
                     CONNECTIONS
@@ -519,10 +561,10 @@ mod tests {
         assert!(Limits::parse(None, None, Some("32")).is_ok());
         assert!(Limits::parse(None, None, Some("33")).is_ok());
         assert_eq!(
-            Limits::parse(None, None, Some("65")).unwrap_err(),
+            Limits::parse(None, None, Some("257")).unwrap_err(),
             CONNECTIONS
         );
-        for bad in ["", "0", "-1", "+1", " 1", "9", "NaN"] {
+        for bad in ["", "0", "-1", "+1", " 1", "33", "NaN"] {
             assert_eq!(Limits::parse(None, Some(bad), None).unwrap_err(), PER_USER);
         }
         // Per-user may not exceed the total.

@@ -105,12 +105,12 @@ const SSDP: SetupError =
     SetupError("--ssdp must be an IPv4 address and port, such as 127.0.0.1:1900");
 const MAPPING_START: SetupError = SetupError("the port-mapping thread could not start");
 const ALLOCATIONS: SetupError =
-    SetupError("--max-allocations must be a decimal integer from 1 to 32");
+    SetupError("--max-allocations must be a decimal integer from 1 to 256");
 const PER_USER: SetupError = SetupError(
-    "--max-per-user must be a decimal integer from 1 to 8 and not exceed --max-allocations",
+    "--max-per-user must be a decimal integer from 1 to 32 and not exceed --max-allocations",
 );
 const CONNECTIONS: SetupError =
-    SetupError("--max-tcp-connections must be a decimal integer from 1 to 64");
+    SetupError("--max-tcp-connections must be a decimal integer from 1 to 256");
 const BANDWIDTH: SetupError =
     SetupError("--bytes-per-second must be a decimal integer from 1 to 67108864");
 const AGGREGATE: SetupError =

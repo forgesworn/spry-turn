@@ -122,6 +122,7 @@ class Fixture:
 
     def __init__(self, binary, loopback=True, limits=(), tls=False):
         self.secret = secrets.token_hex(32)
+        self.client_ports = set()
         self.temp = tempfile.TemporaryDirectory(prefix="spry-turn-test-")
         self.cert = Path(self.temp.name) / "cert.pem"
         self.process = None
@@ -202,6 +203,22 @@ class Client:
     def __init__(self, fixture, mode="udp", label=None, expiry=None):
         self.fixture, self.mode = fixture, mode
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM if mode == "udp" else socket.SOCK_STREAM)
+        if mode == "udp":
+            # Closing UDP does not remove the relay's allocation. Reusing that
+            # source tuple with a new username correctly yields Wrong Credentials.
+            # Keep each fixture client's source port distinct without retaining
+            # sockets or changing the server's authentication/lifetime rules.
+            for _ in range(64):
+                self.socket.bind(("0.0.0.0", 0))
+                port = self.socket.getsockname()[1]
+                if port not in fixture.client_ports:
+                    fixture.client_ports.add(port)
+                    break
+                self.socket.close()
+                self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            else:
+                self.socket.close()
+                raise RuntimeError("isolated client source ports unavailable")
         self.socket.settimeout(2)
         if mode == "tls":
             context = ssl.create_default_context(cafile=str(fixture.cert))
@@ -269,6 +286,35 @@ def error_code(fields):
 
 
 class FixtureLifecycle(unittest.TestCase):
+    def test_udp_client_skips_a_source_port_from_an_earlier_allocation(self):
+        fixture = Fixture(BINARY); self.addCleanup(fixture.close)
+        old = Client(fixture); old.allocate()
+        previous_port = old.socket.getsockname()[1]
+        old.close()
+        original_socket = socket.socket
+
+        class ReusedPortSocket(original_socket):
+            def bind(self, address):
+                return super().bind((address[0], previous_port))
+
+            def connect(self, address):
+                if self.getsockname()[1] == 0:
+                    self.bind(("127.0.0.1", 0))
+                return super().connect(address)
+
+        candidates = []
+        def candidate(*args, **kwargs):
+            value = (ReusedPortSocket if not candidates else original_socket)(*args, **kwargs)
+            candidates.append(value)
+            return value
+
+        with mock.patch.object(socket, "socket", side_effect=candidate):
+            current = Client(fixture)
+        self.addCleanup(current.close)
+        current.allocate()
+        self.assertNotEqual(current.socket.getsockname()[1], previous_port)
+        self.assertEqual(candidates[0].fileno(), -1)
+
     def test_reservations_hold_both_protocols_and_distinct_tls_port(self):
         port, tls_port, held = reserve_listener_ports(True)
         for sock in held: self.addCleanup(sock.close)
