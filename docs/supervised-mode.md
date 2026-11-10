@@ -76,9 +76,9 @@ existing standard or private-node profile exactly as before.
 | `--public-udp-port` | Yes, unless `--map-ports` | External UDP port of the listener, 1024 to 65535 |
 | `--public-tcp-port` | Yes, unless `--map-ports` | External TCP port of the listener, 1024 to 65535. It may differ from the UDP port. |
 | `--relay-port-map LOCAL:PUBLIC` | Yes, 1 to 64 times, unless `--map-ports` | UDP allocation port pairs, each 1024 to 65535, every local and every public port used once. No local port may be the listener port and no public port the listener's public UDP port. |
-| `--max-allocations` | No | 1 to 256, default 8. With `--map-ports` it is also how many allocation ports are asked of the router, and the relay never holds more allocations than ports granted. |
-| `--max-per-user` | No | 1 to 32 and at most `--max-allocations`, default 2 (or the total, if lower) |
-| `--max-tcp-connections` | No | 1 to 256, default 16 |
+| `--max-allocations` | No | 1 to 512, default 8. With `--map-ports` it is also how many allocation ports are asked of the router, and the relay never holds more allocations than ports granted. |
+| `--max-per-user` | No | 1 to 64 and at most `--max-allocations`, default 2 (or the total, if lower) |
+| `--max-tcp-connections` | No | 1 to 512, default 16 |
 | `--bytes-per-second` | No | Per allocation, 1 to 67108864, default 125000 |
 | `--aggregate-bytes-per-second` | No | For every allocation together, 1 to 67108864, default 625000. See [the aggregate cap](#the-aggregate-bandwidth-cap). |
 

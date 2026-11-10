@@ -31,11 +31,11 @@ struct Limits {
 const DEFAULT_ALLOCATIONS: u32 = 32;
 const DEFAULT_PER_USER: u32 = 8;
 const DEFAULT_CONNECTIONS: u32 = 64;
-pub(crate) const MAX_ALLOCATIONS: u32 = 256;
-pub(crate) const MAX_PER_USER: u32 = 32;
+pub(crate) const MAX_ALLOCATIONS: u32 = 512;
+pub(crate) const MAX_PER_USER: u32 = 64;
 // Leave bounded room for new-route handshakes while old sockets unwind.
 // The allocation and per-user quotas remain independent.
-pub(crate) const MAX_CONNECTIONS: u32 = 256;
+pub(crate) const MAX_CONNECTIONS: u32 = 512;
 pub(crate) const MAX_BYTES_PER_SECOND: u64 = 64 * 1024 * 1024;
 const TURN_PORT: SetupError = SetupError("SPRY_TURN_PORT must be an integer from 1 to 65535");
 const TLS_PORT: SetupError =
@@ -48,12 +48,12 @@ const BANDWIDTH: SetupError =
 const AGGREGATE: SetupError =
     SetupError("SPRY_AGGREGATE_BYTES_PER_SECOND must be an integer from 1 to 67108864");
 const ALLOCATIONS: SetupError =
-    SetupError("SPRY_MAX_ALLOCATIONS must be a decimal integer from 1 to 256");
+    SetupError("SPRY_MAX_ALLOCATIONS must be a decimal integer from 1 to 512");
 const PER_USER: SetupError = SetupError(
-    "SPRY_MAX_ALLOCATIONS_PER_USER must be a decimal integer from 1 to 32 and not exceed SPRY_MAX_ALLOCATIONS",
+    "SPRY_MAX_ALLOCATIONS_PER_USER must be a decimal integer from 1 to 64 and not exceed SPRY_MAX_ALLOCATIONS",
 );
 const CONNECTIONS: SetupError =
-    SetupError("SPRY_MAX_TCP_CONNECTIONS must be a decimal integer from 1 to 256");
+    SetupError("SPRY_MAX_TCP_CONNECTIONS must be a decimal integer from 1 to 512");
 const TLS_FILES: SetupError = SetupError(
     "SPRY_TLS_CERT_FILE and SPRY_TLS_KEY_FILE must name certificate and key files together",
 );
@@ -505,8 +505,8 @@ mod tests {
         );
         // Seven devices need 42 directed peer connections, plus their
         // candidate alternatives and overlapping credential replacements.
-        let limits = Limits::parse(Some("256"), Some("32"), Some("256")).unwrap();
-        let mut settings = Settings::parse(None, None, Some("49160:49415"), None).unwrap();
+        let limits = Limits::parse(Some("512"), Some("64"), Some("512")).unwrap();
+        let mut settings = Settings::parse(None, None, Some("49160:49671"), None).unwrap();
         settings.limits = limits;
         let relay = settings
             .relay_config(Ipv4Addr::LOCALHOST, vec![7; 32])
@@ -517,15 +517,15 @@ mod tests {
                 relay.max_per_user,
                 relay.max_connections
             ),
-            (256, 32, 256)
+            (512, 64, 512)
         );
         let mut command = Command::new("synthetic-relay");
         settings.configure_command(&mut command, Ipv4Addr::LOCALHOST);
         let args: Vec<_> = command.as_std().get_args().collect();
         for pair in [
-            ["--max-allocations", "256"],
-            ["--max-per-user", "32"],
-            ["--max-connections", "256"],
+            ["--max-allocations", "512"],
+            ["--max-per-user", "64"],
+            ["--max-connections", "512"],
         ] {
             assert!(args.windows(2).any(|window| window == pair), "{pair:?}");
         }
@@ -543,7 +543,7 @@ mod tests {
             "0x10",
             "1.0",
             "NaN",
-            "257",
+            "513",
             "4294967296",
             "99999999999999999999",
         ] {
@@ -551,7 +551,7 @@ mod tests {
                 Limits::parse(Some(bad), None, None).unwrap_err(),
                 ALLOCATIONS
             );
-            if bad != "257" {
+            if bad != "513" {
                 assert_eq!(
                     Limits::parse(None, None, Some(bad)).unwrap_err(),
                     CONNECTIONS
@@ -561,10 +561,10 @@ mod tests {
         assert!(Limits::parse(None, None, Some("32")).is_ok());
         assert!(Limits::parse(None, None, Some("33")).is_ok());
         assert_eq!(
-            Limits::parse(None, None, Some("257")).unwrap_err(),
+            Limits::parse(None, None, Some("513")).unwrap_err(),
             CONNECTIONS
         );
-        for bad in ["", "0", "-1", "+1", " 1", "33", "NaN"] {
+        for bad in ["", "0", "-1", "+1", " 1", "65", "NaN"] {
             assert_eq!(Limits::parse(None, Some(bad), None).unwrap_err(), PER_USER);
         }
         // Per-user may not exceed the total.
