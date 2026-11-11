@@ -29,9 +29,25 @@ fn command() -> Command {
     command
 }
 
+fn listener_address() -> std::net::SocketAddr {
+    for _ in 0..16 {
+        // UDP :0 may select a port already occupied in the independent TCP
+        // namespace, including TIME_WAIT. Preflight both while holding guards;
+        // release them only when returning the address for the child to bind.
+        let tcp = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = tcp.local_addr().unwrap();
+        match std::net::UdpSocket::bind(address) {
+            Ok(_udp) => return address,
+            Err(error) if error.kind() == std::io::ErrorKind::AddrInUse => continue,
+            Err(error) => panic!("fixture UDP bind failed: {error}"),
+        }
+    }
+    panic!("could not find a joint UDP/TCP fixture address within 16 attempts");
+}
+
 fn start(watch: bool, piped: bool) -> Relay {
     let mut command = command();
-    command.args(["serve", "--listen", "127.0.0.1:0"]);
+    command.args(["serve", "--listen", &listener_address().to_string()]);
     if watch {
         command.arg("--exit-on-stdin-close");
     }
@@ -147,7 +163,12 @@ fn watched_stdin_accepts_bytes_then_exits_on_eof() {
 fn watched_stdin_already_at_eof_exits_without_waiting_for_readiness() {
     let mut relay = Relay(
         command()
-            .args(["serve", "--listen", "127.0.0.1:0", "--exit-on-stdin-close"])
+            .args([
+                "serve",
+                "--listen",
+                &listener_address().to_string(),
+                "--exit-on-stdin-close",
+            ])
             .stdin(Stdio::null())
             .spawn()
             .unwrap(),
@@ -162,7 +183,12 @@ fn watched_stdin_read_error_exits_unsuccessfully() {
     let directory = std::fs::File::open(std::env::temp_dir()).unwrap();
     let mut relay = Relay(
         command()
-            .args(["serve", "--listen", "127.0.0.1:0", "--exit-on-stdin-close"])
+            .args([
+                "serve",
+                "--listen",
+                &listener_address().to_string(),
+                "--exit-on-stdin-close",
+            ])
             .stdin(Stdio::from(directory))
             .spawn()
             .unwrap(),

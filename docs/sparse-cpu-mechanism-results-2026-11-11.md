@@ -101,7 +101,7 @@ work with no missed slots or corruption. Whole-lifetime Ir counts were:
 | 4 | Baseline A | 29,106,088 |
 
 The paired increases are **2.1834% and 2.0923%** (median 2.1378%). This supports
-a small additional user-instruction cost in the release's singleton work;
+a small additional user-instruction cost across the instrumented relay lifetime;
 it does not translate directly into native CPU time. Counts include readiness,
 setup, probes and teardown; startup readiness may require different probe
 counts. They exclude kernel instructions, have no Rust-function attribution
@@ -132,8 +132,21 @@ test-only follow-up retains bounded child stderr and reports its exit state.
 A deliberately occupied TCP listener verifies that startup bind errors are
 reported. Twenty fixed repetitions of the parent-lifetime tests on each hosted
 CI OS investigate recurrence using the existing target; no timing row is
-repeated. This diagnostic addition does not establish that a port collision
-caused the original failure, or change relay startup/retry behaviour.
+repeated. The prospective reproduction on revision `fd94131` failed Linux
+repetition 16 with **Address already in use (os error 98)** before readiness
+([run 43106783971](https://github.com/forgesworn/spry-turn/actions/runs/43106783971));
+its macOS matrix sibling was cancelled. Another concurrent CI run passed, and
+neither result is removed. This identifies a bind collision in the reproduction,
+while the first failure's discarded stderr leaves its cause unknown.
+
+The runtime binds UDP first, then TCP to the same numeric port. An ephemeral
+UDP port need not be free in the independent TCP namespace. The lifetime
+fixture now preflights a shared UDP/TCP port, holding both guards during
+selection, instead of asking UDP alone to choose one. Selection has a fixed
+16-attempt cap; unexpected bind errors fail. The guards must be released before
+the existing child API can bind, so a small intervening race remains possible
+and captured startup failures are still fatal. There is no child-startup retry,
+runtime change, or attribution of this bind collision to sparse CPU.
 
 Temporary instrument profiles, credentials and fixture processes were removed
 at job exit. The repository retains scalar rows, provenance and this analysis,
