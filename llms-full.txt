@@ -2,7 +2,7 @@
 
 > Lightweight Rust STUN/TURN server, embeddable native relay and WASM packet codec. MIT; maintained by TheCryptoDonkey under ForgeSworn.
 
-Version 0.4.1. Source and GitHub prereleases are public, under MIT, copyright 2026 TheCryptoDonkey. There is no crates.io, docs.rs or npm publication, hosted relay, credential service or public documentation site.
+Version 0.4.2. Source and GitHub prereleases are public, under MIT, copyright 2026 TheCryptoDonkey. There is no crates.io, docs.rs or npm publication, hosted relay, credential service or public documentation site.
 
 The existing Linux verify job is configured to upload a three-day CI artefact containing both TLS-enabled standalone executables, exact committed source, dependency licences, checksums and ELF/GLIBC provenance. This is separate from formal release downloads and operator deployment or network acceptance.
 
@@ -4093,6 +4093,54 @@ Do not silently remove transport support required by existing clients.
 Canonical source: [CHANGELOG.md](https://github.com/forgesworn/spry-turn/blob/main/CHANGELOG.md)
 
 # Changelog
+
+## 0.4.2 (11 November 2026)
+
+Public MIT prerelease through the existing native executable and Android
+library release channel. This release includes the changes since 0.4.1;
+it does not deploy a hosted relay or change Archipelago screens.
+
+- Batch plain TCP return traffic in groups of up to 16 frames or 16 KiB,
+  and reuse empty output buffers. Partial writes retain their own pending
+  buffer, and failed batch flushes account for each dropped frame once.
+  Send the first eligible return immediately; batching starts only after a
+  second return in the same dispatch, without a timer or look-ahead syscall.
+  Large first frames still borrow empty storage when needed.
+- Publish with an explicitly accepted performance trade-off. In the final
+  pinned Linux loopback qualification, with 1,200-byte packets and window 8,
+  median paired throughput rose 53.61% with 128 clients and 35.30% with 512
+  clients; server CPU per verified forward fell 34.76% and 25.83%.
+  The campaign **failed** its sparse TCP CPU guard: two pairs exceeded the
+  0.2-percentage-point limit, with a worst increase of 0.334 points of one
+  core. An earlier final-source campaign failed the same guard. Host,
+  useful-work, latency, loaded/control and memory guards passed in the final
+  campaign. The owner explicitly accepted this disclosed trade-off for the
+  prerelease; neither failed result was relabelled or rerun to pass.
+  These are measured loopback workloads, not WAN capacity or loaded-latency
+  guarantees. See the [release decision](https://github.com/forgesworn/spry-turn/blob/main/docs/release-v0.4.2-acceptance-2026-11-11.md)
+  and [complete final results](https://github.com/forgesworn/spry-turn/blob/main/docs/tcp-v0.4.2-3a843bb-results-2026-11-11.md).
+- Add the opt-in keeper-controlled node profile: signed grant/device
+  expiry, live credential revocation and a renewable 15-second desk lease
+  control admission and existing allocations. A lost lease fails closed;
+  restarting starts without issued credentials or a lease. Existing
+  standalone and supervised profiles retain their behaviour when the
+  profile is absent. See the [operator contract](https://github.com/forgesworn/spry-turn/blob/main/docs/standalone.md#keeper-controlled-node-profile).
+- Expose bounded aggregate node status and allocation/forwarded-byte
+  metrics without room identifiers, addresses or credentials. Add an
+  optional aggregate payload budget and explicit TLS advertisement and
+  certificate settings; these settings do not configure a public endpoint.
+- Bound private-node allocation leases, reclaim expired capacity before
+  new allocations, and allow explicit bounded group-call budgets with
+  connection and multihomed renewal headroom. Preserve the per-allocation
+  limits and admission checks.
+- Include Windows dependency licence texts in the packaged notices and
+  collect the inventory for every existing native and Android release
+  target, including dependency licence files with lowercase names.
+- Close a deallocated UDP allocation's connected socket before sending its
+  zero-lifetime Refresh acknowledgement. Previously an immediate next
+  request could reach that socket just before teardown and be lost. The
+  response keeps its authenticated transaction and client-facing endpoint;
+  TCP and TLS connections remain open for subsequent requests.
 
 ## 0.4.1 (30 October 2026)
 
