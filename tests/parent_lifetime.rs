@@ -9,6 +9,18 @@ use std::{
 };
 
 struct Relay(Child);
+
+// These tests verify one child's stdin contract, not concurrent listener
+// allocation. Keep the deliberate occupied-port fixture from racing another
+// fixture between its port preflight and child bind.
+static FIXTURE_PORTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn fixture_ports() -> std::sync::MutexGuard<'static, ()> {
+    FIXTURE_PORTS
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+}
+
 impl Drop for Relay {
     fn drop(&mut self) {
         let _ = self.0.kill();
@@ -113,6 +125,7 @@ fn wait_for_exit(relay: &mut Relay) -> ExitStatus {
 
 #[test]
 fn closed_stdin_does_not_change_default_serve_lifetime() {
+    let _ports = fixture_ports();
     for piped in [false, true] {
         let mut relay = start(false, piped);
         drop(relay.0.stdin.take());
@@ -124,6 +137,7 @@ fn closed_stdin_does_not_change_default_serve_lifetime() {
 #[cfg(unix)]
 #[test]
 fn readiness_reports_startup_bind_failure_instead_of_disconnected_channel() {
+    let _ports = fixture_ports();
     // A bound TCP listener deliberately prevents the relay from sharing its
     // UDP-selected port. This tests diagnostic reporting, not a hypothesised
     // cause of an earlier unexplained startup failure.
@@ -145,6 +159,7 @@ fn readiness_reports_startup_bind_failure_instead_of_disconnected_channel() {
 
 #[test]
 fn watched_stdin_accepts_bytes_then_exits_on_eof() {
+    let _ports = fixture_ports();
     let mut relay = start(true, true);
     relay
         .0
@@ -161,6 +176,7 @@ fn watched_stdin_accepts_bytes_then_exits_on_eof() {
 
 #[test]
 fn watched_stdin_already_at_eof_exits_without_waiting_for_readiness() {
+    let _ports = fixture_ports();
     let mut relay = Relay(
         command()
             .args([
@@ -179,6 +195,7 @@ fn watched_stdin_already_at_eof_exits_without_waiting_for_readiness() {
 #[cfg(unix)]
 #[test]
 fn watched_stdin_read_error_exits_unsuccessfully() {
+    let _ports = fixture_ports();
     // Reading a directory fails rather than reporting ordinary pipe EOF.
     let directory = std::fs::File::open(std::env::temp_dir()).unwrap();
     let mut relay = Relay(
@@ -198,6 +215,7 @@ fn watched_stdin_read_error_exits_unsuccessfully() {
 
 #[test]
 fn invalid_or_credential_lifetime_flags_are_refused() {
+    let _ports = fixture_ports();
     for args in [
         vec!["credential", "--exit-on-stdin-close"],
         vec!["serve", "--exit-on-stdin-close=true"],

@@ -148,6 +148,16 @@ the existing child API can bind, so a small intervening race remains possible
 and captured startup failures are still fatal. There is no child-startup retry,
 runtime change, or attribution of this bind collision to sparse CPU.
 
+The first preflight-only fix (`6bde254`) then reproduced **Address already in
+use (os error 48)** on macOS in the same bounded exercise
+([run 43107842973](https://github.com/forgesworn/spry-turn/actions/runs/43107842973));
+Linux and the concurrent duplicate CI passed. The fixture suite now also
+serialises its own port selection and child lifetimes, including the deliberate
+occupied-port fixture. These tests exercise each child's stdin contract, not
+concurrent listener allocation. This removes inter-fixture competition in the
+handover gap; external races remain fatal and visible. No failed run is retried
+unchanged or omitted.
+
 Temporary instrument profiles, credentials and fixture processes were removed
 at job exit. The repository retains scalar rows, provenance and this analysis,
 not packet traces, per-packet latency records, executables or Callgrind files.
