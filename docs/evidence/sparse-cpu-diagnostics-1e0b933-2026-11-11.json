@@ -1,0 +1,3258 @@
+{
+  "schema": 1,
+  "kind": "sparse-cpu-phase-diagnostic",
+  "qualification_pass": null,
+  "complete": true,
+  "sources": {
+    "baseline": "56232d52f0fbfd2f3795a50917890ed6c85e6dc9",
+    "release": "4c58eece7566a1602475db79feefa3c1ae0c2604",
+    "loader": "1e0b933fa0d767932d4c3264389fe073dfe185bb"
+  },
+  "binaries": {
+    "baseline": {
+      "sha256": "1673841bd360365825bcd5f52214c64b55ff7b04e6ca3ef1c3180b908aa9315e",
+      "bytes": 1623872,
+      "architectures": [
+        "x86_64"
+      ]
+    },
+    "release": {
+      "sha256": "13c3ea40ac886b6d044684982a1db260c441a92ba41e2697e487a3beb5b94065",
+      "bytes": 1627160,
+      "architectures": [
+        "x86_64"
+      ]
+    },
+    "loader": {
+      "sha256": "2dbfabb66c0720a79fe055298bc9542cad124dca5b6b24fbe0afd095b6cb5248",
+      "bytes": 1764136,
+      "architectures": [
+        "x86_64"
+      ]
+    }
+  },
+  "build_manifest": {
+    "schema": 1,
+    "builds": {
+      "baseline": {
+        "source": "56232d52f0fbfd2f3795a50917890ed6c85e6dc9",
+        "sha256": "1673841bd360365825bcd5f52214c64b55ff7b04e6ca3ef1c3180b908aa9315e",
+        "rustc": "rustc 1.94.1 (e408947bf 2026-03-25)",
+        "cargo": "cargo 1.94.1 (29ea6fb6a 2026-03-24)",
+        "profile": "release",
+        "features": [
+          "tls"
+        ],
+        "locked": true,
+        "target": "bin:spry-turn"
+      },
+      "release": {
+        "source": "4c58eece7566a1602475db79feefa3c1ae0c2604",
+        "sha256": "13c3ea40ac886b6d044684982a1db260c441a92ba41e2697e487a3beb5b94065",
+        "rustc": "rustc 1.94.1 (e408947bf 2026-03-25)",
+        "cargo": "cargo 1.94.1 (29ea6fb6a 2026-03-24)",
+        "profile": "release",
+        "features": [
+          "tls"
+        ],
+        "locked": true,
+        "target": "bin:spry-turn"
+      },
+      "loader": {
+        "source": "1e0b933fa0d767932d4c3264389fe073dfe185bb",
+        "sha256": "2dbfabb66c0720a79fe055298bc9542cad124dca5b6b24fbe0afd095b6cb5248",
+        "rustc": "rustc 1.94.1 (e408947bf 2026-03-25)",
+        "cargo": "cargo 1.94.1 (29ea6fb6a 2026-03-24)",
+        "profile": "release",
+        "features": [
+          "tls"
+        ],
+        "locked": true,
+        "target": "example:load"
+      }
+    }
+  },
+  "scripts": {
+    "scripts/sparse-diagnostics.py": "faa929a5b99562c220d141a67314745b220a1bebb883fe0fbbaca80365e1f3f5",
+    "scripts/compare.py": "2540ffb767b7c4b6c8eb62512406c86cdde2e5e4efbdaf0f67d9c0894beff336",
+    "scripts/qualify-tcp.py": "4c99eb3852ca6e167360d4bc8db184b8213552968800f807faa2e2661f0ebcf8",
+    "examples/load.rs": "45fbfc382f7900bc72c3f1c9e0297d685cf9b576972cb089377181e568d0d090",
+    "tests/interop.py": "3fae1644688c44bac2553795402411a6c4fa23cfbd9134cc3b32cc800efb98ef",
+    "tests/test_sparse_diagnostics.py": "bb1d7364ecca1c4b08c5246cb8d872c7362e6920a53d8f20999b13937cd8edda",
+    ".github/workflows/sparse-diagnostics.yml": "7948d1b23df560aac03de410ec9ca5d2836ece186c1c7b773ee110ca4e5e2287",
+    "docs/sparse-cpu-diagnostics-2026-11-11.md": "9e3f7fdc956c6438af88395ff53e35a94f048d840da5f64fbcd964ef1f8bff36"
+  },
+  "host": {
+    "cpu": "AMD EPYC 9V74 80-Core Processor",
+    "kernel": "7.0.0-1017-azure",
+    "rustc": "rustc 1.94.1 (e408947bf 2026-03-25)",
+    "affinity": [
+      0,
+      1,
+      2,
+      3
+    ]
+  },
+  "method": {
+    "profile": {
+      "name": "tcp1_sparse",
+      "clients": 1,
+      "packets": 4000,
+      "size": 160,
+      "window": 1,
+      "transport": "tcp",
+      "workers": 1,
+      "rate": 500
+    },
+    "pairs": 4,
+    "order": "AB, BA, AB, BA",
+    "stages": [
+      "release_vs_itself",
+      "baseline_vs_release"
+    ],
+    "scheduler_units": "nanoseconds; unit does not establish nanosecond accuracy",
+    "scope": "diagnostic barriers perturb scheduling; phase counters are not the frozen wait4 guard",
+    "frozen_guards_unchanged": true,
+    "adoption_claim": false
+  },
+  "runs": [
+    {
+      "transport": "tcp",
+      "tls": null,
+      "clients": 1,
+      "load_workers": 1,
+      "payload_bytes": 160,
+      "window": 1,
+      "round_trips": 4000,
+      "minimum_seconds": 0,
+      "delivered_forwarded_packets": 8000,
+      "seconds": 7.998267,
+      "packets_per_second": 1000.2,
+      "payload_mbps": 1.3,
+      "round_trip_p50_us": 60.441,
+      "round_trip_p99_us": 79.991,
+      "loaded_round_trip_p50_us": 74.492,
+      "loaded_round_trip_p99_us": 101.312,
+      "loaded_latency_observations": 4000,
+      "loaded_latency_retained": 4000,
+      "setup_ms": 0.368,
+      "loss_or_corruption": 0,
+      "offered_round_trips_per_second": 500,
+      "scheduled_round_trip_p99_us": 174.235,
+      "dispatch_lateness_p99_us": 78.18,
+      "missed_dispatch_slots": 0,
+      "server_cpu_seconds": 0.23573799999999998,
+      "scheduler_ready": {
+        "phase": "server_ready",
+        "cpu_ns": 1189917,
+        "runqueue_ns": null,
+        "timeslices": 2,
+        "observed_start_ns": 138738877111,
+        "observed_end_ns": 138739396741,
+        "thread_count": 1,
+        "sched_schedstats": 0,
+        "runqueue_unavailable": "kernel scheduler statistics disabled"
+      },
+      "scheduler_before_release": {
+        "phase": "before_release",
+        "cpu_ns": 235518922,
+        "runqueue_ns": null,
+        "timeslices": 12011,
+        "observed_start_ns": 146865056273,
+        "observed_end_ns": 146865274891,
+        "thread_count": 1,
+        "sched_schedstats": 0,
+        "runqueue_unavailable": "kernel scheduler statistics disabled"
+      },
+      "phase_snapshots": [
+        {
+          "phase": "before_setup",
+          "cpu_ns": 1189917,
+          "runqueue_ns": null,
+          "timeslices": 2,
+          "observed_start_ns": 138740773006,
+          "observed_end_ns": 138741031284,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        },
+        {
+          "phase": "after_setup",
+          "cpu_ns": 1357465,
+          "runqueue_ns": null,
+          "timeslices": 6,
+          "observed_start_ns": 138741491976,
+          "observed_end_ns": 138741688601,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        },
+        {
+          "phase": "after_warmup",
+          "cpu_ns": 1575349,
+          "runqueue_ns": null,
+          "timeslices": 7,
+          "observed_start_ns": 138742057905,
+          "observed_end_ns": 138742270574,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        },
+        {
+          "phase": "before_work",
+          "cpu_ns": 66001323,
+          "runqueue_ns": null,
+          "timeslices": 4007,
+          "observed_start_ns": 138865532847,
+          "observed_end_ns": 138865901791,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        },
+        {
+          "phase": "after_work",
+          "cpu_ns": 235518922,
+          "runqueue_ns": null,
+          "timeslices": 12011,
+          "observed_start_ns": 146864359537,
+          "observed_end_ns": 146864708040,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        }
+      ],
+      "phase_intervals": [
+        {
+          "start": "before_setup",
+          "end": "after_setup",
+          "cpu_ns": 167548,
+          "runqueue_ns": null,
+          "timeslices": 4
+        },
+        {
+          "start": "after_setup",
+          "end": "after_warmup",
+          "cpu_ns": 217884,
+          "runqueue_ns": null,
+          "timeslices": 1
+        },
+        {
+          "start": "after_warmup",
+          "end": "before_work",
+          "cpu_ns": 64425974,
+          "runqueue_ns": null,
+          "timeslices": 4000
+        },
+        {
+          "start": "before_work",
+          "end": "after_work",
+          "cpu_ns": 169517599,
+          "runqueue_ns": null,
+          "timeslices": 8004
+        }
+      ],
+      "stage": "release_vs_itself",
+      "pair": 1,
+      "arm": "A",
+      "idle_probe": {
+        "before": {
+          "cpu_ticks": [
+            7991,
+            1,
+            1822,
+            42889,
+            1000,
+            0,
+            69,
+            0
+          ],
+          "load": [
+            1.02392578125,
+            0.49951171875,
+            0.193359375
+          ],
+          "context_switches": 283406,
+          "cpu_pressure": "some avg10=0.00 avg60=0.37 avg300=0.39 total=2000924\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0",
+          "memory_pressure": "some avg10=0.00 avg60=0.00 avg300=0.00 total=0\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0",
+          "monotonic": 135.627334536
+        },
+        "after": {
+          "cpu_ticks": [
+            7998,
+            1,
+            1824,
+            44081,
+            1000,
+            0,
+            69,
+            0
+          ],
+          "load": [
+            1.02392578125,
+            0.49951171875,
+            0.193359375
+          ],
+          "context_switches": 284914,
+          "cpu_pressure": "some avg10=0.00 avg60=0.35 avg300=0.38 total=2002915\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0",
+          "memory_pressure": "some avg10=0.00 avg60=0.00 avg300=0.00 total=0\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0",
+          "monotonic": 138.636975361
+        },
+        "idle_fraction": 0.9925062447960034,
+        "steal_fraction": 0.0,
+        "context_switches": 1508,
+        "scheduler_p99_ms": 0.10621699998637248,
+        "scheduler_max_ms": 0.125575999978764
+      },
+      "host_active": {
+        "idle_fraction": 0.9932161578785076,
+        "steal_fraction": 0.0,
+        "context_switches": 60632
+      },
+      "validity_failures": []
+    },
+    {
+      "transport": "tcp",
+      "tls": null,
+      "clients": 1,
+      "load_workers": 1,
+      "payload_bytes": 160,
+      "window": 1,
+      "round_trips": 4000,
+      "minimum_seconds": 0,
+      "delivered_forwarded_packets": 8000,
+      "seconds": 7.99828,
+      "packets_per_second": 1000.2,
+      "payload_mbps": 1.3,
+      "round_trip_p50_us": 60.581,
+      "round_trip_p99_us": 82.724,
+      "loaded_round_trip_p50_us": 69.704,
+      "loaded_round_trip_p99_us": 92.879,
+      "loaded_latency_observations": 4000,
+      "loaded_latency_retained": 4000,
+      "setup_ms": 0.335,
+      "loss_or_corruption": 0,
+      "offered_round_trips_per_second": 500,
+      "scheduled_round_trip_p99_us": 159.233,
+      "dispatch_lateness_p99_us": 68.407,
+      "missed_dispatch_slots": 0,
+      "server_cpu_seconds": 0.22017399999999998,
+      "scheduler_ready": {
+        "phase": "server_ready",
+        "cpu_ns": 1195179,
+        "runqueue_ns": null,
+        "timeslices": 2,
+        "observed_start_ns": 149988704103,
+        "observed_end_ns": 149989115851,
+        "thread_count": 1,
+        "sched_schedstats": 0,
+        "runqueue_unavailable": "kernel scheduler statistics disabled"
+      },
+      "scheduler_before_release": {
+        "phase": "before_release",
+        "cpu_ns": 219945218,
+        "runqueue_ns": null,
+        "timeslices": 12008,
+        "observed_start_ns": 158116329347,
+        "observed_end_ns": 158116550158,
+        "thread_count": 1,
+        "sched_schedstats": 0,
+        "runqueue_unavailable": "kernel scheduler statistics disabled"
+      },
+      "phase_snapshots": [
+        {
+          "phase": "before_setup",
+          "cpu_ns": 1195179,
+          "runqueue_ns": null,
+          "timeslices": 2,
+          "observed_start_ns": 149990491917,
+          "observed_end_ns": 149990719508,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        },
+        {
+          "phase": "after_setup",
+          "cpu_ns": 1369367,
+          "runqueue_ns": null,
+          "timeslices": 5,
+          "observed_start_ns": 149991146349,
+          "observed_end_ns": 149991369403,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        },
+        {
+          "phase": "after_warmup",
+          "cpu_ns": 1625697,
+          "runqueue_ns": null,
+          "timeslices": 6,
+          "observed_start_ns": 149991792429,
+          "observed_end_ns": 149992078438,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        },
+        {
+          "phase": "before_work",
+          "cpu_ns": 66704730,
+          "runqueue_ns": null,
+          "timeslices": 4006,
+          "observed_start_ns": 150116813785,
+          "observed_end_ns": 150117178342,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        },
+        {
+          "phase": "after_work",
+          "cpu_ns": 219945218,
+          "runqueue_ns": null,
+          "timeslices": 12008,
+          "observed_start_ns": 158115659006,
+          "observed_end_ns": 158115991535,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        }
+      ],
+      "phase_intervals": [
+        {
+          "start": "before_setup",
+          "end": "after_setup",
+          "cpu_ns": 174188,
+          "runqueue_ns": null,
+          "timeslices": 3
+        },
+        {
+          "start": "after_setup",
+          "end": "after_warmup",
+          "cpu_ns": 256330,
+          "runqueue_ns": null,
+          "timeslices": 1
+        },
+        {
+          "start": "after_warmup",
+          "end": "before_work",
+          "cpu_ns": 65079033,
+          "runqueue_ns": null,
+          "timeslices": 4000
+        },
+        {
+          "start": "before_work",
+          "end": "after_work",
+          "cpu_ns": 153240488,
+          "runqueue_ns": null,
+          "timeslices": 8002
+        }
+      ],
+      "stage": "release_vs_itself",
+      "pair": 1,
+      "arm": "B",
+      "idle_probe": {
+        "before": {
+          "cpu_ticks": [
+            8002,
+            1,
+            1839,
+            47303,
+            1000,
+            0,
+            72,
+            0
+          ],
+          "load": [
+            0.8662109375,
+            0.48291015625,
+            0.1904296875
+          ],
+          "context_switches": 345546,
+          "cpu_pressure": "some avg10=0.00 avg60=0.30 avg300=0.37 total=2029727\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0",
+          "memory_pressure": "some avg10=0.00 avg60=0.00 avg300=0.00 total=0\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0",
+          "monotonic": 146.877581891
+        },
+        "after": {
+          "cpu_ticks": [
+            8003,
+            1,
+            1841,
+            48500,
+            1000,
+            0,
+            73,
+            0
+          ],
+          "load": [
+            0.8662109375,
+            0.48291015625,
+            0.1904296875
+          ],
+          "context_switches": 347489,
+          "cpu_pressure": "some avg10=0.00 avg60=0.29 avg300=0.37 total=2032054\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0",
+          "memory_pressure": "some avg10=0.00 avg60=0.00 avg300=0.00 total=0\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0",
+          "monotonic": 149.887034524
+        },
+        "idle_fraction": 0.9966694421315571,
+        "steal_fraction": 0.0,
+        "context_switches": 1943,
+        "scheduler_p99_ms": 0.1142080000045096,
+        "scheduler_max_ms": 0.13160400000856476
+      },
+      "host_active": {
+        "idle_fraction": 0.9938442597722376,
+        "steal_fraction": 0.0,
+        "context_switches": 59262
+      },
+      "validity_failures": []
+    },
+    {
+      "transport": "tcp",
+      "tls": null,
+      "clients": 1,
+      "load_workers": 1,
+      "payload_bytes": 160,
+      "window": 1,
+      "round_trips": 4000,
+      "minimum_seconds": 0,
+      "delivered_forwarded_packets": 8000,
+      "seconds": 7.998325,
+      "packets_per_second": 1000.2,
+      "payload_mbps": 1.3,
+      "round_trip_p50_us": 60.712,
+      "round_trip_p99_us": 81.072,
+      "loaded_round_trip_p50_us": 75.223,
+      "loaded_round_trip_p99_us": 89.634,
+      "loaded_latency_observations": 4000,
+      "loaded_latency_retained": 4000,
+      "setup_ms": 0.388,
+      "loss_or_corruption": 0,
+      "offered_round_trips_per_second": 500,
+      "scheduled_round_trip_p99_us": 157.189,
+      "dispatch_lateness_p99_us": 69.367,
+      "missed_dispatch_slots": 0,
+      "server_cpu_seconds": 0.237426,
+      "scheduler_ready": {
+        "phase": "server_ready",
+        "cpu_ns": 1178815,
+        "runqueue_ns": null,
+        "timeslices": 2,
+        "observed_start_ns": 161239953259,
+        "observed_end_ns": 161240304246,
+        "thread_count": 1,
+        "sched_schedstats": 0,
+        "runqueue_unavailable": "kernel scheduler statistics disabled"
+      },
+      "scheduler_before_release": {
+        "phase": "before_release",
+        "cpu_ns": 237186336,
+        "runqueue_ns": null,
+        "timeslices": 12008,
+        "observed_start_ns": 169367609985,
+        "observed_end_ns": 169367821162,
+        "thread_count": 1,
+        "sched_schedstats": 0,
+        "runqueue_unavailable": "kernel scheduler statistics disabled"
+      },
+      "phase_snapshots": [
+        {
+          "phase": "before_setup",
+          "cpu_ns": 1178815,
+          "runqueue_ns": null,
+          "timeslices": 2,
+          "observed_start_ns": 161241646711,
+          "observed_end_ns": 161241877206,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        },
+        {
+          "phase": "after_setup",
+          "cpu_ns": 1352833,
+          "runqueue_ns": null,
+          "timeslices": 6,
+          "observed_start_ns": 161242353151,
+          "observed_end_ns": 161242554323,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        },
+        {
+          "phase": "after_warmup",
+          "cpu_ns": 1564928,
+          "runqueue_ns": null,
+          "timeslices": 7,
+          "observed_start_ns": 161242906031,
+          "observed_end_ns": 161243146722,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        },
+        {
+          "phase": "before_work",
+          "cpu_ns": 67172959,
+          "runqueue_ns": null,
+          "timeslices": 4006,
+          "observed_start_ns": 161367996172,
+          "observed_end_ns": 161368368711,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        },
+        {
+          "phase": "after_work",
+          "cpu_ns": 237186336,
+          "runqueue_ns": null,
+          "timeslices": 12008,
+          "observed_start_ns": 169366909704,
+          "observed_end_ns": 169367287772,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        }
+      ],
+      "phase_intervals": [
+        {
+          "start": "before_setup",
+          "end": "after_setup",
+          "cpu_ns": 174018,
+          "runqueue_ns": null,
+          "timeslices": 4
+        },
+        {
+          "start": "after_setup",
+          "end": "after_warmup",
+          "cpu_ns": 212095,
+          "runqueue_ns": null,
+          "timeslices": 1
+        },
+        {
+          "start": "after_warmup",
+          "end": "before_work",
+          "cpu_ns": 65608031,
+          "runqueue_ns": null,
+          "timeslices": 3999
+        },
+        {
+          "start": "before_work",
+          "end": "after_work",
+          "cpu_ns": 170013377,
+          "runqueue_ns": null,
+          "timeslices": 8002
+        }
+      ],
+      "stage": "release_vs_itself",
+      "pair": 2,
+      "arm": "B",
+      "idle_probe": {
+        "before": {
+          "cpu_ticks": [
+            8006,
+            1,
+            1855,
+            51729,
+            1000,
+            0,
+            76,
+            0
+          ],
+          "load": [
+            0.732421875,
+            0.46630859375,
+            0.1875
+          ],
+          "context_switches": 406754,
+          "cpu_pressure": "some avg10=0.00 avg60=0.25 avg300=0.36 total=2058128\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0",
+          "memory_pressure": "some avg10=0.00 avg60=0.00 avg300=0.00 total=0\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0",
+          "monotonic": 158.129095157
+        },
+        "after": {
+          "cpu_ticks": [
+            8008,
+            1,
+            1857,
+            52927,
+            1000,
+            0,
+            76,
+            0
+          ],
+          "load": [
+            0.67333984375,
+            0.45849609375,
+            0.18603515625
+          ],
+          "context_switches": 408262,
+          "cpu_pressure": "some avg10=0.00 avg60=0.24 avg300=0.35 total=2061056\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0",
+          "memory_pressure": "some avg10=0.00 avg60=0.00 avg300=0.00 total=0\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0",
+          "monotonic": 161.138483298
+        },
+        "idle_fraction": 0.9966722129783694,
+        "steal_fraction": 0.0,
+        "context_switches": 1508,
+        "scheduler_p99_ms": 0.10986399998614595,
+        "scheduler_max_ms": 0.11811600000100932
+      },
+      "host_active": {
+        "idle_fraction": 0.9941412272587111,
+        "steal_fraction": 0.0,
+        "context_switches": 58823
+      },
+      "validity_failures": []
+    },
+    {
+      "transport": "tcp",
+      "tls": null,
+      "clients": 1,
+      "load_workers": 1,
+      "payload_bytes": 160,
+      "window": 1,
+      "round_trips": 4000,
+      "minimum_seconds": 0,
+      "delivered_forwarded_packets": 8000,
+      "seconds": 7.998276,
+      "packets_per_second": 1000.2,
+      "payload_mbps": 1.3,
+      "round_trip_p50_us": 60.47,
+      "round_trip_p99_us": 78.648,
+      "loaded_round_trip_p50_us": 72.449,
+      "loaded_round_trip_p99_us": 103.936,
+      "loaded_latency_observations": 4000,
+      "loaded_latency_retained": 4000,
+      "setup_ms": 0.366,
+      "loss_or_corruption": 0,
+      "offered_round_trips_per_second": 500,
+      "scheduled_round_trip_p99_us": 170.869,
+      "dispatch_lateness_p99_us": 69.184,
+      "missed_dispatch_slots": 0,
+      "server_cpu_seconds": 0.23362999999999998,
+      "scheduler_ready": {
+        "phase": "server_ready",
+        "cpu_ns": 1208374,
+        "runqueue_ns": null,
+        "timeslices": 2,
+        "observed_start_ns": 172491547877,
+        "observed_end_ns": 172491899124,
+        "thread_count": 1,
+        "sched_schedstats": 0,
+        "runqueue_unavailable": "kernel scheduler statistics disabled"
+      },
+      "scheduler_before_release": {
+        "phase": "before_release",
+        "cpu_ns": 233401221,
+        "runqueue_ns": null,
+        "timeslices": 12007,
+        "observed_start_ns": 180617373517,
+        "observed_end_ns": 180617587468,
+        "thread_count": 1,
+        "sched_schedstats": 0,
+        "runqueue_unavailable": "kernel scheduler statistics disabled"
+      },
+      "phase_snapshots": [
+        {
+          "phase": "before_setup",
+          "cpu_ns": 1208374,
+          "runqueue_ns": null,
+          "timeslices": 2,
+          "observed_start_ns": 172493285625,
+          "observed_end_ns": 172493511904,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        },
+        {
+          "phase": "after_setup",
+          "cpu_ns": 1371577,
+          "runqueue_ns": null,
+          "timeslices": 6,
+          "observed_start_ns": 172493967468,
+          "observed_end_ns": 172494184864,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        },
+        {
+          "phase": "after_warmup",
+          "cpu_ns": 1586897,
+          "runqueue_ns": null,
+          "timeslices": 7,
+          "observed_start_ns": 172494544103,
+          "observed_end_ns": 172494751194,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        },
+        {
+          "phase": "before_work",
+          "cpu_ns": 65934140,
+          "runqueue_ns": null,
+          "timeslices": 4007,
+          "observed_start_ns": 172617854559,
+          "observed_end_ns": 172618218896,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        },
+        {
+          "phase": "after_work",
+          "cpu_ns": 233401221,
+          "runqueue_ns": null,
+          "timeslices": 12007,
+          "observed_start_ns": 180616668609,
+          "observed_end_ns": 180617050933,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        }
+      ],
+      "phase_intervals": [
+        {
+          "start": "before_setup",
+          "end": "after_setup",
+          "cpu_ns": 163203,
+          "runqueue_ns": null,
+          "timeslices": 4
+        },
+        {
+          "start": "after_setup",
+          "end": "after_warmup",
+          "cpu_ns": 215320,
+          "runqueue_ns": null,
+          "timeslices": 1
+        },
+        {
+          "start": "after_warmup",
+          "end": "before_work",
+          "cpu_ns": 64347243,
+          "runqueue_ns": null,
+          "timeslices": 4000
+        },
+        {
+          "start": "before_work",
+          "end": "after_work",
+          "cpu_ns": 167467081,
+          "runqueue_ns": null,
+          "timeslices": 8000
+        }
+      ],
+      "stage": "release_vs_itself",
+      "pair": 2,
+      "arm": "A",
+      "idle_probe": {
+        "before": {
+          "cpu_ticks": [
+            8013,
+            1,
+            1869,
+            56151,
+            1000,
+            0,
+            79,
+            0
+          ],
+          "load": [
+            0.619140625,
+            0.45068359375,
+            0.1845703125
+          ],
+          "context_switches": 467088,
+          "cpu_pressure": "some avg10=0.00 avg60=0.21 avg300=0.34 total=2090822\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0",
+          "memory_pressure": "some avg10=0.00 avg60=0.00 avg300=0.00 total=0\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0",
+          "monotonic": 169.380471179
+        },
+        "after": {
+          "cpu_ticks": [
+            8014,
+            1,
+            1871,
+            57348,
+            1000,
+            0,
+            79,
+            0
+          ],
+          "load": [
+            0.5693359375,
+            0.44287109375,
+            0.18310546875
+          ],
+          "context_switches": 468801,
+          "cpu_pressure": "some avg10=0.00 avg60=0.19 avg300=0.34 total=2093147\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0",
+          "memory_pressure": "some avg10=0.00 avg60=0.00 avg300=0.00 total=0\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0",
+          "monotonic": 172.389919312
+        },
+        "idle_fraction": 0.9975,
+        "steal_fraction": 0.0,
+        "context_switches": 1713,
+        "scheduler_p99_ms": 0.1058059999843406,
+        "scheduler_max_ms": 0.12134100000139349
+      },
+      "host_active": {
+        "idle_fraction": 0.9926040061633282,
+        "steal_fraction": 0.0,
+        "context_switches": 59054
+      },
+      "validity_failures": []
+    },
+    {
+      "transport": "tcp",
+      "tls": null,
+      "clients": 1,
+      "load_workers": 1,
+      "payload_bytes": 160,
+      "window": 1,
+      "round_trips": 4000,
+      "minimum_seconds": 0,
+      "delivered_forwarded_packets": 8000,
+      "seconds": 7.998311,
+      "packets_per_second": 1000.2,
+      "payload_mbps": 1.3,
+      "round_trip_p50_us": 69.735,
+      "round_trip_p99_us": 89.665,
+      "loaded_round_trip_p50_us": 73.47,
+      "loaded_round_trip_p99_us": 89.805,
+      "loaded_latency_observations": 4000,
+      "loaded_latency_retained": 4000,
+      "setup_ms": 0.325,
+      "loss_or_corruption": 0,
+      "offered_round_trips_per_second": 500,
+      "scheduled_round_trip_p99_us": 156.348,
+      "dispatch_lateness_p99_us": 69.372,
+      "missed_dispatch_slots": 0,
+      "server_cpu_seconds": 0.24814,
+      "scheduler_ready": {
+        "phase": "server_ready",
+        "cpu_ns": 1193251,
+        "runqueue_ns": null,
+        "timeslices": 2,
+        "observed_start_ns": 183741946906,
+        "observed_end_ns": 183742330661,
+        "thread_count": 1,
+        "sched_schedstats": 0,
+        "runqueue_unavailable": "kernel scheduler statistics disabled"
+      },
+      "scheduler_before_release": {
+        "phase": "before_release",
+        "cpu_ns": 247895760,
+        "runqueue_ns": null,
+        "timeslices": 12008,
+        "observed_start_ns": 191882695024,
+        "observed_end_ns": 191882908885,
+        "thread_count": 1,
+        "sched_schedstats": 0,
+        "runqueue_unavailable": "kernel scheduler statistics disabled"
+      },
+      "phase_snapshots": [
+        {
+          "phase": "before_setup",
+          "cpu_ns": 1193251,
+          "runqueue_ns": null,
+          "timeslices": 2,
+          "observed_start_ns": 183743661999,
+          "observed_end_ns": 183743886316,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        },
+        {
+          "phase": "after_setup",
+          "cpu_ns": 1352297,
+          "runqueue_ns": null,
+          "timeslices": 5,
+          "observed_start_ns": 183744310483,
+          "observed_end_ns": 183744534639,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        },
+        {
+          "phase": "after_warmup",
+          "cpu_ns": 1569409,
+          "runqueue_ns": null,
+          "timeslices": 6,
+          "observed_start_ns": 183744895781,
+          "observed_end_ns": 183745131445,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        },
+        {
+          "phase": "before_work",
+          "cpu_ns": 79802110,
+          "runqueue_ns": null,
+          "timeslices": 4006,
+          "observed_start_ns": 183883119364,
+          "observed_end_ns": 183883468678,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        },
+        {
+          "phase": "after_work",
+          "cpu_ns": 247895760,
+          "runqueue_ns": null,
+          "timeslices": 12008,
+          "observed_start_ns": 191881976836,
+          "observed_end_ns": 191882365059,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        }
+      ],
+      "phase_intervals": [
+        {
+          "start": "before_setup",
+          "end": "after_setup",
+          "cpu_ns": 159046,
+          "runqueue_ns": null,
+          "timeslices": 3
+        },
+        {
+          "start": "after_setup",
+          "end": "after_warmup",
+          "cpu_ns": 217112,
+          "runqueue_ns": null,
+          "timeslices": 1
+        },
+        {
+          "start": "after_warmup",
+          "end": "before_work",
+          "cpu_ns": 78232701,
+          "runqueue_ns": null,
+          "timeslices": 4000
+        },
+        {
+          "start": "before_work",
+          "end": "after_work",
+          "cpu_ns": 168093650,
+          "runqueue_ns": null,
+          "timeslices": 8002
+        }
+      ],
+      "stage": "release_vs_itself",
+      "pair": 3,
+      "arm": "A",
+      "idle_probe": {
+        "before": {
+          "cpu_ticks": [
+            8020,
+            1,
+            1885,
+            60569,
+            1000,
+            0,
+            83,
+            0
+          ],
+          "load": [
+            0.4814453125,
+            0.427734375,
+            0.1806640625
+          ],
+          "context_switches": 527858,
+          "cpu_pressure": "some avg10=0.00 avg60=0.17 avg300=0.33 total=2121691\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0",
+          "memory_pressure": "some avg10=0.00 avg60=0.00 avg300=0.00 total=0\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0",
+          "monotonic": 180.630400307
+        },
+        "after": {
+          "cpu_ticks": [
+            8021,
+            1,
+            1887,
+            61768,
+            1000,
+            0,
+            83,
+            0
+          ],
+          "load": [
+            0.4814453125,
+            0.427734375,
+            0.1806640625
+          ],
+          "context_switches": 529691,
+          "cpu_pressure": "some avg10=0.00 avg60=0.16 avg300=0.32 total=2125608\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0",
+          "memory_pressure": "some avg10=0.00 avg60=0.00 avg300=0.00 total=0\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0",
+          "monotonic": 183.640348256
+        },
+        "idle_fraction": 0.997504159733777,
+        "steal_fraction": 0.0,
+        "context_switches": 1833,
+        "scheduler_p99_ms": 0.10458499999344874,
+        "scheduler_max_ms": 0.12420399999314193
+      },
+      "host_active": {
+        "idle_fraction": 0.9932286857494613,
+        "steal_fraction": 0.0,
+        "context_switches": 58908
+      },
+      "validity_failures": []
+    },
+    {
+      "transport": "tcp",
+      "tls": null,
+      "clients": 1,
+      "load_workers": 1,
+      "payload_bytes": 160,
+      "window": 1,
+      "round_trips": 4000,
+      "minimum_seconds": 0,
+      "delivered_forwarded_packets": 8000,
+      "seconds": 7.998318,
+      "packets_per_second": 1000.2,
+      "payload_mbps": 1.3,
+      "round_trip_p50_us": 60.681,
+      "round_trip_p99_us": 86.575,
+      "loaded_round_trip_p50_us": 72.639,
+      "loaded_round_trip_p99_us": 92.749,
+      "loaded_latency_observations": 4000,
+      "loaded_latency_retained": 4000,
+      "setup_ms": 0.317,
+      "loss_or_corruption": 0,
+      "offered_round_trips_per_second": 500,
+      "scheduled_round_trip_p99_us": 157.886,
+      "dispatch_lateness_p99_us": 69.197,
+      "missed_dispatch_slots": 0,
+      "server_cpu_seconds": 0.236287,
+      "scheduler_ready": {
+        "phase": "server_ready",
+        "cpu_ns": 1205976,
+        "runqueue_ns": null,
+        "timeslices": 2,
+        "observed_start_ns": 195007048919,
+        "observed_end_ns": 195007366735,
+        "thread_count": 1,
+        "sched_schedstats": 0,
+        "runqueue_unavailable": "kernel scheduler statistics disabled"
+      },
+      "scheduler_before_release": {
+        "phase": "before_release",
+        "cpu_ns": 236045511,
+        "runqueue_ns": null,
+        "timeslices": 12007,
+        "observed_start_ns": 203136681804,
+        "observed_end_ns": 203136898128,
+        "thread_count": 1,
+        "sched_schedstats": 0,
+        "runqueue_unavailable": "kernel scheduler statistics disabled"
+      },
+      "phase_snapshots": [
+        {
+          "phase": "before_setup",
+          "cpu_ns": 1205976,
+          "runqueue_ns": null,
+          "timeslices": 2,
+          "observed_start_ns": 195008677012,
+          "observed_end_ns": 195009093447,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        },
+        {
+          "phase": "after_setup",
+          "cpu_ns": 1355247,
+          "runqueue_ns": null,
+          "timeslices": 5,
+          "observed_start_ns": 195009507118,
+          "observed_end_ns": 195009732306,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        },
+        {
+          "phase": "after_warmup",
+          "cpu_ns": 1597346,
+          "runqueue_ns": null,
+          "timeslices": 6,
+          "observed_start_ns": 195010117744,
+          "observed_end_ns": 195010331455,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        },
+        {
+          "phase": "before_work",
+          "cpu_ns": 68831596,
+          "runqueue_ns": null,
+          "timeslices": 4006,
+          "observed_start_ns": 195137080553,
+          "observed_end_ns": 195137429276,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        },
+        {
+          "phase": "after_work",
+          "cpu_ns": 236045511,
+          "runqueue_ns": null,
+          "timeslices": 12007,
+          "observed_start_ns": 203135953431,
+          "observed_end_ns": 203136347292,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        }
+      ],
+      "phase_intervals": [
+        {
+          "start": "before_setup",
+          "end": "after_setup",
+          "cpu_ns": 149271,
+          "runqueue_ns": null,
+          "timeslices": 3
+        },
+        {
+          "start": "after_setup",
+          "end": "after_warmup",
+          "cpu_ns": 242099,
+          "runqueue_ns": null,
+          "timeslices": 1
+        },
+        {
+          "start": "after_warmup",
+          "end": "before_work",
+          "cpu_ns": 67234250,
+          "runqueue_ns": null,
+          "timeslices": 4000
+        },
+        {
+          "start": "before_work",
+          "end": "after_work",
+          "cpu_ns": 167213915,
+          "runqueue_ns": null,
+          "timeslices": 8001
+        }
+      ],
+      "stage": "release_vs_itself",
+      "pair": 3,
+      "arm": "B",
+      "idle_probe": {
+        "before": {
+          "cpu_ticks": [
+            8024,
+            1,
+            1901,
+            64996,
+            1000,
+            0,
+            88,
+            0
+          ],
+          "load": [
+            0.48779296875,
+            0.43017578125,
+            0.1845703125
+          ],
+          "context_switches": 588604,
+          "cpu_pressure": "some avg10=0.00 avg60=0.14 avg300=0.31 total=2153010\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0",
+          "memory_pressure": "some avg10=0.00 avg60=0.00 avg300=0.00 total=0\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0",
+          "monotonic": 191.895838278
+        },
+        "after": {
+          "cpu_ticks": [
+            8026,
+            1,
+            1903,
+            66194,
+            1000,
+            0,
+            88,
+            0
+          ],
+          "load": [
+            0.48779296875,
+            0.43017578125,
+            0.1845703125
+          ],
+          "context_switches": 590110,
+          "cpu_pressure": "some avg10=0.00 avg60=0.13 avg300=0.31 total=2155193\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0",
+          "memory_pressure": "some avg10=0.00 avg60=0.00 avg300=0.00 total=0\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0",
+          "monotonic": 194.905516164
+        },
+        "idle_fraction": 0.9966722129783694,
+        "steal_fraction": 0.0,
+        "context_switches": 1506,
+        "scheduler_p99_ms": 0.10549500000479363,
+        "scheduler_max_ms": 0.11788299999238895
+      },
+      "host_active": {
+        "idle_fraction": 0.9935285053929122,
+        "steal_fraction": 0.0,
+        "context_switches": 60298
+      },
+      "validity_failures": []
+    },
+    {
+      "transport": "tcp",
+      "tls": null,
+      "clients": 1,
+      "load_workers": 1,
+      "payload_bytes": 160,
+      "window": 1,
+      "round_trips": 4000,
+      "minimum_seconds": 0,
+      "delivered_forwarded_packets": 8000,
+      "seconds": 7.998268,
+      "packets_per_second": 1000.2,
+      "payload_mbps": 1.3,
+      "round_trip_p50_us": 69.885,
+      "round_trip_p99_us": 89.595,
+      "loaded_round_trip_p50_us": 75.874,
+      "loaded_round_trip_p99_us": 100.601,
+      "loaded_latency_observations": 4000,
+      "loaded_latency_retained": 4000,
+      "setup_ms": 0.303,
+      "loss_or_corruption": 0,
+      "offered_round_trips_per_second": 500,
+      "scheduled_round_trip_p99_us": 166.976,
+      "dispatch_lateness_p99_us": 69.736,
+      "missed_dispatch_slots": 0,
+      "server_cpu_seconds": 0.251361,
+      "scheduler_ready": {
+        "phase": "server_ready",
+        "cpu_ns": 1190087,
+        "runqueue_ns": null,
+        "timeslices": 2,
+        "observed_start_ns": 206261536139,
+        "observed_end_ns": 206261886255,
+        "thread_count": 1,
+        "sched_schedstats": 0,
+        "runqueue_unavailable": "kernel scheduler statistics disabled"
+      },
+      "scheduler_before_release": {
+        "phase": "before_release",
+        "cpu_ns": 251113583,
+        "runqueue_ns": null,
+        "timeslices": 12012,
+        "observed_start_ns": 214401281430,
+        "observed_end_ns": 214401501530,
+        "thread_count": 1,
+        "sched_schedstats": 0,
+        "runqueue_unavailable": "kernel scheduler statistics disabled"
+      },
+      "phase_snapshots": [
+        {
+          "phase": "before_setup",
+          "cpu_ns": 1190087,
+          "runqueue_ns": null,
+          "timeslices": 2,
+          "observed_start_ns": 206263281098,
+          "observed_end_ns": 206263506867,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        },
+        {
+          "phase": "after_setup",
+          "cpu_ns": 1339237,
+          "runqueue_ns": null,
+          "timeslices": 5,
+          "observed_start_ns": 206263903802,
+          "observed_end_ns": 206264152145,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        },
+        {
+          "phase": "after_warmup",
+          "cpu_ns": 1551432,
+          "runqueue_ns": null,
+          "timeslices": 6,
+          "observed_start_ns": 206264508490,
+          "observed_end_ns": 206264715921,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        },
+        {
+          "phase": "before_work",
+          "cpu_ns": 79764591,
+          "runqueue_ns": null,
+          "timeslices": 4006,
+          "observed_start_ns": 206401768183,
+          "observed_end_ns": 206402149025,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        },
+        {
+          "phase": "after_work",
+          "cpu_ns": 251113583,
+          "runqueue_ns": null,
+          "timeslices": 12012,
+          "observed_start_ns": 214400593548,
+          "observed_end_ns": 214400943122,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        }
+      ],
+      "phase_intervals": [
+        {
+          "start": "before_setup",
+          "end": "after_setup",
+          "cpu_ns": 149150,
+          "runqueue_ns": null,
+          "timeslices": 3
+        },
+        {
+          "start": "after_setup",
+          "end": "after_warmup",
+          "cpu_ns": 212195,
+          "runqueue_ns": null,
+          "timeslices": 1
+        },
+        {
+          "start": "after_warmup",
+          "end": "before_work",
+          "cpu_ns": 78213159,
+          "runqueue_ns": null,
+          "timeslices": 4000
+        },
+        {
+          "start": "before_work",
+          "end": "after_work",
+          "cpu_ns": 171348992,
+          "runqueue_ns": null,
+          "timeslices": 8006
+        }
+      ],
+      "stage": "release_vs_itself",
+      "pair": 4,
+      "arm": "B",
+      "idle_probe": {
+        "before": {
+          "cpu_ticks": [
+            8029,
+            1,
+            1918,
+            69418,
+            1000,
+            0,
+            91,
+            0
+          ],
+          "load": [
+            0.5673828125,
+            0.44970703125,
+            0.193359375
+          ],
+          "context_switches": 650411,
+          "cpu_pressure": "some avg10=0.00 avg60=0.11 avg300=0.30 total=2183221\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0",
+          "memory_pressure": "some avg10=0.00 avg60=0.00 avg300=0.00 total=0\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0",
+          "monotonic": 203.149991398
+        },
+        "after": {
+          "cpu_ticks": [
+            8030,
+            1,
+            1920,
+            70617,
+            1000,
+            0,
+            92,
+            0
+          ],
+          "load": [
+            0.521484375,
+            0.44189453125,
+            0.19189453125
+          ],
+          "context_switches": 651980,
+          "cpu_pressure": "some avg10=0.00 avg60=0.11 avg300=0.30 total=2185412\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0",
+          "memory_pressure": "some avg10=0.00 avg60=0.00 avg300=0.00 total=0\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0",
+          "monotonic": 206.159909814
+        },
+        "idle_fraction": 0.9966749792186201,
+        "steal_fraction": 0.0,
+        "context_switches": 1569,
+        "scheduler_p99_ms": 0.1129769999772632,
+        "scheduler_max_ms": 0.11866599998256767
+      },
+      "host_active": {
+        "idle_fraction": 0.9919950738916257,
+        "steal_fraction": 0.0,
+        "context_switches": 59216
+      },
+      "validity_failures": []
+    },
+    {
+      "transport": "tcp",
+      "tls": null,
+      "clients": 1,
+      "load_workers": 1,
+      "payload_bytes": 160,
+      "window": 1,
+      "round_trips": 4000,
+      "minimum_seconds": 0,
+      "delivered_forwarded_packets": 8000,
+      "seconds": 7.9983,
+      "packets_per_second": 1000.2,
+      "payload_mbps": 1.3,
+      "round_trip_p50_us": 70.025,
+      "round_trip_p99_us": 91.217,
+      "loaded_round_trip_p50_us": 70.375,
+      "loaded_round_trip_p99_us": 95.113,
+      "loaded_latency_observations": 4000,
+      "loaded_latency_retained": 4000,
+      "setup_ms": 0.323,
+      "loss_or_corruption": 0,
+      "offered_round_trips_per_second": 500,
+      "scheduled_round_trip_p99_us": 161.051,
+      "dispatch_lateness_p99_us": 69.804,
+      "missed_dispatch_slots": 0,
+      "server_cpu_seconds": 0.23667799999999997,
+      "scheduler_ready": {
+        "phase": "server_ready",
+        "cpu_ns": 1223667,
+        "runqueue_ns": null,
+        "timeslices": 2,
+        "observed_start_ns": 217526350542,
+        "observed_end_ns": 217526696952,
+        "thread_count": 1,
+        "sched_schedstats": 0,
+        "runqueue_unavailable": "kernel scheduler statistics disabled"
+      },
+      "scheduler_before_release": {
+        "phase": "before_release",
+        "cpu_ns": 236456500,
+        "runqueue_ns": null,
+        "timeslices": 12008,
+        "observed_start_ns": 225666828776,
+        "observed_end_ns": 225667078370,
+        "thread_count": 1,
+        "sched_schedstats": 0,
+        "runqueue_unavailable": "kernel scheduler statistics disabled"
+      },
+      "phase_snapshots": [
+        {
+          "phase": "before_setup",
+          "cpu_ns": 1223667,
+          "runqueue_ns": null,
+          "timeslices": 2,
+          "observed_start_ns": 217528078224,
+          "observed_end_ns": 217528305245,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        },
+        {
+          "phase": "after_setup",
+          "cpu_ns": 1378896,
+          "runqueue_ns": null,
+          "timeslices": 5,
+          "observed_start_ns": 217528719707,
+          "observed_end_ns": 217528943472,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        },
+        {
+          "phase": "after_warmup",
+          "cpu_ns": 1591252,
+          "runqueue_ns": null,
+          "timeslices": 6,
+          "observed_start_ns": 217529312296,
+          "observed_end_ns": 217529519296,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        },
+        {
+          "phase": "before_work",
+          "cpu_ns": 79616081,
+          "runqueue_ns": null,
+          "timeslices": 4006,
+          "observed_start_ns": 217667356742,
+          "observed_end_ns": 217667693327,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        },
+        {
+          "phase": "after_work",
+          "cpu_ns": 236456500,
+          "runqueue_ns": null,
+          "timeslices": 12008,
+          "observed_start_ns": 225666167073,
+          "observed_end_ns": 225666510478,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        }
+      ],
+      "phase_intervals": [
+        {
+          "start": "before_setup",
+          "end": "after_setup",
+          "cpu_ns": 155229,
+          "runqueue_ns": null,
+          "timeslices": 3
+        },
+        {
+          "start": "after_setup",
+          "end": "after_warmup",
+          "cpu_ns": 212356,
+          "runqueue_ns": null,
+          "timeslices": 1
+        },
+        {
+          "start": "after_warmup",
+          "end": "before_work",
+          "cpu_ns": 78024829,
+          "runqueue_ns": null,
+          "timeslices": 4000
+        },
+        {
+          "start": "before_work",
+          "end": "after_work",
+          "cpu_ns": 156840419,
+          "runqueue_ns": null,
+          "timeslices": 8002
+        }
+      ],
+      "stage": "release_vs_itself",
+      "pair": 4,
+      "arm": "A",
+      "idle_probe": {
+        "before": {
+          "cpu_ticks": [
+            8037,
+            1,
+            1934,
+            73839,
+            1000,
+            0,
+            97,
+            0
+          ],
+          "load": [
+            0.4794921875,
+            0.43408203125,
+            0.1904296875
+          ],
+          "context_switches": 711201,
+          "cpu_pressure": "some avg10=0.00 avg60=0.09 avg300=0.28 total=2212563\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0",
+          "memory_pressure": "some avg10=0.00 avg60=0.00 avg300=0.00 total=0\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0",
+          "monotonic": 214.414726453
+        },
+        "after": {
+          "cpu_ticks": [
+            8038,
+            1,
+            1936,
+            75038,
+            1000,
+            0,
+            97,
+            0
+          ],
+          "load": [
+            0.44091796875,
+            0.4267578125,
+            0.18896484375
+          ],
+          "context_switches": 712737,
+          "cpu_pressure": "some avg10=0.00 avg60=0.09 avg300=0.28 total=2214789\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0",
+          "memory_pressure": "some avg10=0.00 avg60=0.00 avg300=0.00 total=0\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0",
+          "monotonic": 217.424697162
+        },
+        "idle_fraction": 0.997504159733777,
+        "steal_fraction": 0.0,
+        "context_switches": 1536,
+        "scheduler_p99_ms": 0.11437500000056368,
+        "scheduler_max_ms": 0.12003400001049137
+      },
+      "host_active": {
+        "idle_fraction": 0.9932349323493235,
+        "steal_fraction": 0.0,
+        "context_switches": 59011
+      },
+      "validity_failures": []
+    },
+    {
+      "transport": "tcp",
+      "tls": null,
+      "clients": 1,
+      "load_workers": 1,
+      "payload_bytes": 160,
+      "window": 1,
+      "round_trips": 4000,
+      "minimum_seconds": 0,
+      "delivered_forwarded_packets": 8000,
+      "seconds": 7.998278,
+      "packets_per_second": 1000.2,
+      "payload_mbps": 1.3,
+      "round_trip_p50_us": 60.842,
+      "round_trip_p99_us": 79.429,
+      "loaded_round_trip_p50_us": 78.488,
+      "loaded_round_trip_p99_us": 111.252,
+      "loaded_latency_observations": 4000,
+      "loaded_latency_retained": 4000,
+      "setup_ms": 0.336,
+      "loss_or_corruption": 0,
+      "offered_round_trips_per_second": 500,
+      "scheduled_round_trip_p99_us": 180.103,
+      "dispatch_lateness_p99_us": 67.907,
+      "missed_dispatch_slots": 0,
+      "server_cpu_seconds": 0.242236,
+      "scheduler_ready": {
+        "phase": "server_ready",
+        "cpu_ns": 1242770,
+        "runqueue_ns": null,
+        "timeslices": 2,
+        "observed_start_ns": 228792334737,
+        "observed_end_ns": 228792680846,
+        "thread_count": 1,
+        "sched_schedstats": 0,
+        "runqueue_unavailable": "kernel scheduler statistics disabled"
+      },
+      "scheduler_before_release": {
+        "phase": "before_release",
+        "cpu_ns": 242011057,
+        "runqueue_ns": null,
+        "timeslices": 12010,
+        "observed_start_ns": 236919029320,
+        "observed_end_ns": 236919253456,
+        "thread_count": 1,
+        "sched_schedstats": 0,
+        "runqueue_unavailable": "kernel scheduler statistics disabled"
+      },
+      "phase_snapshots": [
+        {
+          "phase": "before_setup",
+          "cpu_ns": 1242770,
+          "runqueue_ns": null,
+          "timeslices": 2,
+          "observed_start_ns": 228794045394,
+          "observed_end_ns": 228794278323,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        },
+        {
+          "phase": "after_setup",
+          "cpu_ns": 1394375,
+          "runqueue_ns": null,
+          "timeslices": 5,
+          "observed_start_ns": 228794705084,
+          "observed_end_ns": 228794927698,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        },
+        {
+          "phase": "after_warmup",
+          "cpu_ns": 1696584,
+          "runqueue_ns": null,
+          "timeslices": 6,
+          "observed_start_ns": 228795340898,
+          "observed_end_ns": 228795549351,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        },
+        {
+          "phase": "before_work",
+          "cpu_ns": 66821140,
+          "runqueue_ns": null,
+          "timeslices": 4006,
+          "observed_start_ns": 228919566231,
+          "observed_end_ns": 228919892490,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        },
+        {
+          "phase": "after_work",
+          "cpu_ns": 242011057,
+          "runqueue_ns": null,
+          "timeslices": 12010,
+          "observed_start_ns": 236918339384,
+          "observed_end_ns": 236918689560,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        }
+      ],
+      "phase_intervals": [
+        {
+          "start": "before_setup",
+          "end": "after_setup",
+          "cpu_ns": 151605,
+          "runqueue_ns": null,
+          "timeslices": 3
+        },
+        {
+          "start": "after_setup",
+          "end": "after_warmup",
+          "cpu_ns": 302209,
+          "runqueue_ns": null,
+          "timeslices": 1
+        },
+        {
+          "start": "after_warmup",
+          "end": "before_work",
+          "cpu_ns": 65124556,
+          "runqueue_ns": null,
+          "timeslices": 4000
+        },
+        {
+          "start": "before_work",
+          "end": "after_work",
+          "cpu_ns": 175189917,
+          "runqueue_ns": null,
+          "timeslices": 8004
+        }
+      ],
+      "stage": "baseline_vs_release",
+      "pair": 1,
+      "arm": "A",
+      "idle_probe": {
+        "before": {
+          "cpu_ticks": [
+            8042,
+            1,
+            1949,
+            78268,
+            1000,
+            0,
+            102,
+            0
+          ],
+          "load": [
+            0.37255859375,
+            0.412109375,
+            0.18603515625
+          ],
+          "context_switches": 771751,
+          "cpu_pressure": "some avg10=0.00 avg60=0.07 avg300=0.27 total=2241370\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0",
+          "memory_pressure": "some avg10=0.00 avg60=0.00 avg300=0.00 total=0\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0",
+          "monotonic": 225.68037885
+        },
+        "after": {
+          "cpu_ticks": [
+            8043,
+            1,
+            1951,
+            79467,
+            1000,
+            0,
+            102,
+            0
+          ],
+          "load": [
+            0.37255859375,
+            0.412109375,
+            0.18603515625
+          ],
+          "context_switches": 773281,
+          "cpu_pressure": "some avg10=0.00 avg60=0.07 avg300=0.27 total=2243242\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0",
+          "memory_pressure": "some avg10=0.00 avg60=0.00 avg300=0.00 total=0\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0",
+          "monotonic": 228.690689029
+        },
+        "idle_fraction": 0.997504159733777,
+        "steal_fraction": 0.0,
+        "context_switches": 1530,
+        "scheduler_p99_ms": 0.11151299999823984,
+        "scheduler_max_ms": 0.11921599999254774
+      },
+      "host_active": {
+        "idle_fraction": 0.8848584776037373,
+        "steal_fraction": 0.0,
+        "context_switches": 59319
+      },
+      "validity_failures": []
+    },
+    {
+      "transport": "tcp",
+      "tls": null,
+      "clients": 1,
+      "load_workers": 1,
+      "payload_bytes": 160,
+      "window": 1,
+      "round_trips": 4000,
+      "minimum_seconds": 0,
+      "delivered_forwarded_packets": 8000,
+      "seconds": 7.998278,
+      "packets_per_second": 1000.2,
+      "payload_mbps": 1.3,
+      "round_trip_p50_us": 60.782,
+      "round_trip_p99_us": 84.316,
+      "loaded_round_trip_p50_us": 73.851,
+      "loaded_round_trip_p99_us": 93.801,
+      "loaded_latency_observations": 4000,
+      "loaded_latency_retained": 4000,
+      "setup_ms": 0.33,
+      "loss_or_corruption": 0,
+      "offered_round_trips_per_second": 500,
+      "scheduled_round_trip_p99_us": 155.325,
+      "dispatch_lateness_p99_us": 68.335,
+      "missed_dispatch_slots": 0,
+      "server_cpu_seconds": 0.236457,
+      "scheduler_ready": {
+        "phase": "server_ready",
+        "cpu_ns": 1211974,
+        "runqueue_ns": null,
+        "timeslices": 2,
+        "observed_start_ns": 240044025396,
+        "observed_end_ns": 240044369242,
+        "thread_count": 1,
+        "sched_schedstats": 0,
+        "runqueue_unavailable": "kernel scheduler statistics disabled"
+      },
+      "scheduler_before_release": {
+        "phase": "before_release",
+        "cpu_ns": 236219821,
+        "runqueue_ns": null,
+        "timeslices": 12008,
+        "observed_start_ns": 248172120166,
+        "observed_end_ns": 248172334828,
+        "thread_count": 1,
+        "sched_schedstats": 0,
+        "runqueue_unavailable": "kernel scheduler statistics disabled"
+      },
+      "phase_snapshots": [
+        {
+          "phase": "before_setup",
+          "cpu_ns": 1211974,
+          "runqueue_ns": null,
+          "timeslices": 2,
+          "observed_start_ns": 240045683514,
+          "observed_end_ns": 240045909854,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        },
+        {
+          "phase": "after_setup",
+          "cpu_ns": 1362298,
+          "runqueue_ns": null,
+          "timeslices": 6,
+          "observed_start_ns": 240046336033,
+          "observed_end_ns": 240046560861,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        },
+        {
+          "phase": "after_warmup",
+          "cpu_ns": 1583115,
+          "runqueue_ns": null,
+          "timeslices": 7,
+          "observed_start_ns": 240046933300,
+          "observed_end_ns": 240047171016,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        },
+        {
+          "phase": "before_work",
+          "cpu_ns": 67410738,
+          "runqueue_ns": null,
+          "timeslices": 4006,
+          "observed_start_ns": 240172593570,
+          "observed_end_ns": 240172948643,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        },
+        {
+          "phase": "after_work",
+          "cpu_ns": 236219821,
+          "runqueue_ns": null,
+          "timeslices": 12008,
+          "observed_start_ns": 248171428458,
+          "observed_end_ns": 248171781277,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        }
+      ],
+      "phase_intervals": [
+        {
+          "start": "before_setup",
+          "end": "after_setup",
+          "cpu_ns": 150324,
+          "runqueue_ns": null,
+          "timeslices": 4
+        },
+        {
+          "start": "after_setup",
+          "end": "after_warmup",
+          "cpu_ns": 220817,
+          "runqueue_ns": null,
+          "timeslices": 1
+        },
+        {
+          "start": "after_warmup",
+          "end": "before_work",
+          "cpu_ns": 65827623,
+          "runqueue_ns": null,
+          "timeslices": 3999
+        },
+        {
+          "start": "before_work",
+          "end": "after_work",
+          "cpu_ns": 168809083,
+          "runqueue_ns": null,
+          "timeslices": 8002
+        }
+      ],
+      "stage": "baseline_vs_release",
+      "pair": 1,
+      "arm": "B",
+      "idle_probe": {
+        "before": {
+          "cpu_ticks": [
+            8049,
+            1,
+            2012,
+            82688,
+            1000,
+            0,
+            455,
+            0
+          ],
+          "load": [
+            0.388671875,
+            0.41455078125,
+            0.18896484375
+          ],
+          "context_switches": 832607,
+          "cpu_pressure": "some avg10=0.00 avg60=0.06 avg300=0.26 total=2269267\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0",
+          "memory_pressure": "some avg10=0.00 avg60=0.00 avg300=0.00 total=0\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0",
+          "monotonic": 236.932697842
+        },
+        "after": {
+          "cpu_ticks": [
+            8052,
+            1,
+            2014,
+            83884,
+            1000,
+            0,
+            455,
+            0
+          ],
+          "load": [
+            0.388671875,
+            0.41455078125,
+            0.18896484375
+          ],
+          "context_switches": 834171,
+          "cpu_pressure": "some avg10=0.00 avg60=0.06 avg300=0.26 total=2271124\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0",
+          "memory_pressure": "some avg10=0.00 avg60=0.00 avg300=0.00 total=0\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0",
+          "monotonic": 239.942425864
+        },
+        "idle_fraction": 0.9958368026644463,
+        "steal_fraction": 0.0,
+        "context_switches": 1564,
+        "scheduler_p99_ms": 0.11836500001095353,
+        "scheduler_max_ms": 0.12039800002639801
+      },
+      "host_active": {
+        "idle_fraction": 0.9947563232572486,
+        "steal_fraction": 0.0,
+        "context_switches": 58940
+      },
+      "validity_failures": []
+    },
+    {
+      "transport": "tcp",
+      "tls": null,
+      "clients": 1,
+      "load_workers": 1,
+      "payload_bytes": 160,
+      "window": 1,
+      "round_trips": 4000,
+      "minimum_seconds": 0,
+      "delivered_forwarded_packets": 8000,
+      "seconds": 7.99828,
+      "packets_per_second": 1000.2,
+      "payload_mbps": 1.3,
+      "round_trip_p50_us": 70.076,
+      "round_trip_p99_us": 91.978,
+      "loaded_round_trip_p50_us": 82.954,
+      "loaded_round_trip_p99_us": 113.335,
+      "loaded_latency_observations": 4000,
+      "loaded_latency_retained": 4000,
+      "setup_ms": 0.368,
+      "loss_or_corruption": 0,
+      "offered_round_trips_per_second": 500,
+      "scheduled_round_trip_p99_us": 183.583,
+      "dispatch_lateness_p99_us": 67.818,
+      "missed_dispatch_slots": 0,
+      "server_cpu_seconds": 0.273044,
+      "scheduler_ready": {
+        "phase": "server_ready",
+        "cpu_ns": 1219927,
+        "runqueue_ns": null,
+        "timeslices": 2,
+        "observed_start_ns": 251297470554,
+        "observed_end_ns": 251297806659,
+        "thread_count": 1,
+        "sched_schedstats": 0,
+        "runqueue_unavailable": "kernel scheduler statistics disabled"
+      },
+      "scheduler_before_release": {
+        "phase": "before_release",
+        "cpu_ns": 272811679,
+        "runqueue_ns": null,
+        "timeslices": 12008,
+        "observed_start_ns": 259443022855,
+        "observed_end_ns": 259443242274,
+        "thread_count": 1,
+        "sched_schedstats": 0,
+        "runqueue_unavailable": "kernel scheduler statistics disabled"
+      },
+      "phase_snapshots": [
+        {
+          "phase": "before_setup",
+          "cpu_ns": 1219927,
+          "runqueue_ns": null,
+          "timeslices": 2,
+          "observed_start_ns": 251299187481,
+          "observed_end_ns": 251299414712,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        },
+        {
+          "phase": "after_setup",
+          "cpu_ns": 1400304,
+          "runqueue_ns": null,
+          "timeslices": 6,
+          "observed_start_ns": 251299871518,
+          "observed_end_ns": 251300092569,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        },
+        {
+          "phase": "after_warmup",
+          "cpu_ns": 1613901,
+          "runqueue_ns": null,
+          "timeslices": 7,
+          "observed_start_ns": 251300450036,
+          "observed_end_ns": 251300660732,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        },
+        {
+          "phase": "before_work",
+          "cpu_ns": 85315984,
+          "runqueue_ns": null,
+          "timeslices": 4005,
+          "observed_start_ns": 251443523641,
+          "observed_end_ns": 251443876371,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        },
+        {
+          "phase": "after_work",
+          "cpu_ns": 272811679,
+          "runqueue_ns": null,
+          "timeslices": 12008,
+          "observed_start_ns": 259442353780,
+          "observed_end_ns": 259442696214,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        }
+      ],
+      "phase_intervals": [
+        {
+          "start": "before_setup",
+          "end": "after_setup",
+          "cpu_ns": 180377,
+          "runqueue_ns": null,
+          "timeslices": 4
+        },
+        {
+          "start": "after_setup",
+          "end": "after_warmup",
+          "cpu_ns": 213597,
+          "runqueue_ns": null,
+          "timeslices": 1
+        },
+        {
+          "start": "after_warmup",
+          "end": "before_work",
+          "cpu_ns": 83702083,
+          "runqueue_ns": null,
+          "timeslices": 3998
+        },
+        {
+          "start": "before_work",
+          "end": "after_work",
+          "cpu_ns": 187495695,
+          "runqueue_ns": null,
+          "timeslices": 8003
+        }
+      ],
+      "stage": "baseline_vs_release",
+      "pair": 2,
+      "arm": "B",
+      "idle_probe": {
+        "before": {
+          "cpu_ticks": [
+            8054,
+            1,
+            2025,
+            87110,
+            1000,
+            0,
+            459,
+            0
+          ],
+          "load": [
+            0.32861328125,
+            0.400390625,
+            0.18603515625
+          ],
+          "context_switches": 893114,
+          "cpu_pressure": "some avg10=0.00 avg60=0.05 avg300=0.25 total=2295592\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0",
+          "memory_pressure": "some avg10=0.00 avg60=0.00 avg300=0.00 total=0\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0",
+          "monotonic": 248.185949991
+        },
+        "after": {
+          "cpu_ticks": [
+            8056,
+            1,
+            2028,
+            88308,
+            1000,
+            0,
+            459,
+            0
+          ],
+          "load": [
+            0.3828125,
+            0.41064453125,
+            0.1904296875
+          ],
+          "context_switches": 894955,
+          "cpu_pressure": "some avg10=0.00 avg60=0.04 avg300=0.25 total=2297677\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0",
+          "memory_pressure": "some avg10=0.00 avg60=0.00 avg300=0.00 total=0\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0",
+          "monotonic": 251.195865143
+        },
+        "idle_fraction": 0.9958437240232751,
+        "steal_fraction": 0.0,
+        "context_switches": 1841,
+        "scheduler_p99_ms": 0.11546999998813569,
+        "scheduler_max_ms": 0.12167999999746805
+      },
+      "host_active": {
+        "idle_fraction": 0.909630048009037,
+        "steal_fraction": 0.0,
+        "context_switches": 59085
+      },
+      "validity_failures": []
+    },
+    {
+      "transport": "tcp",
+      "tls": null,
+      "clients": 1,
+      "load_workers": 1,
+      "payload_bytes": 160,
+      "window": 1,
+      "round_trips": 4000,
+      "minimum_seconds": 0,
+      "delivered_forwarded_packets": 8000,
+      "seconds": 7.998274,
+      "packets_per_second": 1000.2,
+      "payload_mbps": 1.3,
+      "round_trip_p50_us": 69.945,
+      "round_trip_p99_us": 90.476,
+      "loaded_round_trip_p50_us": 78.468,
+      "loaded_round_trip_p99_us": 96.795,
+      "loaded_latency_observations": 4000,
+      "loaded_latency_retained": 4000,
+      "setup_ms": 0.333,
+      "loss_or_corruption": 0,
+      "offered_round_trips_per_second": 500,
+      "scheduled_round_trip_p99_us": 163.335,
+      "dispatch_lateness_p99_us": 68.631,
+      "missed_dispatch_slots": 0,
+      "server_cpu_seconds": 0.256787,
+      "scheduler_ready": {
+        "phase": "server_ready",
+        "cpu_ns": 1249490,
+        "runqueue_ns": null,
+        "timeslices": 2,
+        "observed_start_ns": 262568363313,
+        "observed_end_ns": 262568724314,
+        "thread_count": 1,
+        "sched_schedstats": 0,
+        "runqueue_unavailable": "kernel scheduler statistics disabled"
+      },
+      "scheduler_before_release": {
+        "phase": "before_release",
+        "cpu_ns": 256547779,
+        "runqueue_ns": null,
+        "timeslices": 12008,
+        "observed_start_ns": 270708366176,
+        "observed_end_ns": 270708576441,
+        "thread_count": 1,
+        "sched_schedstats": 0,
+        "runqueue_unavailable": "kernel scheduler statistics disabled"
+      },
+      "phase_snapshots": [
+        {
+          "phase": "before_setup",
+          "cpu_ns": 1249490,
+          "runqueue_ns": null,
+          "timeslices": 2,
+          "observed_start_ns": 262570117565,
+          "observed_end_ns": 262570346609,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        },
+        {
+          "phase": "after_setup",
+          "cpu_ns": 1407414,
+          "runqueue_ns": null,
+          "timeslices": 5,
+          "observed_start_ns": 262570773730,
+          "observed_end_ns": 262570997125,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        },
+        {
+          "phase": "after_warmup",
+          "cpu_ns": 1683093,
+          "runqueue_ns": null,
+          "timeslices": 6,
+          "observed_start_ns": 262571412919,
+          "observed_end_ns": 262571620401,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        },
+        {
+          "phase": "before_work",
+          "cpu_ns": 79762391,
+          "runqueue_ns": null,
+          "timeslices": 4006,
+          "observed_start_ns": 262708848945,
+          "observed_end_ns": 262709227704,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        },
+        {
+          "phase": "after_work",
+          "cpu_ns": 256547779,
+          "runqueue_ns": null,
+          "timeslices": 12008,
+          "observed_start_ns": 270707671323,
+          "observed_end_ns": 270708053116,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        }
+      ],
+      "phase_intervals": [
+        {
+          "start": "before_setup",
+          "end": "after_setup",
+          "cpu_ns": 157924,
+          "runqueue_ns": null,
+          "timeslices": 3
+        },
+        {
+          "start": "after_setup",
+          "end": "after_warmup",
+          "cpu_ns": 275679,
+          "runqueue_ns": null,
+          "timeslices": 1
+        },
+        {
+          "start": "after_warmup",
+          "end": "before_work",
+          "cpu_ns": 78079298,
+          "runqueue_ns": null,
+          "timeslices": 4000
+        },
+        {
+          "start": "before_work",
+          "end": "after_work",
+          "cpu_ns": 176785388,
+          "runqueue_ns": null,
+          "timeslices": 8002
+        }
+      ],
+      "stage": "baseline_vs_release",
+      "pair": 2,
+      "arm": "A",
+      "idle_probe": {
+        "before": {
+          "cpu_ticks": [
+            8070,
+            1,
+            2164,
+            91528,
+            1001,
+            0,
+            629,
+            0
+          ],
+          "load": [
+            0.35205078125,
+            0.40380859375,
+            0.18896484375
+          ],
+          "context_switches": 954043,
+          "cpu_pressure": "some avg10=0.00 avg60=0.04 avg300=0.24 total=2328261\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0",
+          "memory_pressure": "some avg10=0.00 avg60=0.00 avg300=0.00 total=0\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0",
+          "monotonic": 259.457041623
+        },
+        "after": {
+          "cpu_ticks": [
+            8072,
+            1,
+            2168,
+            92724,
+            1001,
+            0,
+            629,
+            0
+          ],
+          "load": [
+            0.484375,
+            0.4306640625,
+            0.19873046875
+          ],
+          "context_switches": 956816,
+          "cpu_pressure": "some avg10=0.00 avg60=0.03 avg300=0.24 total=2332236\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0",
+          "memory_pressure": "some avg10=0.00 avg60=0.00 avg300=0.00 total=0\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0",
+          "monotonic": 262.466708258
+        },
+        "idle_fraction": 0.9950083194675541,
+        "steal_fraction": 0.0,
+        "context_switches": 2773,
+        "scheduler_p99_ms": 0.11862600000767977,
+        "scheduler_max_ms": 0.12322200000426144
+      },
+      "host_active": {
+        "idle_fraction": 0.9938366718027735,
+        "steal_fraction": 0.0,
+        "context_switches": 59228
+      },
+      "validity_failures": []
+    },
+    {
+      "transport": "tcp",
+      "tls": null,
+      "clients": 1,
+      "load_workers": 1,
+      "payload_bytes": 160,
+      "window": 1,
+      "round_trips": 4000,
+      "minimum_seconds": 0,
+      "delivered_forwarded_packets": 8000,
+      "seconds": 7.998331,
+      "packets_per_second": 1000.2,
+      "payload_mbps": 1.3,
+      "round_trip_p50_us": 60.661,
+      "round_trip_p99_us": 79.88,
+      "loaded_round_trip_p50_us": 77.206,
+      "loaded_round_trip_p99_us": 108.012,
+      "loaded_latency_observations": 4000,
+      "loaded_latency_retained": 4000,
+      "setup_ms": 0.359,
+      "loss_or_corruption": 0,
+      "offered_round_trips_per_second": 500,
+      "scheduled_round_trip_p99_us": 175.5,
+      "dispatch_lateness_p99_us": 68.567,
+      "missed_dispatch_slots": 0,
+      "server_cpu_seconds": 0.23891799999999996,
+      "scheduler_ready": {
+        "phase": "server_ready",
+        "cpu_ns": 1223306,
+        "runqueue_ns": null,
+        "timeslices": 2,
+        "observed_start_ns": 273833559720,
+        "observed_end_ns": 273833907242,
+        "thread_count": 1,
+        "sched_schedstats": 0,
+        "runqueue_unavailable": "kernel scheduler statistics disabled"
+      },
+      "scheduler_before_release": {
+        "phase": "before_release",
+        "cpu_ns": 238683815,
+        "runqueue_ns": null,
+        "timeslices": 12010,
+        "observed_start_ns": 281961083042,
+        "observed_end_ns": 281961298475,
+        "thread_count": 1,
+        "sched_schedstats": 0,
+        "runqueue_unavailable": "kernel scheduler statistics disabled"
+      },
+      "phase_snapshots": [
+        {
+          "phase": "before_setup",
+          "cpu_ns": 1223306,
+          "runqueue_ns": null,
+          "timeslices": 2,
+          "observed_start_ns": 273835300152,
+          "observed_end_ns": 273835529477,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        },
+        {
+          "phase": "after_setup",
+          "cpu_ns": 1399808,
+          "runqueue_ns": null,
+          "timeslices": 6,
+          "observed_start_ns": 273835977639,
+          "observed_end_ns": 273836189868,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        },
+        {
+          "phase": "after_warmup",
+          "cpu_ns": 1679373,
+          "runqueue_ns": null,
+          "timeslices": 7,
+          "observed_start_ns": 273836595547,
+          "observed_end_ns": 273836799853,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        },
+        {
+          "phase": "before_work",
+          "cpu_ns": 67008838,
+          "runqueue_ns": null,
+          "timeslices": 4007,
+          "observed_start_ns": 273961551720,
+          "observed_end_ns": 273961889247,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        },
+        {
+          "phase": "after_work",
+          "cpu_ns": 238683815,
+          "runqueue_ns": null,
+          "timeslices": 12010,
+          "observed_start_ns": 281960380968,
+          "observed_end_ns": 281960738355,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        }
+      ],
+      "phase_intervals": [
+        {
+          "start": "before_setup",
+          "end": "after_setup",
+          "cpu_ns": 176502,
+          "runqueue_ns": null,
+          "timeslices": 4
+        },
+        {
+          "start": "after_setup",
+          "end": "after_warmup",
+          "cpu_ns": 279565,
+          "runqueue_ns": null,
+          "timeslices": 1
+        },
+        {
+          "start": "after_warmup",
+          "end": "before_work",
+          "cpu_ns": 65329465,
+          "runqueue_ns": null,
+          "timeslices": 4000
+        },
+        {
+          "start": "before_work",
+          "end": "after_work",
+          "cpu_ns": 171674977,
+          "runqueue_ns": null,
+          "timeslices": 8003
+        }
+      ],
+      "stage": "baseline_vs_release",
+      "pair": 3,
+      "arm": "A",
+      "idle_probe": {
+        "before": {
+          "cpu_ticks": [
+            8076,
+            1,
+            2181,
+            95949,
+            1001,
+            0,
+            633,
+            0
+          ],
+          "load": [
+            0.4091796875,
+            0.416015625,
+            0.19580078125
+          ],
+          "context_switches": 1016047,
+          "cpu_pressure": "some avg10=0.00 avg60=0.03 avg300=0.23 total=2358937\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0",
+          "memory_pressure": "some avg10=0.00 avg60=0.00 avg300=0.00 total=0\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0",
+          "monotonic": 270.72244261
+        },
+        "after": {
+          "cpu_ticks": [
+            8077,
+            1,
+            2183,
+            97148,
+            1001,
+            0,
+            634,
+            0
+          ],
+          "load": [
+            0.4091796875,
+            0.416015625,
+            0.19580078125
+          ],
+          "context_switches": 1017500,
+          "cpu_pressure": "some avg10=0.00 avg60=0.03 avg300=0.23 total=2361101\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0",
+          "memory_pressure": "some avg10=0.00 avg60=0.00 avg300=0.00 total=0\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0",
+          "monotonic": 273.731911759
+        },
+        "idle_fraction": 0.9966749792186201,
+        "steal_fraction": 0.0,
+        "context_switches": 1453,
+        "scheduler_p99_ms": 0.14816000002838314,
+        "scheduler_max_ms": 0.2029710000124394
+      },
+      "host_active": {
+        "idle_fraction": 0.9331016507384883,
+        "steal_fraction": 0.0,
+        "context_switches": 58425
+      },
+      "validity_failures": []
+    },
+    {
+      "transport": "tcp",
+      "tls": null,
+      "clients": 1,
+      "load_workers": 1,
+      "payload_bytes": 160,
+      "window": 1,
+      "round_trips": 4000,
+      "minimum_seconds": 0,
+      "delivered_forwarded_packets": 8000,
+      "seconds": 7.998285,
+      "packets_per_second": 1000.2,
+      "payload_mbps": 1.3,
+      "round_trip_p50_us": 60.24,
+      "round_trip_p99_us": 77.547,
+      "loaded_round_trip_p50_us": 91.127,
+      "loaded_round_trip_p99_us": 110.917,
+      "loaded_latency_observations": 4000,
+      "loaded_latency_retained": 4000,
+      "setup_ms": 0.327,
+      "loss_or_corruption": 0,
+      "offered_round_trips_per_second": 500,
+      "scheduled_round_trip_p99_us": 179.343,
+      "dispatch_lateness_p99_us": 67.755,
+      "missed_dispatch_slots": 0,
+      "server_cpu_seconds": 0.28782599999999997,
+      "scheduler_ready": {
+        "phase": "server_ready",
+        "cpu_ns": 1222810,
+        "runqueue_ns": null,
+        "timeslices": 2,
+        "observed_start_ns": 285086711966,
+        "observed_end_ns": 285087108571,
+        "thread_count": 1,
+        "sched_schedstats": 0,
+        "runqueue_unavailable": "kernel scheduler statistics disabled"
+      },
+      "scheduler_before_release": {
+        "phase": "before_release",
+        "cpu_ns": 287608281,
+        "runqueue_ns": null,
+        "timeslices": 12009,
+        "observed_start_ns": 293212031933,
+        "observed_end_ns": 293212286765,
+        "thread_count": 1,
+        "sched_schedstats": 0,
+        "runqueue_unavailable": "kernel scheduler statistics disabled"
+      },
+      "phase_snapshots": [
+        {
+          "phase": "before_setup",
+          "cpu_ns": 1222810,
+          "runqueue_ns": null,
+          "timeslices": 2,
+          "observed_start_ns": 285088463274,
+          "observed_end_ns": 285088690576,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        },
+        {
+          "phase": "after_setup",
+          "cpu_ns": 1396889,
+          "runqueue_ns": null,
+          "timeslices": 5,
+          "observed_start_ns": 285089113530,
+          "observed_end_ns": 285089336134,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        },
+        {
+          "phase": "after_warmup",
+          "cpu_ns": 1610886,
+          "runqueue_ns": null,
+          "timeslices": 6,
+          "observed_start_ns": 285089688473,
+          "observed_end_ns": 285089890246,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        },
+        {
+          "phase": "before_work",
+          "cpu_ns": 65524889,
+          "runqueue_ns": null,
+          "timeslices": 4006,
+          "observed_start_ns": 285212541872,
+          "observed_end_ns": 285212876785,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        },
+        {
+          "phase": "after_work",
+          "cpu_ns": 287608281,
+          "runqueue_ns": null,
+          "timeslices": 12009,
+          "observed_start_ns": 293211348547,
+          "observed_end_ns": 293211688006,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        }
+      ],
+      "phase_intervals": [
+        {
+          "start": "before_setup",
+          "end": "after_setup",
+          "cpu_ns": 174079,
+          "runqueue_ns": null,
+          "timeslices": 3
+        },
+        {
+          "start": "after_setup",
+          "end": "after_warmup",
+          "cpu_ns": 213997,
+          "runqueue_ns": null,
+          "timeslices": 1
+        },
+        {
+          "start": "after_warmup",
+          "end": "before_work",
+          "cpu_ns": 63914003,
+          "runqueue_ns": null,
+          "timeslices": 4000
+        },
+        {
+          "start": "before_work",
+          "end": "after_work",
+          "cpu_ns": 222083392,
+          "runqueue_ns": null,
+          "timeslices": 8003
+        }
+      ],
+      "stage": "baseline_vs_release",
+      "pair": 3,
+      "arm": "B",
+      "idle_probe": {
+        "before": {
+          "cpu_ticks": [
+            8093,
+            1,
+            2301,
+            100371,
+            1001,
+            0,
+            731,
+            0
+          ],
+          "load": [
+            0.345703125,
+            0.40185546875,
+            0.19287109375
+          ],
+          "context_switches": 1075932,
+          "cpu_pressure": "some avg10=0.00 avg60=0.02 avg300=0.22 total=2389205\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0",
+          "memory_pressure": "some avg10=0.00 avg60=0.00 avg300=0.00 total=0\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0",
+          "monotonic": 281.975334359
+        },
+        "after": {
+          "cpu_ticks": [
+            8098,
+            1,
+            2302,
+            101566,
+            1001,
+            0,
+            731,
+            0
+          ],
+          "load": [
+            0.345703125,
+            0.40185546875,
+            0.19287109375
+          ],
+          "context_switches": 1077495,
+          "cpu_pressure": "some avg10=0.00 avg60=0.02 avg300=0.21 total=2390646\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0",
+          "memory_pressure": "some avg10=0.00 avg60=0.00 avg300=0.00 total=0\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0",
+          "monotonic": 284.985087305
+        },
+        "idle_fraction": 0.9950041631973355,
+        "steal_fraction": 0.0,
+        "context_switches": 1563,
+        "scheduler_p99_ms": 0.1030229999992114,
+        "scheduler_max_ms": 0.17328799997585498
+      },
+      "host_active": {
+        "idle_fraction": 0.8932740411339634,
+        "steal_fraction": 0.0,
+        "context_switches": 59326
+      },
+      "validity_failures": []
+    },
+    {
+      "transport": "tcp",
+      "tls": null,
+      "clients": 1,
+      "load_workers": 1,
+      "payload_bytes": 160,
+      "window": 1,
+      "round_trips": 4000,
+      "minimum_seconds": 0,
+      "delivered_forwarded_packets": 8000,
+      "seconds": 7.998277,
+      "packets_per_second": 1000.2,
+      "payload_mbps": 1.3,
+      "round_trip_p50_us": 60.281,
+      "round_trip_p99_us": 80.641,
+      "loaded_round_trip_p50_us": 72.929,
+      "loaded_round_trip_p99_us": 102.634,
+      "loaded_latency_observations": 4000,
+      "loaded_latency_retained": 4000,
+      "setup_ms": 0.31,
+      "loss_or_corruption": 0,
+      "offered_round_trips_per_second": 500,
+      "scheduled_round_trip_p99_us": 176.674,
+      "dispatch_lateness_p99_us": 73.459,
+      "missed_dispatch_slots": 0,
+      "server_cpu_seconds": 0.232531,
+      "scheduler_ready": {
+        "phase": "server_ready",
+        "cpu_ns": 1226486,
+        "runqueue_ns": null,
+        "timeslices": 2,
+        "observed_start_ns": 296328385515,
+        "observed_end_ns": 296328749611,
+        "thread_count": 1,
+        "sched_schedstats": 0,
+        "runqueue_unavailable": "kernel scheduler statistics disabled"
+      },
+      "scheduler_before_release": {
+        "phase": "before_release",
+        "cpu_ns": 232295075,
+        "runqueue_ns": null,
+        "timeslices": 12010,
+        "observed_start_ns": 304454313820,
+        "observed_end_ns": 304454562934,
+        "thread_count": 1,
+        "sched_schedstats": 0,
+        "runqueue_unavailable": "kernel scheduler statistics disabled"
+      },
+      "phase_snapshots": [
+        {
+          "phase": "before_setup",
+          "cpu_ns": 1226486,
+          "runqueue_ns": null,
+          "timeslices": 2,
+          "observed_start_ns": 296330160879,
+          "observed_end_ns": 296330389141,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        },
+        {
+          "phase": "after_setup",
+          "cpu_ns": 1379513,
+          "runqueue_ns": null,
+          "timeslices": 5,
+          "observed_start_ns": 296330789572,
+          "observed_end_ns": 296331035612,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        },
+        {
+          "phase": "after_warmup",
+          "cpu_ns": 1594212,
+          "runqueue_ns": null,
+          "timeslices": 6,
+          "observed_start_ns": 296331395141,
+          "observed_end_ns": 296331600629,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        },
+        {
+          "phase": "before_work",
+          "cpu_ns": 65960083,
+          "runqueue_ns": null,
+          "timeslices": 4007,
+          "observed_start_ns": 296454844505,
+          "observed_end_ns": 296455197004,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        },
+        {
+          "phase": "after_work",
+          "cpu_ns": 232295075,
+          "runqueue_ns": null,
+          "timeslices": 12010,
+          "observed_start_ns": 304453640429,
+          "observed_end_ns": 304453975382,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        }
+      ],
+      "phase_intervals": [
+        {
+          "start": "before_setup",
+          "end": "after_setup",
+          "cpu_ns": 153027,
+          "runqueue_ns": null,
+          "timeslices": 3
+        },
+        {
+          "start": "after_setup",
+          "end": "after_warmup",
+          "cpu_ns": 214699,
+          "runqueue_ns": null,
+          "timeslices": 1
+        },
+        {
+          "start": "after_warmup",
+          "end": "before_work",
+          "cpu_ns": 64365871,
+          "runqueue_ns": null,
+          "timeslices": 4001
+        },
+        {
+          "start": "before_work",
+          "end": "after_work",
+          "cpu_ns": 166334992,
+          "runqueue_ns": null,
+          "timeslices": 8003
+        }
+      ],
+      "stage": "baseline_vs_release",
+      "pair": 4,
+      "arm": "B",
+      "idle_probe": {
+        "before": {
+          "cpu_ticks": [
+            8157,
+            1,
+            2617,
+            104781,
+            1001,
+            0,
+            741,
+            0
+          ],
+          "load": [
+            0.3662109375,
+            0.40478515625,
+            0.19580078125
+          ],
+          "context_switches": 1136830,
+          "cpu_pressure": "some avg10=0.00 avg60=0.02 avg300=0.21 total=2418995\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0",
+          "memory_pressure": "some avg10=0.00 avg60=0.00 avg300=0.00 total=0\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0",
+          "monotonic": 293.226457882
+        },
+        "after": {
+          "cpu_ticks": [
+            8159,
+            1,
+            2619,
+            105976,
+            1001,
+            0,
+            742,
+            0
+          ],
+          "load": [
+            0.33642578125,
+            0.39794921875,
+            0.1943359375
+          ],
+          "context_switches": 1138714,
+          "cpu_pressure": "some avg10=0.00 avg60=0.02 avg300=0.21 total=2420748\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0",
+          "memory_pressure": "some avg10=0.00 avg60=0.00 avg300=0.00 total=0\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0",
+          "monotonic": 296.226766081
+        },
+        "idle_fraction": 0.9958333333333333,
+        "steal_fraction": 0.0,
+        "context_switches": 1884,
+        "scheduler_p99_ms": 0.11858600003279186,
+        "scheduler_max_ms": 0.12134900003047712
+      },
+      "host_active": {
+        "idle_fraction": 0.9907464528069093,
+        "steal_fraction": 0.0,
+        "context_switches": 59661
+      },
+      "validity_failures": []
+    },
+    {
+      "transport": "tcp",
+      "tls": null,
+      "clients": 1,
+      "load_workers": 1,
+      "payload_bytes": 160,
+      "window": 1,
+      "round_trips": 4000,
+      "minimum_seconds": 0,
+      "delivered_forwarded_packets": 8000,
+      "seconds": 7.998276,
+      "packets_per_second": 1000.2,
+      "payload_mbps": 1.3,
+      "round_trip_p50_us": 60.661,
+      "round_trip_p99_us": 81.012,
+      "loaded_round_trip_p50_us": 77.316,
+      "loaded_round_trip_p99_us": 111.818,
+      "loaded_latency_observations": 4000,
+      "loaded_latency_retained": 4000,
+      "setup_ms": 0.315,
+      "loss_or_corruption": 0,
+      "offered_round_trips_per_second": 500,
+      "scheduled_round_trip_p99_us": 176.909,
+      "dispatch_lateness_p99_us": 69.049,
+      "missed_dispatch_slots": 0,
+      "server_cpu_seconds": 0.240304,
+      "scheduler_ready": {
+        "phase": "server_ready",
+        "cpu_ns": 1218794,
+        "runqueue_ns": null,
+        "timeslices": 2,
+        "observed_start_ns": 307580235749,
+        "observed_end_ns": 307580583932,
+        "thread_count": 1,
+        "sched_schedstats": 0,
+        "runqueue_unavailable": "kernel scheduler statistics disabled"
+      },
+      "scheduler_before_release": {
+        "phase": "before_release",
+        "cpu_ns": 240075178,
+        "runqueue_ns": null,
+        "timeslices": 12009,
+        "observed_start_ns": 315707269919,
+        "observed_end_ns": 315707533835,
+        "thread_count": 1,
+        "sched_schedstats": 0,
+        "runqueue_unavailable": "kernel scheduler statistics disabled"
+      },
+      "phase_snapshots": [
+        {
+          "phase": "before_setup",
+          "cpu_ns": 1218794,
+          "runqueue_ns": null,
+          "timeslices": 2,
+          "observed_start_ns": 307581937233,
+          "observed_end_ns": 307582193357,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        },
+        {
+          "phase": "after_setup",
+          "cpu_ns": 1364590,
+          "runqueue_ns": null,
+          "timeslices": 5,
+          "observed_start_ns": 307582603783,
+          "observed_end_ns": 307582823373,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        },
+        {
+          "phase": "after_warmup",
+          "cpu_ns": 1664725,
+          "runqueue_ns": null,
+          "timeslices": 6,
+          "observed_start_ns": 307583242111,
+          "observed_end_ns": 307583450113,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        },
+        {
+          "phase": "before_work",
+          "cpu_ns": 66083968,
+          "runqueue_ns": null,
+          "timeslices": 4006,
+          "observed_start_ns": 307707746962,
+          "observed_end_ns": 307708115896,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        },
+        {
+          "phase": "after_work",
+          "cpu_ns": 240075178,
+          "runqueue_ns": null,
+          "timeslices": 12009,
+          "observed_start_ns": 315706582067,
+          "observed_end_ns": 315706910190,
+          "thread_count": 1,
+          "sched_schedstats": 0,
+          "runqueue_unavailable": "kernel scheduler statistics disabled"
+        }
+      ],
+      "phase_intervals": [
+        {
+          "start": "before_setup",
+          "end": "after_setup",
+          "cpu_ns": 145796,
+          "runqueue_ns": null,
+          "timeslices": 3
+        },
+        {
+          "start": "after_setup",
+          "end": "after_warmup",
+          "cpu_ns": 300135,
+          "runqueue_ns": null,
+          "timeslices": 1
+        },
+        {
+          "start": "after_warmup",
+          "end": "before_work",
+          "cpu_ns": 64419243,
+          "runqueue_ns": null,
+          "timeslices": 4000
+        },
+        {
+          "start": "before_work",
+          "end": "after_work",
+          "cpu_ns": 173991210,
+          "runqueue_ns": null,
+          "timeslices": 8003
+        }
+      ],
+      "stage": "baseline_vs_release",
+      "pair": 4,
+      "arm": "A",
+      "idle_probe": {
+        "before": {
+          "cpu_ticks": [
+            8172,
+            1,
+            2632,
+            109188,
+            1001,
+            0,
+            746,
+            0
+          ],
+          "load": [
+            0.30908203125,
+            0.39111328125,
+            0.19287109375
+          ],
+          "context_switches": 1198380,
+          "cpu_pressure": "some avg10=0.00 avg60=0.01 avg300=0.20 total=2448081\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0",
+          "memory_pressure": "some avg10=0.00 avg60=0.00 avg300=0.00 total=0\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0",
+          "monotonic": 304.46887999
+        },
+        "after": {
+          "cpu_ticks": [
+            8173,
+            1,
+            2634,
+            110387,
+            1001,
+            0,
+            746,
+            0
+          ],
+          "load": [
+            0.36474609375,
+            0.4013671875,
+            0.197265625
+          ],
+          "context_switches": 1200233,
+          "cpu_pressure": "some avg10=0.00 avg60=0.01 avg300=0.20 total=2450273\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0",
+          "memory_pressure": "some avg10=0.00 avg60=0.00 avg300=0.00 total=0\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0",
+          "monotonic": 307.478597577
+        },
+        "idle_fraction": 0.997504159733777,
+        "steal_fraction": 0.0,
+        "context_switches": 1853,
+        "scheduler_p99_ms": 0.11055399999349881,
+        "scheduler_max_ms": 0.11861599999974694
+      },
+      "host_active": {
+        "idle_fraction": 0.9898242368177613,
+        "steal_fraction": 0.0,
+        "context_switches": 59900
+      },
+      "validity_failures": []
+    }
+  ],
+  "failures": [],
+  "binaries_after": {
+    "baseline": {
+      "sha256": "1673841bd360365825bcd5f52214c64b55ff7b04e6ca3ef1c3180b908aa9315e",
+      "bytes": 1623872,
+      "architectures": [
+        "x86_64"
+      ]
+    },
+    "release": {
+      "sha256": "13c3ea40ac886b6d044684982a1db260c441a92ba41e2697e487a3beb5b94065",
+      "bytes": 1627160,
+      "architectures": [
+        "x86_64"
+      ]
+    },
+    "loader": {
+      "sha256": "2dbfabb66c0720a79fe055298bc9542cad124dca5b6b24fbe0afd095b6cb5248",
+      "bytes": 1764136,
+      "architectures": [
+        "x86_64"
+      ]
+    }
+  },
+  "scripts_after": {
+    "scripts/sparse-diagnostics.py": "faa929a5b99562c220d141a67314745b220a1bebb883fe0fbbaca80365e1f3f5",
+    "scripts/compare.py": "2540ffb767b7c4b6c8eb62512406c86cdde2e5e4efbdaf0f67d9c0894beff336",
+    "scripts/qualify-tcp.py": "4c99eb3852ca6e167360d4bc8db184b8213552968800f807faa2e2661f0ebcf8",
+    "examples/load.rs": "45fbfc382f7900bc72c3f1c9e0297d685cf9b576972cb089377181e568d0d090",
+    "tests/interop.py": "3fae1644688c44bac2553795402411a6c4fa23cfbd9134cc3b32cc800efb98ef",
+    "tests/test_sparse_diagnostics.py": "bb1d7364ecca1c4b08c5246cb8d872c7362e6920a53d8f20999b13937cd8edda",
+    ".github/workflows/sparse-diagnostics.yml": "7948d1b23df560aac03de410ec9ca5d2836ece186c1c7b773ee110ca4e5e2287",
+    "docs/sparse-cpu-diagnostics-2026-11-11.md": "9e3f7fdc956c6438af88395ff53e35a94f048d840da5f64fbcd964ef1f8bff36"
+  }
+}

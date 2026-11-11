@@ -1,0 +1,88 @@
+name: Sparse CPU phase diagnostics
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: sparse-diagnostics-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  diagnose:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      CARGO_INCREMENTAL: '0'
+      CARGO_BUILD_JOBS: '2'
+      RUSTUP_TOOLCHAIN: '1.94.1'
+      BASELINE_SHA: '56232d52f0fbfd2f3795a50917890ed6c85e6dc9'
+      RELEASE_SHA: '4c58eece7566a1602475db79feefa3c1ae0c2604'
+      DIAGNOSTIC_SHA: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Install the pinned compiler
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+      - name: Validate fixtures and unchanged relay source
+        run: |
+          python3 -B -m unittest discover -s tests -p 'test_*.py' -v
+          git diff --exit-code "$RELEASE_SHA" "$DIAGNOSTIC_SHA" -- src crates Cargo.toml Cargo.lock
+      - name: Build and bind exact sources sequentially
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .local/sparse-diagnostics/bin
+          build_one() {
+            role="$1"; source="$2"; selector="$3"; name="$4"; built="$5"
+            git checkout --detach "$source"
+            cargo build --locked --release --features tls "$selector" "$name" -j 2
+            cp "$built" ".local/sparse-diagnostics/bin/$role"
+            python3 - "$role" "$source" <<'PY'
+          import hashlib, json, pathlib, subprocess, sys
+          role, expected = sys.argv[1:]
+          source = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+          assert source == expected
+          assert not subprocess.check_output(['git', 'status', '--porcelain', '--untracked-files=no'], text=True)
+          root = pathlib.Path('.local/sparse-diagnostics')
+          path = root / 'build-manifest.json'
+          manifest = json.loads(path.read_text()) if path.exists() else {'schema': 1, 'builds': {}}
+          assert role not in manifest['builds']
+          manifest['builds'][role] = dict(source=source,
+              sha256=hashlib.sha256((root / 'bin' / role).read_bytes()).hexdigest(),
+              rustc=subprocess.check_output(['rustc', '--version'], text=True).strip(),
+              cargo=subprocess.check_output(['cargo', '--version'], text=True).strip(),
+              profile='release', features=['tls'], locked=True,
+              target='example:load' if role == 'loader' else 'bin:spry-turn')
+          path.write_text(json.dumps(manifest, indent=2) + '\n')
+          PY
+          }
+          build_one baseline "$BASELINE_SHA" --bin spry-turn target/release/spry-turn
+          build_one release "$RELEASE_SHA" --bin spry-turn target/release/spry-turn
+          build_one loader "$DIAGNOSTIC_SHA" --example load target/release/examples/load
+      - name: Check actual loader acknowledgement failure boundaries
+        run: python3 -B -m unittest discover -s tests -p test_sparse_diagnostics.py -v
+        env:
+          SPRY_DIAGNOSTIC_LOADER: .local/sparse-diagnostics/bin/loader
+      - name: Run the fixed A/A then baseline/release diagnostic once
+        run: |
+          python3 -B scripts/sparse-diagnostics.py \
+            --baseline .local/sparse-diagnostics/bin/baseline \
+            --release .local/sparse-diagnostics/bin/release \
+            --loader .local/sparse-diagnostics/bin/loader \
+            --manifest .local/sparse-diagnostics/build-manifest.json \
+            --output .local/sparse-diagnostics/result.json
+      - name: Preserve every completed row and failure
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sparse-diagnostics-${{ github.sha }}
+          path: |
+            .local/sparse-diagnostics/result.json
+            .local/sparse-diagnostics/build-manifest.json
+          if-no-files-found: warn
+          retention-days: 3
+      - name: Remove task executables
+        if: always()
+        run: rm -rf .local/sparse-diagnostics/bin
