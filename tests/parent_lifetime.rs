@@ -37,18 +37,48 @@ fn start(watch: bool, piped: bool) -> Relay {
     }
     command.stdin(if piped { Stdio::piped() } else { Stdio::null() });
     let mut relay = Relay(command.spawn().unwrap());
+    if let Err(error) = readiness(&mut relay) {
+        panic!("relay startup failed: {error}");
+    }
+    relay
+}
+
+fn readiness(relay: &mut Relay) -> Result<(), String> {
     let stderr = relay.0.stderr.take().unwrap();
     let (send, receive) = mpsc::channel();
     thread::spawn(move || {
-        for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+        let mut transcript = std::collections::VecDeque::new();
+        for line in BufReader::new(stderr).lines() {
+            let line = match line {
+                Ok(line) => line,
+                Err(error) => {
+                    let _ = send.send(Err(format!("stderr read failed: {error}")));
+                    return;
+                }
+            };
             if line.starts_with("spry-turn ") && line.contains(" ready (UDP/TCP 127.0.0.1:") {
-                let _ = send.send(());
-                break;
+                let _ = send.send(Ok(()));
+                return;
             }
+            if transcript.len() == 16 {
+                transcript.pop_front();
+            }
+            transcript.push_back(line.chars().take(1024).collect::<String>());
         }
+        let _ = send.send(Err(format!(
+            "stderr ended before readiness: {}",
+            transcript.into_iter().collect::<Vec<_>>().join(" | ")
+        )));
     });
-    receive.recv_timeout(Duration::from_secs(5)).unwrap();
-    relay
+    receive
+        .recv_timeout(Duration::from_secs(5))
+        .map_err(|error| {
+            format!(
+                "readiness observation failed: {error}; child exit status: {:?}",
+                relay.0.try_wait()
+            )
+        })?
+        .map_err(|error| format!("{error}; child exit status: {:?}", relay.0.try_wait()))
 }
 
 fn wait_for_exit(relay: &mut Relay) -> ExitStatus {
@@ -73,6 +103,28 @@ fn closed_stdin_does_not_change_default_serve_lifetime() {
         thread::sleep(Duration::from_millis(150));
         assert!(relay.0.try_wait().unwrap().is_none());
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn readiness_reports_startup_bind_failure_instead_of_disconnected_channel() {
+    // A bound TCP listener deliberately prevents the relay from sharing its
+    // UDP-selected port. This tests diagnostic reporting, not a hypothesised
+    // cause of an earlier unexplained startup failure.
+    let occupied = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = occupied.local_addr().unwrap().to_string();
+    let mut relay = Relay(
+        command()
+            .args(["serve", "--listen", &address])
+            .stdin(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    let error = readiness(&mut relay).unwrap_err();
+    assert!(error.contains("stderr ended before readiness"), "{error}");
+    assert!(error.contains("Address already in use"), "{error}");
+    assert!(error.contains("child exit status:"), "{error}");
+    assert!(!wait_for_exit(&mut relay).success());
 }
 
 #[test]
