@@ -4128,6 +4128,11 @@ it does not deploy a hosted relay or change Archipelago screens.
 - Include Windows dependency licence texts in the packaged notices and
   collect the inventory for every existing native and Android release
   target, including dependency licence files with lowercase names.
+- Close a deallocated UDP allocation's connected socket before sending its
+  zero-lifetime Refresh acknowledgement. Previously an immediate next
+  request could reach that socket just before teardown and be lost. The
+  response keeps its authenticated transaction and client-facing endpoint;
+  TCP and TLS connections remain open for subsequent requests.
 
 ## 0.4.1 (30 October 2026)
 

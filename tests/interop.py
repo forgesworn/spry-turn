@@ -424,10 +424,15 @@ class Interop(unittest.TestCase):
         self.assertEqual(error_code(c.request(3, [(TRANSPORT, b"\x11\x00\x00\x00")])[1]), 437)
 
     def test_signed_refresh_and_deallocation(self):
-        c = self.client(); c.allocate()
-        self.assertEqual(c.request(4, [(LIFETIME, struct.pack("!I", 0))])[0], 0x104)
-        self.assertEqual(error_code(c.request(4)[1]), 437)
-        c.allocate()
+        for mode in (["udp", "tcp", "tls"] if TLS else ["udp", "tcp"]):
+            c = self.client(mode=mode); c.allocate()
+            # A fixed workload, not retries: every immediate post-ACK request
+            # must get its authenticated reply, without sleeps or retransmits.
+            for cycle in range(64 if mode == "udp" else 1):
+                with self.subTest(mode=mode, cycle=cycle):
+                    self.assertEqual(c.request(4, [(LIFETIME, struct.pack("!I", 0))])[0], 0x104)
+                    self.assertEqual(error_code(c.request(4)[1]), 437)
+                    c.allocate()
 
     def test_expired_credentials(self):
         c = self.client(expiry=int(time.time()) - 1)

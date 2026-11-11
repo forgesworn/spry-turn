@@ -1429,6 +1429,103 @@ mod policy_tests {
     }
 
     #[test]
+    fn zero_lifetime_refresh_tears_down_before_ack_and_preserves_endpoint() {
+        for wildcard in [false, true] {
+            let reserved = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+            let relay_port = reserved.local_addr().unwrap().port();
+            let mut config = Config::local(vec![1; 32]);
+            config.listen = if wildcard { "0.0.0.0:0" } else { "127.0.0.1:0" }
+                .parse()
+                .unwrap();
+            config.advertised_ip = Some("203.0.113.7".parse().unwrap());
+            config.relay_port_range = Some((relay_port, relay_port));
+            config.max_allocation_lifetime = 60;
+            let mut server = bind_server(config);
+            let endpoint = SocketAddr::new(
+                "127.0.0.1".parse().unwrap(),
+                server.local_addr().unwrap().port(),
+            );
+            let client = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+            client.set_nonblocking(true).unwrap();
+            let address = client.local_addr().unwrap();
+            let identity = Client::Datagram(address);
+            let username = format!("{}:deallocation-fixture", unix_time() + 300);
+            let key = auth::key(
+                &username,
+                &server.config.realm,
+                &auth::credential(&server.config.secret, &username),
+            );
+            let nonce = server
+                .nonces
+                .issue(unix_time(), address.ip(), &server.config.realm);
+            let request = |method, lifetime| {
+                let mut value = Builder::new(method, 0, [7; 12]);
+                value.attr(USERNAME, username.as_bytes());
+                value.attr(REALM, b"spry-turn");
+                value.attr(NONCE, nonce.as_bytes());
+                value.attr(TRANSPORT, &[17, 0, 0, 0]);
+                value.number(LIFETIME, lifetime);
+                value.finish(Some(&key))
+            };
+            let answer = |server: &mut Server, method, class, expected_lifetime, error_code| {
+                let mut bytes = [0; 2048];
+                let deadline = Instant::now() + Duration::from_secs(2);
+                let (length, source) = loop {
+                    match client.recv_from(&mut bytes) {
+                        Ok(answer) => break answer,
+                        Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                            assert!(Instant::now() < deadline, "reply did not arrive");
+                            // A poll can first report another readiness edge,
+                            // including the removed socket. Drive the event
+                            // loop until the reply arrives; never resend.
+                            server.poll_once(Duration::from_millis(10)).unwrap();
+                        }
+                        Err(error) => panic!("receive failed: {error}"),
+                    }
+                };
+                assert_eq!(
+                    source, endpoint,
+                    "the advertised peer IP is not the listener"
+                );
+                let response = Message::parse(&bytes[..length]).unwrap();
+                assert_eq!((response.method, response.class), (method, class));
+                assert_eq!(response.transaction, [7; 12]);
+                assert!(response.verify(&key));
+                assert_eq!(response.number(LIFETIME), expected_lifetime);
+                if let Some(expected) = error_code {
+                    let error = response.attr(ERROR).unwrap();
+                    assert_eq!(u16::from(error[2]) * 100 + u16::from(error[3]), expected);
+                }
+            };
+            drop(reserved);
+            server.receive(identity, address, &request(ALLOCATE, 60));
+            answer(&mut server, ALLOCATE, 2, Some(60), None);
+            #[cfg(all(feature = "connected-udp", unix))]
+            assert_eq!(
+                server.allocations[&identity].client_socket.is_some(),
+                !wildcard
+            );
+            // send_client's test-only assertion checks that teardown already
+            // happened at the send boundary, deterministically rejecting the
+            // previous response-before-close ordering without a timing race.
+            server.receive(identity, address, &request(REFRESH, 0));
+            answer(&mut server, REFRESH, 2, Some(0), None);
+            assert_eq!(server.allocation_count(), 0);
+            assert!(server.relay_ports.is_empty());
+            assert!(server.own_public_to_local.is_empty());
+            assert!(server.own_local_to_public.is_empty());
+            client.send_to(&request(REFRESH, 60), endpoint).unwrap();
+            answer(&mut server, REFRESH, 3, None, Some(437));
+            client.send_to(&request(ALLOCATE, 60), endpoint).unwrap();
+            answer(&mut server, ALLOCATE, 2, Some(60), None);
+            assert_eq!(
+                server.allocations[&identity].bound_address.port(),
+                relay_port
+            );
+        }
+    }
+
+    #[test]
     fn short_allocation_leases_refresh_and_free_an_orphaned_stream_port() {
         let reserved = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
         let port = reserved.local_addr().unwrap().port();
@@ -3448,6 +3545,19 @@ impl Server {
     }
 
     fn send_client(&mut self, client: Client, bytes: &[u8]) {
+        // Check the externally observable teardown boundary in unit tests,
+        // before any success bytes can reach a concurrently running client.
+        #[cfg(test)]
+        if Message::parse(bytes).is_some_and(|response| {
+            response.method == REFRESH
+                && response.class == 2
+                && response.number(LIFETIME) == Some(0)
+        }) {
+            assert!(
+                !self.allocations.contains_key(&client),
+                "zero-lifetime success must follow allocation/socket teardown"
+            );
+        }
         self.send_client_packet(client, bytes, false);
     }
 
@@ -4250,10 +4360,15 @@ impl Server {
             .saturating_add(u64::from(duration.subsec_nanos() != 0)) as u32;
         let mut b = Builder::new(REFRESH, 2, m.transaction);
         b.number(LIFETIME, lifetime);
-        self.send_client(client, &b.finish(Some(&key)));
         if lifetime == 0 {
+            // A client can send its next request as soon as it sees success.
+            // Close the connected UDP socket first, so that request reaches
+            // the listener instead of being queued on a socket we then drop.
+            // Stream connections remain open; the listener keeps the same
+            // concrete client-facing endpoint as the removed UDP socket.
             self.remove_allocation(client);
         }
+        self.send_client(client, &b.finish(Some(&key)));
     }
 
     fn peer_allowed(&self, address: SocketAddr) -> bool {
