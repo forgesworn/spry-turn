@@ -297,6 +297,31 @@ fn batch(
     Ok(())
 }
 
+// Diagnostic-only barriers keep a phase from starting before the parent has
+// sampled server counters. Normal qualification emits just its original result.
+fn diagnostic_phase(enabled: bool, phase: &str) -> io::Result<()> {
+    if !enabled {
+        return Ok(());
+    }
+    println!("{{\"event\":\"spry-load-phase-v1\",\"phase\":\"{phase}\"}}");
+    io::stdout().flush()?;
+    let (send, receive) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut byte = [0; 1];
+        let result = io::stdin().read_exact(&mut byte).map(|()| byte[0]);
+        let _ = send.send(result);
+    });
+    match receive.recv_timeout(Duration::from_secs(5)) {
+        Ok(Ok(b'+')) => Ok(()),
+        Ok(Ok(_)) => Err(io::Error::other("invalid diagnostic acknowledgement")),
+        Ok(Err(error)) => Err(error),
+        Err(_) => Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            "diagnostic acknowledgement timed out",
+        )),
+    }
+}
+
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().skip(1).collect();
     let server: SocketAddr = args.first().ok_or("server address required")?.parse()?;
@@ -317,6 +342,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut min_seconds = 0.0;
     let mut resource_hold_ms = 0;
     let mut rate = 0_u64;
+    let mut diagnostic_phases = false;
     for option in args.get(5..).unwrap_or_default().chunks(2) {
         let value = option.get(1).ok_or("benchmark option requires a value")?;
         match option[0].as_str() {
@@ -333,6 +359,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             "--min-seconds" => min_seconds = value.parse::<f64>()?,
             "--resource-hold-ms" => resource_hold_ms = value.parse::<u64>()?,
             "--rate" => rate = value.parse()?,
+            "--diagnostic-phases" => {
+                diagnostic_phases = match value.as_str() {
+                    "0" => false,
+                    "1" => true,
+                    _ => return Err("diagnostic phases must be 0 or 1".into()),
+                };
+            }
             _ => return Err("unknown benchmark option".into()),
         }
     }
@@ -352,6 +385,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         return Err("invalid benchmark bounds".into());
     }
     let secret = env::var("SPRY_TURN_SECRET")?;
+    diagnostic_phase(diagnostic_phases, "before_setup")?;
     let setup = Instant::now();
     let mut pairs = (0..clients)
         .map(|i| pair(server, secret.as_bytes(), i, mode, ca))
@@ -365,6 +399,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         |(protocol, cipher)| format!("{{\"protocol\":\"{protocol}\",\"cipher\":\"{cipher}\"}}"),
     );
     let setup_ms = setup.elapsed().as_secs_f64() * 1000.0;
+    diagnostic_phase(diagnostic_phases, "after_setup")?;
     let make_packet = || {
         let mut packet = vec![0x5a; size + 4];
         packet[..2].copy_from_slice(&0x4000u16.to_be_bytes());
@@ -377,6 +412,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     for pair in &mut pairs {
         batch(pair, 16, &mut packet, &mut buffer, &mut ignored)?;
     }
+    diagnostic_phase(diagnostic_phases, "after_warmup")?;
     let mut latency = Vec::with_capacity(2000);
     for i in 0..2000 {
         let start = Instant::now();
@@ -390,6 +426,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         latency.push(start.elapsed().as_nanos() as u64);
     }
     latency.sort_unstable();
+    diagnostic_phase(diagnostic_phases, "before_work")?;
     let start = Instant::now();
     let chunk_size = clients.div_ceil(workers);
     let chunks = clients.div_ceil(chunk_size);
@@ -480,6 +517,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             ))
         })?;
     let elapsed = start.elapsed().as_secs_f64();
+    diagnostic_phase(diagnostic_phases, "after_work")?;
     scheduled.sort_unstable();
     dispatch_lag.sort_unstable();
     let p99 =
