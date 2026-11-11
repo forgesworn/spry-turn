@@ -22,7 +22,8 @@ it does not deploy a hosted relay or change Archipelago screens.
   batching setup without waiting for packets or adding a look-ahead syscall.
   Large first frames still borrow empty storage when needed. This follows
   a [failed sparse-CPU qualification](docs/tcp-v0.4.2-abff8fa-results-2026-11-11.md);
-  the revised source requires its own unchanged-protocol qualification.
+  the revised source also [failed the unchanged sparse CPU guard](docs/tcp-v0.4.2-3a843bb-results-2026-11-11.md).
+  Release publication remains held.
 - Add the opt-in keeper-controlled node profile: signed grant/device
   expiry, live credential revocation and a renewable 15-second desk lease
   control admission and existing allocations. A lost lease fails closed;
