@@ -1,6 +1,12 @@
 name: Sparse CPU phase diagnostics
 on:
   workflow_dispatch:
+    inputs:
+      campaign:
+        description: Predeclared diagnostic (never qualification)
+        type: choice
+        options: [phase, mechanism]
+        default: phase
 permissions:
   contents: read
 concurrency:
@@ -62,12 +68,27 @@ jobs:
           build_one release "$RELEASE_SHA" --bin spry-turn target/release/spry-turn
           build_one loader "$DIAGNOSTIC_SHA" --example load target/release/examples/load
       - name: Check actual loader acknowledgement failure boundaries
-        run: python3 -B -m unittest discover -s tests -p test_sparse_diagnostics.py -v
+        run: |
+          python3 -B -m unittest discover -s tests -p test_sparse_diagnostics.py -v
+          python3 -B -m unittest discover -s tests -p test_sparse_mechanism.py -v
         env:
           SPRY_DIAGNOSTIC_LOADER: .local/sparse-diagnostics/bin/loader
       - name: Run the fixed A/A then baseline/release diagnostic once
+        if: inputs.campaign != 'mechanism'
         run: |
           python3 -B scripts/sparse-diagnostics.py \
+            --baseline .local/sparse-diagnostics/bin/baseline \
+            --release .local/sparse-diagnostics/bin/release \
+            --loader .local/sparse-diagnostics/bin/loader \
+            --manifest .local/sparse-diagnostics/build-manifest.json \
+            --output .local/sparse-diagnostics/result.json
+      - name: Install the instruction-count observer
+        if: inputs.campaign == 'mechanism'
+        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y valgrind
+      - name: Run the fixed longer source and identical-binary campaign once
+        if: inputs.campaign == 'mechanism'
+        run: |
+          python3 -B scripts/sparse-mechanism.py \
             --baseline .local/sparse-diagnostics/bin/baseline \
             --release .local/sparse-diagnostics/bin/release \
             --loader .local/sparse-diagnostics/bin/loader \
