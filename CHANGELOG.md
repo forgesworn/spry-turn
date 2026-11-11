@@ -9,21 +9,22 @@ it does not deploy a hosted relay or change Archipelago screens.
 - Batch plain TCP return traffic in groups of up to 16 frames or 16 KiB,
   and reuse empty output buffers. Partial writes retain their own pending
   buffer, and failed batch flushes account for each dropped frame once.
-  TLS and UDP forwarding paths are unchanged. On the earlier pinned Linux loopback
-  qualification with 1,200-byte packets and a window of 8, median paired
-  throughput rose 55.5% with 128 clients and 42.7% with 512 clients, while
-  server CPU per verified forward fell 35.6% and 29.8%. All declared sparse
-  TCP, single-client TCP, UDP,
-  TLS and memory guards passed. These are measured workloads, not WAN
-  capacity or loaded-latency guarantees; see the
-  [full results and limits](docs/tcp-hosted-results-2026-11-11.md).
-- Send the first eligible peer return immediately, enabling TCP batching
-  only after a second return in the same dispatch. This avoids singleton
-  batching setup without waiting for packets or adding a look-ahead syscall.
-  Large first frames still borrow empty storage when needed. This follows
-  a [failed sparse-CPU qualification](docs/tcp-v0.4.2-abff8fa-results-2026-11-11.md);
-  the revised source also [failed the unchanged sparse CPU guard](docs/tcp-v0.4.2-3a843bb-results-2026-11-11.md).
-  Release publication remains held.
+  Send the first eligible return immediately; batching starts only after a
+  second return in the same dispatch, without a timer or look-ahead syscall.
+  Large first frames still borrow empty storage when needed.
+- Publish with an explicitly accepted performance trade-off. In the final
+  pinned Linux loopback qualification, with 1,200-byte packets and window 8,
+  median paired throughput rose 53.61% with 128 clients and 35.30% with 512
+  clients; server CPU per verified forward fell 34.76% and 25.83%.
+  The campaign **failed** its sparse TCP CPU guard: two pairs exceeded the
+  0.2-percentage-point limit, with a worst increase of 0.334 points of one
+  core. An earlier final-source campaign failed the same guard. Host,
+  useful-work, latency, loaded/control and memory guards passed in the final
+  campaign. The owner explicitly accepted this disclosed trade-off for the
+  prerelease; neither failed result was relabelled or rerun to pass.
+  These are measured loopback workloads, not WAN capacity or loaded-latency
+  guarantees. See the [release decision](docs/release-v0.4.2-acceptance-2026-11-11.md)
+  and [complete final results](docs/tcp-v0.4.2-3a843bb-results-2026-11-11.md).
 - Add the opt-in keeper-controlled node profile: signed grant/device
   expiry, live credential revocation and a renewable 15-second desk lease
   control admission and existing allocations. A lost lease fails closed;
