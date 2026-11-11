@@ -57,6 +57,24 @@ impl TcpReturnBatch {
     }
 }
 
+struct PeerReturnDispatch {
+    first_accepted: bool,
+    batch_started: bool,
+    lent_output: bool,
+    batch: TcpReturnBatch,
+}
+
+impl PeerReturnDispatch {
+    fn new() -> Self {
+        Self {
+            first_accepted: false,
+            batch_started: false,
+            lent_output: false,
+            batch: TcpReturnBatch::new(false),
+        }
+    }
+}
+
 fn local_bridge_address(ip: IpAddr) -> bool {
     matches!(ip, IpAddr::V4(v) if v.octets()[0] == 127 && (64..=127).contains(&v.octets()[1]))
 }
@@ -304,6 +322,119 @@ mod policy_tests {
         assert_eq!(server.stats.forwarded_packets, 1);
         assert_eq!(server.stats.forwarded_bytes, payload.len() as u64);
         assert_eq!(server.stats.dropped_packets, 0);
+    }
+
+    #[test]
+    fn batch_output_singleton_is_immediate_and_second_return_starts_batch() {
+        let (mut server, mut clients, tokens) = batch_output_fixture(1);
+        let token = tokens[0];
+        let key = Client::Stream(token);
+        server.tcp_return_output = Vec::with_capacity(TCP_RETURN_BATCH_BYTES);
+        let shared_pointer = server.tcp_return_output.as_ptr();
+        let own_pointer = server.connections[&token].output.as_ptr();
+        let mut dispatch = PeerReturnDispatch::new();
+        assert!(server.send_peer_return(key, b"first", 1, &mut dispatch));
+        assert!(!dispatch.batch_started);
+        assert!(!dispatch.lent_output);
+        assert_eq!(server.tcp_return_output.as_ptr(), shared_pointer);
+        assert_eq!(server.connections[&token].output.as_ptr(), own_pointer);
+        clients[0].set_nonblocking(false).unwrap();
+        clients[0]
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let mut received = [0; 5];
+        clients[0].read_exact(&mut received).unwrap();
+        assert_eq!(&received, b"first");
+        assert_eq!(server.stats.forwarded_packets, 1);
+        assert!(server.send_peer_return(key, b"next", 2, &mut dispatch));
+        assert!(dispatch.batch_started);
+        assert!(dispatch.lent_output);
+        assert_eq!(dispatch.batch.frames, 1);
+        assert_eq!(server.stats.forwarded_packets, 1);
+        assert!(server.flush_peer_batch(key, &mut dispatch.batch));
+        assert!(server.swap_empty_peer_output(key));
+        clients[0].read_exact(&mut received[..4]).unwrap();
+        assert_eq!(&received[..4], b"next");
+        assert_eq!(server.stats.forwarded_packets, 2);
+        assert_eq!(server.stats.forwarded_bytes, 3);
+        assert_eq!(server.connections[&token].output.as_ptr(), own_pointer);
+    }
+
+    #[test]
+    fn batch_output_first_large_fatal_write_releases_loan_and_counts_once() {
+        let (mut server, _clients, tokens) = batch_output_fixture(1);
+        let token = tokens[0];
+        let key = Client::Stream(token);
+        let own_pointer = server.connections[&token].output.as_ptr();
+        server.connections[&token]
+            .socket
+            .shutdown(std::net::Shutdown::Write)
+            .unwrap();
+        let mut dispatch = PeerReturnDispatch::new();
+        assert!(!server.send_peer_return(key, &vec![0; 9004], 9000, &mut dispatch));
+        assert!(!server.connections.contains_key(&token));
+        assert_eq!(server.tcp_return_output.as_ptr(), own_pointer);
+        assert!(server.tcp_return_output.is_empty());
+        assert_eq!(server.stats.forwarded_packets, 0);
+        assert_eq!(server.stats.dropped_packets, 1);
+        assert_eq!(server.transport.stream_errors, 1);
+        assert!(server.flush_peer_batch(key, &mut dispatch.batch));
+        assert_eq!(server.stats.dropped_packets, 1);
+    }
+
+    #[test]
+    #[cfg(all(feature = "connected-udp", unix))]
+    fn batch_output_first_large_pending_write_keeps_loan_when_next_batch_fails() {
+        let (mut server, clients, tokens) = batch_output_fixture(1);
+        let token = tokens[0];
+        let key = Client::Stream(token);
+        socket2::SockRef::from(&server.connections[&token].socket)
+            .set_send_buffer_size(4096)
+            .unwrap();
+        socket2::SockRef::from(&clients[0])
+            .set_recv_buffer_size(4096)
+            .unwrap();
+        let block = [0x5a; 4096];
+        let mut blocked = false;
+        for _ in 0..8192 {
+            match server
+                .connections
+                .get_mut(&token)
+                .unwrap()
+                .socket
+                .write(&block)
+            {
+                Ok(_) => (),
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => (),
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                    blocked = true;
+                    break;
+                }
+                Err(error) => panic!("socket fill failed: {error}"),
+            }
+        }
+        assert!(blocked, "bounded socket fill must reach backpressure");
+        server.tcp_return_output = Vec::with_capacity(TCP_RETURN_BATCH_BYTES);
+        let shared_pointer = server.tcp_return_output.as_ptr();
+        let own_pointer = server.connections[&token].output.as_ptr();
+        let mut dispatch = PeerReturnDispatch::new();
+        assert!(server.send_peer_return(key, &vec![0x42; 9004], 9000, &mut dispatch));
+        let conn = &server.connections[&token];
+        assert!(conn.output.len() > conn.written);
+        assert_eq!(conn.output.as_ptr(), shared_pointer);
+        assert_eq!(server.tcp_return_output.as_ptr(), own_pointer);
+        assert_eq!(server.stats.forwarded_packets, 1);
+        assert!(server.send_peer_return(key, b"next", 2, &mut dispatch));
+        assert!(!dispatch.lent_output, "pending ownership is never swapped");
+        server.connections[&token]
+            .socket
+            .shutdown(std::net::Shutdown::Write)
+            .unwrap();
+        assert!(!server.flush_peer_batch(key, &mut dispatch.batch));
+        assert_eq!(server.stats.forwarded_packets, 1);
+        assert_eq!(server.stats.forwarded_bytes, 9000);
+        assert_eq!(server.stats.dropped_packets, 1);
+        assert!(server.tcp_return_output.is_empty());
     }
 
     #[test]
@@ -1431,14 +1562,12 @@ mod policy_tests {
     #[test]
     fn zero_lifetime_refresh_tears_down_before_ack_and_preserves_endpoint() {
         for wildcard in [false, true] {
-            let reserved = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
-            let relay_port = reserved.local_addr().unwrap().port();
             let mut config = Config::local(vec![1; 32]);
             config.listen = if wildcard { "0.0.0.0:0" } else { "127.0.0.1:0" }
                 .parse()
                 .unwrap();
             config.advertised_ip = Some("203.0.113.7".parse().unwrap());
-            config.relay_port_range = Some((relay_port, relay_port));
+            config.max_allocations = 1;
             config.max_allocation_lifetime = 60;
             let mut server = bind_server(config);
             let endpoint = SocketAddr::new(
@@ -1467,39 +1596,51 @@ mod policy_tests {
                 value.number(LIFETIME, lifetime);
                 value.finish(Some(&key))
             };
-            let answer = |server: &mut Server, method, class, expected_lifetime, error_code| {
-                let mut bytes = [0; 2048];
-                let deadline = Instant::now() + Duration::from_secs(2);
-                let (length, source) = loop {
-                    match client.recv_from(&mut bytes) {
-                        Ok(answer) => break answer,
-                        Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                            assert!(Instant::now() < deadline, "reply did not arrive");
-                            // A poll can first report another readiness edge,
-                            // including the removed socket. Drive the event
-                            // loop until the reply arrives; never resend.
-                            server.poll_once(Duration::from_millis(10)).unwrap();
+            let answer =
+                |server: &mut Server, phase, method, class, expected_lifetime, error_code| {
+                    let mut bytes = [0; 2048];
+                    let deadline = Instant::now() + Duration::from_secs(2);
+                    let (length, source) = loop {
+                        match client.recv_from(&mut bytes) {
+                            Ok(answer) => break answer,
+                            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                                assert!(Instant::now() < deadline, "reply did not arrive");
+                                // A poll can first report another readiness edge,
+                                // including the removed socket. Drive the event
+                                // loop until the reply arrives; never resend.
+                                server.poll_once(Duration::from_millis(10)).unwrap();
+                            }
+                            Err(error) => panic!("receive failed: {error}"),
                         }
-                        Err(error) => panic!("receive failed: {error}"),
+                    };
+                    assert_eq!(
+                        source, endpoint,
+                        "the advertised peer IP is not the listener"
+                    );
+                    let response = Message::parse(&bytes[..length]).unwrap();
+                    assert_eq!(
+                        (response.method, response.class),
+                        (method, class),
+                        "{phase}, wildcard={wildcard}: unexpected TURN error {:?}",
+                        response
+                            .attr(ERROR)
+                            .map(|error| u16::from(error[2]) * 100 + u16::from(error[3]))
+                    );
+                    assert_eq!(response.transaction, [7; 12]);
+                    assert!(response.verify(&key));
+                    assert_eq!(response.number(LIFETIME), expected_lifetime);
+                    if let Some(expected) = error_code {
+                        let error = response.attr(ERROR).unwrap();
+                        assert_eq!(u16::from(error[2]) * 100 + u16::from(error[3]), expected);
                     }
                 };
-                assert_eq!(
-                    source, endpoint,
-                    "the advertised peer IP is not the listener"
-                );
-                let response = Message::parse(&bytes[..length]).unwrap();
-                assert_eq!((response.method, response.class), (method, class));
-                assert_eq!(response.transaction, [7; 12]);
-                assert!(response.verify(&key));
-                assert_eq!(response.number(LIFETIME), expected_lifetime);
-                if let Some(expected) = error_code {
-                    let error = response.attr(ERROR).unwrap();
-                    assert_eq!(u16::from(error[2]) * 100 + u16::from(error[3]), expected);
-                }
-            };
-            drop(reserved);
             server.receive(identity, address, &request(ALLOCATE, 60));
-            answer(&mut server, ALLOCATE, 2, Some(60), None);
+            answer(&mut server, "initial", ALLOCATE, 2, Some(60), None);
+            // Let the kernel choose the first allocation's port without a
+            // reserve/drop/rebind gap, then require its reuse after teardown.
+            let relay_port = server.allocations[&identity].bound_address.port();
+            server.config.relay_port_range = Some((relay_port, relay_port));
+            server.next_relay_port = relay_port;
             #[cfg(all(feature = "connected-udp", unix))]
             assert_eq!(
                 server.allocations[&identity].client_socket.is_some(),
@@ -1509,15 +1650,15 @@ mod policy_tests {
             // happened at the send boundary, deterministically rejecting the
             // previous response-before-close ordering without a timing race.
             server.receive(identity, address, &request(REFRESH, 0));
-            answer(&mut server, REFRESH, 2, Some(0), None);
+            answer(&mut server, "deallocation", REFRESH, 2, Some(0), None);
             assert_eq!(server.allocation_count(), 0);
             assert!(server.relay_ports.is_empty());
             assert!(server.own_public_to_local.is_empty());
             assert!(server.own_local_to_public.is_empty());
             client.send_to(&request(REFRESH, 60), endpoint).unwrap();
-            answer(&mut server, REFRESH, 3, None, Some(437));
+            answer(&mut server, "post-ack", REFRESH, 3, None, Some(437));
             client.send_to(&request(ALLOCATE, 60), endpoint).unwrap();
-            answer(&mut server, ALLOCATE, 2, Some(60), None);
+            answer(&mut server, "replacement", ALLOCATE, 2, Some(60), None);
             assert_eq!(
                 server.allocations[&identity].bound_address.port(),
                 relay_port
@@ -3564,7 +3705,7 @@ impl Server {
     /// Returns whether the whole packet was accepted. UDP relay overload drops
     /// the new packet; it must not truncate queued stream frames or allocations.
     fn send_client_packet(&mut self, client: Client, bytes: &[u8], relay_payload: bool) -> bool {
-        self.send_client_packet_inner(client, bytes, relay_payload, false)
+        self.send_client_packet_inner(client, bytes, relay_payload, false, false)
     }
 
     fn send_client_packet_inner(
@@ -3573,6 +3714,7 @@ impl Server {
         bytes: &[u8],
         relay_payload: bool,
         defer_tcp_return: bool,
+        reuse_large_empty_output: bool,
     ) -> bool {
         match client {
             Client::Datagram(peer) => {
@@ -3628,6 +3770,28 @@ impl Server {
                     self.stats.dropped_packets += 1;
                     return false;
                 }
+                // Singleton returns normally fit the connection's existing
+                // buffer. Only borrow for a large first frame that would
+                // otherwise leave growth retained on an idle connection.
+                let lent_output = relay_payload
+                    && reuse_large_empty_output
+                    && bytes.len() > conn.output.capacity()
+                    && conn.output.is_empty()
+                    && conn.written == 0
+                    && {
+                        #[cfg(feature = "tls")]
+                        {
+                            conn.tls.is_none()
+                        }
+                        #[cfg(not(feature = "tls"))]
+                        {
+                            true
+                        }
+                    };
+                if lent_output {
+                    debug_assert!(self.tcp_return_output.is_empty());
+                    std::mem::swap(&mut conn.output, &mut self.tcp_return_output);
+                }
                 let result = conn.queue(bytes).and_then(|()| {
                     if defer_tcp_return {
                         Ok(false)
@@ -3657,6 +3821,11 @@ impl Server {
                 };
                 if !accepted && relay_payload {
                     self.stats.dropped_packets += 1;
+                }
+                if lent_output {
+                    // A partial write retains the borrowed buffer and cursor;
+                    // a fatal close has already released its owned storage.
+                    self.swap_empty_peer_output(client);
                 }
                 accepted
             }
@@ -4714,7 +4883,7 @@ impl Server {
         if bytes.len() > TCP_RETURN_BATCH_BYTES.saturating_sub(batch.bytes) || needs_queue_retry {
             self.flush_peer_batch(client, batch);
         }
-        let accepted = self.send_client_packet_inner(client, bytes, true, true);
+        let accepted = self.send_client_packet_inner(client, bytes, true, true, false);
         if accepted {
             batch.frames += 1;
             batch.bytes += bytes.len();
@@ -4762,22 +4931,49 @@ impl Server {
         let Some(client) = self.relays.get(&token).copied() else {
             return;
         };
-        let mut batch = self.peer_return_batch(client);
-        let lent_output = batch.enabled && self.swap_empty_peer_output(client);
-        self.receive_peer_packets(client, input, &mut batch);
+        let mut dispatch = PeerReturnDispatch::new();
+        self.receive_peer_packets(client, input, &mut dispatch);
         // Includes WouldBlock, expiry/revocation and errors. No pending batch
         // relies on another readiness edge, timer, or datagram to be flushed.
-        self.flush_peer_batch(client, &mut batch);
-        if lent_output {
+        self.flush_peer_batch(client, &mut dispatch.batch);
+        if dispatch.lent_output {
             self.swap_empty_peer_output(client);
         }
+    }
+
+    fn send_peer_return(
+        &mut self,
+        client: Client,
+        bytes: &[u8],
+        payload_bytes: usize,
+        dispatch: &mut PeerReturnDispatch,
+    ) -> bool {
+        if !dispatch.first_accepted {
+            // No look-ahead syscall or batching state for the first eligible
+            // return. A singleton uses the immediate forwarding path.
+            let accepted = self.send_client_packet_inner(client, bytes, true, false, true);
+            if accepted {
+                dispatch.first_accepted = true;
+                self.forwarded(client, payload_bytes);
+            }
+            return accepted;
+        }
+        if !dispatch.batch_started {
+            // Only a second authorised return in this dispatch pays for batch
+            // classification and the empty-buffer loan. TLS and UDP stay
+            // immediate; pending stream output always keeps its own storage.
+            dispatch.batch_started = true;
+            dispatch.batch = self.peer_return_batch(client);
+            dispatch.lent_output = dispatch.batch.enabled && self.swap_empty_peer_output(client);
+        }
+        self.send_peer_packet(client, bytes, payload_bytes, &mut dispatch.batch)
     }
 
     fn receive_peer_packets(
         &mut self,
         client: Client,
         input: &mut [u8],
-        batch: &mut TcpReturnBatch,
+        dispatch: &mut PeerReturnDispatch,
     ) {
         loop {
             let now = Instant::now();
@@ -4796,7 +4992,7 @@ impl Server {
             let (n, peer) = match a.socket.recv_from(&mut input[HEADROOM..]) {
                 Ok(value) => value,
                 Err(e) if e.kind() == io::ErrorKind::Interrupted => {
-                    self.flush_peer_batch(client, batch);
+                    self.flush_peer_batch(client, &mut dispatch.batch);
                     continue;
                 }
                 Err(_) => return,
@@ -4815,7 +5011,7 @@ impl Server {
                 || !Self::within_budget(&mut a.bandwidth, &mut self.aggregate, n, now)
             {
                 self.stats.dropped_packets += 1;
-                self.flush_peer_batch(client, batch);
+                self.flush_peer_batch(client, &mut dispatch.batch);
                 continue;
             }
             if let Some(c) = a
@@ -4832,20 +5028,20 @@ impl Server {
                     HEADROOM + n
                 };
                 input[HEADROOM + n..end].fill(0);
-                if !self.send_peer_packet(client, &input[begin..end], n, batch) {
-                    self.flush_peer_batch(client, batch);
+                if !self.send_peer_return(client, &input[begin..end], n, dispatch) {
+                    self.flush_peer_batch(client, &mut dispatch.batch);
                     continue;
                 }
             } else {
                 // Data indications also use the reserved prefix of this buffer.
                 if n > 65_440 {
                     self.stats.dropped_packets += 1;
-                    self.flush_peer_batch(client, batch);
+                    self.flush_peer_batch(client, &mut dispatch.batch);
                     continue;
                 }
                 let mut transaction = [0; 12];
                 if getrandom::fill(&mut transaction).is_err() {
-                    self.flush_peer_batch(client, batch);
+                    self.flush_peer_batch(client, &mut dispatch.batch);
                     continue;
                 }
                 let (address, address_len) = address_value(peer, &transaction);
@@ -4863,8 +5059,8 @@ impl Server {
                 output[data_start - 4..data_start - 2].copy_from_slice(&DATA.to_be_bytes());
                 output[data_start - 2..data_start].copy_from_slice(&(n as u16).to_be_bytes());
                 output[data_start + n..len].fill(0);
-                if !self.send_peer_packet(client, &output[..len], n, batch) {
-                    self.flush_peer_batch(client, batch);
+                if !self.send_peer_return(client, &output[..len], n, dispatch) {
+                    self.flush_peer_batch(client, &mut dispatch.batch);
                     continue;
                 }
             }

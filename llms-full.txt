@@ -4103,7 +4103,7 @@ it does not deploy a hosted relay or change Archipelago screens.
 - Batch plain TCP return traffic in groups of up to 16 frames or 16 KiB,
   and reuse empty output buffers. Partial writes retain their own pending
   buffer, and failed batch flushes account for each dropped frame once.
-  TLS and UDP forwarding paths are unchanged. On the pinned Linux loopback
+  TLS and UDP forwarding paths are unchanged. On the earlier pinned Linux loopback
   qualification with 1,200-byte packets and a window of 8, median paired
   throughput rose 55.5% with 128 clients and 42.7% with 512 clients, while
   server CPU per verified forward fell 35.6% and 29.8%. All declared sparse
@@ -4111,6 +4111,12 @@ it does not deploy a hosted relay or change Archipelago screens.
   TLS and memory guards passed. These are measured workloads, not WAN
   capacity or loaded-latency guarantees; see the
   [full results and limits](https://github.com/forgesworn/spry-turn/blob/main/docs/tcp-hosted-results-2026-11-11.md).
+- Send the first eligible peer return immediately, enabling TCP batching
+  only after a second return in the same dispatch. This avoids singleton
+  batching setup without waiting for packets or adding a look-ahead syscall.
+  Large first frames still borrow empty storage when needed. This follows
+  a [failed sparse-CPU qualification](https://github.com/forgesworn/spry-turn/blob/main/docs/tcp-v0.4.2-abff8fa-results-2026-11-11.md);
+  the revised source requires its own unchanged-protocol qualification.
 - Add the opt-in keeper-controlled node profile: signed grant/device
   expiry, live credential revocation and a renewable 15-second desk lease
   control admission and existing allocations. A lost lease fails closed;
