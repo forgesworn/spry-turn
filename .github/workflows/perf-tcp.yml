@@ -1,24 +1,12 @@
 name: TCP performance qualification
 on:
-  push:
-    branches: [perf/tcp-buffer-reuse-20261111]
-    paths:
-      - src/**
-      - Cargo.toml
-      - Cargo.lock
-      - examples/load.rs
-      - scripts/compare.py
-      - scripts/qualify-tcp.py
-      - tests/test_qualify_tcp.py
-      - tests/interop.py
-      - .github/workflows/perf-tcp.yml
-      - docs/tcp-hosted-qualification-2026-11-11.md
   workflow_dispatch:
     inputs:
       baseline:
         description: Full baseline commit SHA
         default: '56232d52f0fbfd2f3795a50917890ed6c85e6dc9'
         required: true
+        type: string
 permissions:
   contents: read
 concurrency:
@@ -26,23 +14,22 @@ concurrency:
   cancel-in-progress: false
 jobs:
   qualify:
-    if: github.ref == 'refs/heads/perf/tcp-buffer-reuse-20261111'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
       CARGO_INCREMENTAL: '0'
       CARGO_BUILD_JOBS: '2'
+      RUSTUP_TOOLCHAIN: '1.94.1'
       BASELINE_SHA: ${{ inputs.baseline || '56232d52f0fbfd2f3795a50917890ed6c85e6dc9' }}
       CANDIDATE_SHA: ${{ github.sha }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
           ref: ${{ github.sha }}
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: 1.94.1
+      - name: Install the pinned compiler
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
       - name: Validate protocol helpers
         run: python3 -m unittest discover -s tests -p test_qualify_tcp.py -v
       - name: Build exact baseline then candidate sequentially

@@ -1,5 +1,9 @@
 # Plain TCP return batching, 11 November 2026
 
+This is the historical contended-host screen. The subsequent corrected candidate
+passed the separate [hosted Linux qualification](tcp-hosted-results-2026-11-11.md);
+that result does not change the limitations of the measurements below.
+
 The candidate integrates bounded plain TCP output batching and shared empty
 storage against current main. It does not transplant the historical experiment's
 parent, UDP socket tuning, EOF handling, TLS changes or scheduler changes.
