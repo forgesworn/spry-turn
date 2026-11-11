@@ -199,7 +199,7 @@ def finish(fixture):
 
 
 def run_one(name, binary, loader, clients, packets, size, window, transport="udp", min_seconds=0.0,
-            workers=None, relay_ports="49160:49999", relay_threads=0):
+            workers=None, relay_ports="49160:49999", relay_threads=0, rate=0):
     fixture = Server(binary, coturn=name == "coturn", tls=transport == "tls",
                      relay_ports=relay_ports, relay_threads=relay_threads)
     stop = threading.Event(); samples = []; monitor_error = []
@@ -222,6 +222,8 @@ def run_one(name, binary, loader, clients, packets, size, window, transport="udp
             "--resource-hold-ms", "30000"]
         if workers is not None:
             command += ["--workers", str(min(workers, clients))]
+        if rate:
+            command += ["--rate", str(rate)]
         if fixture.cert:
             command += ["--ca", str(fixture.cert)]
         loader_process = subprocess.Popen(command, env={**os.environ, "SPRY_TURN_SECRET": fixture.secret},

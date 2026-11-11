@@ -1,0 +1,70 @@
+name: TCP performance qualification
+on:
+  workflow_dispatch:
+    inputs:
+      baseline:
+        description: Full baseline commit SHA
+        default: '56232d52f0fbfd2f3795a50917890ed6c85e6dc9'
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: tcp-qualification-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  qualify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      CARGO_INCREMENTAL: '0'
+      CARGO_BUILD_JOBS: '2'
+      RUSTUP_TOOLCHAIN: '1.94.1'
+      BASELINE_SHA: ${{ inputs.baseline || '56232d52f0fbfd2f3795a50917890ed6c85e6dc9' }}
+      CANDIDATE_SHA: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Install the pinned compiler
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+      - name: Validate protocol helpers
+        run: python3 -m unittest discover -s tests -p test_qualify_tcp.py -v
+      - name: Build exact baseline then candidate sequentially
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os, re
+          for name in ('BASELINE_SHA', 'CANDIDATE_SHA'):
+              assert re.fullmatch('[0-9a-f]{40}', os.environ[name]), name
+          PY
+          mkdir -p .local/tcp-qualification/bin
+          git checkout --detach "$BASELINE_SHA"
+          cargo build --locked --release --features tls --bin spry-turn -j 2
+          cp target/release/spry-turn .local/tcp-qualification/bin/parent
+          git checkout --detach "$CANDIDATE_SHA"
+          cargo build --locked --release --features tls --bin spry-turn --example load -j 2
+          cp target/release/spry-turn .local/tcp-qualification/bin/candidate
+          cp target/release/examples/load .local/tcp-qualification/bin/load
+      - name: Run the predeclared paired qualification once
+        run: |
+          python3 scripts/qualify-tcp.py \
+            --parent .local/tcp-qualification/bin/parent \
+            --candidate .local/tcp-qualification/bin/candidate \
+            --loader .local/tcp-qualification/bin/load \
+            --parent-source "$BASELINE_SHA" --candidate-source "$CANDIDATE_SHA" \
+            --output .local/tcp-qualification/result.json
+      - name: Preserve every scalar row and failed guard
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: tcp-qualification-${{ github.sha }}
+          path: .local/tcp-qualification/result.json
+          if-no-files-found: warn
+          retention-days: 3
+      - name: Remove task executables
+        if: always()
+        run: rm -rf .local/tcp-qualification/bin

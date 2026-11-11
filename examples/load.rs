@@ -316,6 +316,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut workers = clients.min(4);
     let mut min_seconds = 0.0;
     let mut resource_hold_ms = 0;
+    let mut rate = 0_u64;
     for option in args.get(5..).unwrap_or_default().chunks(2) {
         let value = option.get(1).ok_or("benchmark option requires a value")?;
         match option[0].as_str() {
@@ -331,6 +332,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             "--workers" => workers = value.parse()?,
             "--min-seconds" => min_seconds = value.parse::<f64>()?,
             "--resource-hold-ms" => resource_hold_ms = value.parse::<u64>()?,
+            "--rate" => rate = value.parse()?,
             _ => return Err("unknown benchmark option".into()),
         }
     }
@@ -344,6 +346,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         || !min_seconds.is_finite()
         || !(0.0..=60.0).contains(&min_seconds)
         || resource_hold_ms > 30000
+        || rate > 10_000
+        || (rate != 0 && (workers != 1 || window != 1 || min_seconds != 0.0))
     {
         return Err("invalid benchmark bounds".into());
     }
@@ -389,49 +393,99 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let start = Instant::now();
     let chunk_size = clients.div_ceil(workers);
     let chunks = clients.div_ceil(chunk_size);
-    let (completed, mut loaded, loaded_count) = std::thread::scope(|scope| -> io::Result<_> {
-        let mut handles = Vec::new();
-        for (worker, pairs) in pairs.chunks_mut(chunk_size).enumerate() {
-            handles.push(scope.spawn(move || -> io::Result<_> {
-                let mut packet = make_packet();
-                let mut buffer = vec![0; 65536];
-                let mut loaded = Latency::default();
-                let total = requests / chunks + usize::from(worker < requests % chunks);
-                let mut done = 0;
-                let mut index = 0;
-                while done < total || start.elapsed().as_secs_f64() < min_seconds {
-                    let count = if done < total {
-                        window.min(total - done)
-                    } else {
-                        window
-                    };
-                    batch(
-                        &mut pairs[index % pairs.len()],
-                        count,
-                        &mut packet,
-                        &mut buffer,
-                        &mut loaded,
-                    )?;
-                    done += count;
-                    index += 1;
-                }
-                Ok((done, loaded))
-            }));
-        }
-        let mut completed = 0;
-        let mut loaded = Vec::new();
-        let mut loaded_count = 0;
-        for handle in handles {
-            let (done, samples) = handle
-                .join()
-                .map_err(|_| io::Error::other("load worker panicked"))??;
-            completed += done;
-            loaded.extend(samples.values);
-            loaded_count += samples.count;
-        }
-        Ok((completed, loaded, loaded_count))
-    })?;
+    let (completed, mut loaded, loaded_count, mut scheduled, mut dispatch_lag, missed_slots) =
+        std::thread::scope(|scope| -> io::Result<_> {
+            let mut handles = Vec::new();
+            for (worker, pairs) in pairs.chunks_mut(chunk_size).enumerate() {
+                handles.push(scope.spawn(move || -> io::Result<_> {
+                    let mut packet = make_packet();
+                    let mut buffer = vec![0; 65536];
+                    let mut loaded = Latency::default();
+                    let mut scheduled = Latency::default();
+                    let mut dispatch_lag = Latency::default();
+                    let mut missed_slots = 0_u64;
+                    let total = requests / chunks + usize::from(worker < requests % chunks);
+                    let mut done = 0;
+                    let mut index = 0;
+                    while done < total || start.elapsed().as_secs_f64() < min_seconds {
+                        let count = if done < total {
+                            window.min(total - done)
+                        } else {
+                            window
+                        };
+                        if rate == 0 {
+                            batch(
+                                &mut pairs[index % pairs.len()],
+                                count,
+                                &mut packet,
+                                &mut buffer,
+                                &mut loaded,
+                            )?;
+                        } else {
+                            // Absolute offered schedule, never reset after a slow
+                            // response. Report lateness and schedule-to-completion
+                            // latency so a stalled sender cannot hide missed work.
+                            let due = start + Duration::from_secs_f64(done as f64 / rate as f64);
+                            let now = Instant::now();
+                            if due > now {
+                                std::thread::sleep(due - now);
+                            }
+                            let sent = Instant::now();
+                            let late = sent.saturating_duration_since(due);
+                            dispatch_lag.add(late);
+                            if late >= Duration::from_secs_f64(1.0 / rate as f64) {
+                                missed_slots += 1;
+                            }
+                            batch(
+                                &mut pairs[index % pairs.len()],
+                                1,
+                                &mut packet,
+                                &mut buffer,
+                                &mut Latency::default(),
+                            )?;
+                            loaded.add(sent.elapsed());
+                            scheduled.add(due.elapsed());
+                        }
+                        done += count;
+                        index += 1;
+                    }
+                    Ok((done, loaded, scheduled, dispatch_lag, missed_slots))
+                }));
+            }
+            let mut completed = 0;
+            let mut loaded = Vec::new();
+            let mut loaded_count = 0;
+            let mut scheduled = Vec::new();
+            let mut dispatch_lag = Vec::new();
+            let mut missed_slots = 0;
+            for handle in handles {
+                let (done, samples, schedule_samples, dispatch_samples, missed) =
+                    handle
+                        .join()
+                        .map_err(|_| io::Error::other("load worker panicked"))??;
+                completed += done;
+                loaded.extend(samples.values);
+                loaded_count += samples.count;
+                scheduled.extend(schedule_samples.values);
+                dispatch_lag.extend(dispatch_samples.values);
+                missed_slots += missed;
+            }
+            Ok((
+                completed,
+                loaded,
+                loaded_count,
+                scheduled,
+                dispatch_lag,
+                missed_slots,
+            ))
+        })?;
     let elapsed = start.elapsed().as_secs_f64();
+    scheduled.sort_unstable();
+    dispatch_lag.sort_unstable();
+    let p99 =
+        |values: &[u64]| values.get(values.len() * 99 / 100).copied().unwrap_or(0) as f64 / 1000.0;
+    let scheduled_p99 = p99(&scheduled);
+    let dispatch_p99 = p99(&dispatch_lag);
     loaded.sort_unstable();
     let percentile = |percent: usize| {
         loaded
@@ -441,7 +495,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             / 1000.0
     };
     println!(
-        "{{\"transport\":\"{}\",\"tls\":{tls_metadata},\"clients\":{clients},\"load_workers\":{chunks},\"payload_bytes\":{size},\"window\":{window},\"round_trips\":{completed},\"minimum_seconds\":{min_seconds},\"delivered_forwarded_packets\":{},\"seconds\":{elapsed:.6},\"packets_per_second\":{:.1},\"payload_mbps\":{:.1},\"round_trip_p50_us\":{:.3},\"round_trip_p99_us\":{:.3},\"loaded_round_trip_p50_us\":{:.3},\"loaded_round_trip_p99_us\":{:.3},\"loaded_latency_observations\":{loaded_count},\"loaded_latency_retained\":{},\"setup_ms\":{setup_ms:.3},\"loss_or_corruption\":0}}",
+        "{{\"transport\":\"{}\",\"tls\":{tls_metadata},\"clients\":{clients},\"load_workers\":{chunks},\"payload_bytes\":{size},\"window\":{window},\"round_trips\":{completed},\"minimum_seconds\":{min_seconds},\"delivered_forwarded_packets\":{},\"seconds\":{elapsed:.6},\"packets_per_second\":{:.1},\"payload_mbps\":{:.1},\"round_trip_p50_us\":{:.3},\"round_trip_p99_us\":{:.3},\"loaded_round_trip_p50_us\":{:.3},\"loaded_round_trip_p99_us\":{:.3},\"loaded_latency_observations\":{loaded_count},\"loaded_latency_retained\":{},\"setup_ms\":{setup_ms:.3},\"loss_or_corruption\":0,\"offered_round_trips_per_second\":{rate},\"scheduled_round_trip_p99_us\":{scheduled_p99:.3},\"dispatch_lateness_p99_us\":{dispatch_p99:.3},\"missed_dispatch_slots\":{missed_slots}}}",
         mode.name(),
         completed * 2,
         completed as f64 * 2.0 / elapsed,

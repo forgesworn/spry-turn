@@ -17,6 +17,7 @@ jobs:
           node-version: 24
       - run: npm run check:docs
       - run: node tests/kithmoot-guard.mjs
+      - run: python3 -B -m unittest discover -s tests -p test_qualify_tcp.py
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy

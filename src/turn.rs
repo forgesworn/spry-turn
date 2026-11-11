@@ -34,6 +34,28 @@ const MAX_PEERS: usize = 32;
 const STREAM_READS_PER_TURN: usize = 16;
 const STREAM_BYTES_PER_TURN: usize = MAX_QUEUE;
 const STREAM_FRAMES_PER_TURN: usize = 64;
+// Coalesce only already queued plain TCP peer returns. Flush within the current
+// receive dispatch, never wait for a later packet or timer to fill a batch.
+const TCP_RETURN_BATCH_FRAMES: usize = 16;
+const TCP_RETURN_BATCH_BYTES: usize = 16_384;
+
+struct TcpReturnBatch {
+    enabled: bool,
+    frames: usize,
+    bytes: usize,
+    payload_bytes: usize,
+}
+
+impl TcpReturnBatch {
+    fn new(enabled: bool) -> Self {
+        Self {
+            enabled,
+            frames: 0,
+            bytes: 0,
+            payload_bytes: 0,
+        }
+    }
+}
 
 fn local_bridge_address(ip: IpAddr) -> bool {
     matches!(ip, IpAddr::V4(v) if v.octets()[0] == 127 && (64..=127).contains(&v.octets()[1]))
@@ -146,6 +168,441 @@ mod policy_tests {
         let response = Message::parse(&bytes).unwrap();
         assert_eq!((response.method, response.class), (BINDING, 2));
         assert_eq!(response.transaction, transaction);
+    }
+
+    fn batch_output_fixture(count: usize) -> (Server, Vec<std::net::TcpStream>, Vec<Token>) {
+        let mut config = Config::local(vec![1; 32]);
+        config.listen.set_port(0);
+        config.allow_loopback_peers = true;
+        let mut server = bind_server(config);
+        let mut clients = Vec::new();
+        let mut tokens: Vec<Token> = Vec::new();
+        for _ in 0..count {
+            let client = std::net::TcpStream::connect_timeout(
+                &server.local_addr().unwrap(),
+                Duration::from_secs(2),
+            )
+            .unwrap();
+            client.set_nonblocking(true).unwrap();
+            accept_stream(&mut server);
+            let token = *server
+                .connections
+                .keys()
+                .find(|token| !tokens.contains(*token))
+                .unwrap();
+            tokens.push(token);
+            clients.push(client);
+        }
+        (server, clients, tokens)
+    }
+
+    fn batch_output_relay(
+        server: &mut Server,
+        client: Client,
+        peer: SocketAddr,
+    ) -> (Token, SocketAddr) {
+        let socket = UdpSocket::bind("127.0.0.1:0".parse().unwrap()).unwrap();
+        let address = socket.local_addr().unwrap();
+        #[cfg(feature = "direct-index")]
+        let token = server.relays.reserve(client);
+        #[cfg(not(feature = "direct-index"))]
+        let token = {
+            let token = server.token();
+            server.relays.insert(token, client);
+            token
+        };
+        let expires = Instant::now() + Duration::from_secs(60);
+        // Generated authorised state isolates storage ownership from auth.
+        // Direct receive_peer calls do not need a registered relay readiness edge.
+        server.allocations.insert(
+            client,
+            Allocation {
+                socket,
+                #[cfg(feature = "connected-udp")]
+                client_socket: None,
+                token,
+                bound_address: address,
+                advertised_address: address,
+                username: "batch-storage-fixture".into(),
+                transaction: [1; 12],
+                expires,
+                permissions: vec![Permission {
+                    ip: peer.ip(),
+                    expires,
+                }],
+                channels: vec![Channel {
+                    number: 0x4000,
+                    peer,
+                    expires,
+                }],
+                bandwidth: Bucket::new(64 * 1024 * 1024, 128 * 1024 * 1024, Instant::now()),
+            },
+        );
+        (token, address)
+    }
+
+    #[test]
+    #[cfg(all(feature = "connected-udp", unix))]
+    fn batch_output_dispatch_delivers_large_frame_without_retaining_connection_growth() {
+        let (mut server, mut clients, tokens) = batch_output_fixture(1);
+        let token = tokens[0];
+        let key = Client::Stream(token);
+        // This regression exercises the drained path. Give the fresh socket
+        // room for one 9004-byte frame; it does not manufacture a short write.
+        socket2::SockRef::from(&server.connections[&token].socket)
+            .set_send_buffer_size(1_048_576)
+            .unwrap();
+        let original_capacity = server.connections[&token].output.capacity();
+        let peer = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let peer_address = peer.local_addr().unwrap();
+        let (relay_token, address) = batch_output_relay(&mut server, key, peer_address);
+        let payload: Vec<u8> = (0..9000).map(|i| (i % 251) as u8).collect();
+        assert_eq!(peer.send_to(&payload, address).unwrap(), payload.len());
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let mut peek = [0; 1];
+        loop {
+            match server.allocations[&key].socket.peek_from(&mut peek) {
+                Ok((_, from)) => {
+                    assert_eq!(from, peer_address);
+                    break;
+                }
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                    assert!(Instant::now() < deadline, "peer datagram did not arrive");
+                    std::thread::yield_now();
+                }
+                Err(error) => panic!("peer peek failed: {error}"),
+            }
+        }
+        let mut scratch = vec![0; MAX_PACKET + HEADROOM];
+        server.receive_peer(relay_token, &mut scratch);
+        assert!(
+            server.connections[&token].output.is_empty(),
+            "the fresh socket must drain this single-frame fixture"
+        );
+        assert_eq!(
+            server.connections[&token].output.capacity(),
+            original_capacity,
+            "a drained dispatch must not retain its batch growth on the connection"
+        );
+        let mut delivered = Vec::new();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while delivered.len() < payload.len() + 4 && Instant::now() < deadline {
+            match clients[0].read(&mut scratch) {
+                Ok(0) => panic!("connection closed before the frame was delivered"),
+                Ok(n) => delivered.extend_from_slice(&scratch[..n]),
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                    std::thread::yield_now();
+                }
+                Err(error) => panic!("client read failed: {error}"),
+            }
+        }
+        assert_eq!(delivered.len(), payload.len() + 4);
+        assert_eq!(
+            wire::channel(&delivered),
+            Some((0x4000, payload.as_slice()))
+        );
+        assert_eq!(server.stats.forwarded_packets, 1);
+        assert_eq!(server.stats.forwarded_bytes, payload.len() as u64);
+        assert_eq!(server.stats.dropped_packets, 0);
+    }
+
+    #[test]
+    fn batch_output_empty_storage_reuses_capacity_across_two_connections() {
+        let (mut server, _clients, tokens) = batch_output_fixture(2);
+        server.tcp_return_output = Vec::with_capacity(TCP_RETURN_BATCH_BYTES);
+        let shared_pointer = server.tcp_return_output.as_ptr();
+        let shared_capacity = server.tcp_return_output.capacity();
+        for (index, token) in tokens.into_iter().enumerate() {
+            let key = Client::Stream(token);
+            let original_pointer = server.connections[&token].output.as_ptr();
+            let original_capacity = server.connections[&token].output.capacity();
+            assert!(server.swap_empty_peer_output(key));
+            assert_eq!(server.connections[&token].output.as_ptr(), shared_pointer);
+            assert!(server.connections[&token].output.is_empty());
+            assert_eq!(server.tcp_return_output.as_ptr(), original_pointer);
+            let conn = server.connections.get_mut(&token).unwrap();
+            let bytes = vec![index as u8 + 1; 9004];
+            conn.queue(&bytes).unwrap();
+            assert_eq!(conn.output, bytes);
+            // Synthetic successful writer completion, not socket I/O.
+            conn.output.clear();
+            conn.written = 0;
+            assert!(server.swap_empty_peer_output(key));
+            assert_eq!(server.connections[&token].output.as_ptr(), original_pointer);
+            assert_eq!(
+                server.connections[&token].output.capacity(),
+                original_capacity
+            );
+            assert_eq!(server.tcp_return_output.as_ptr(), shared_pointer);
+            assert_eq!(server.tcp_return_output.capacity(), shared_capacity);
+            assert!(server.tcp_return_output.is_empty());
+        }
+    }
+
+    #[test]
+    fn batch_output_pending_or_partial_bytes_never_change_owner() {
+        let (mut server, _clients, tokens) = batch_output_fixture(1);
+        let token = tokens[0];
+        let key = Client::Stream(token);
+        server.tcp_return_output = Vec::with_capacity(TCP_RETURN_BATCH_BYTES);
+        let shared_pointer = server.tcp_return_output.as_ptr();
+        let bytes: Vec<u8> = (0..128).collect();
+        server
+            .connections
+            .get_mut(&token)
+            .unwrap()
+            .queue(&bytes)
+            .unwrap();
+        let original_pointer = server.connections[&token].output.as_ptr();
+        // Synthetic writer offsets include a fully consumed but uncleared Vec.
+        for written in [0, 17, bytes.len()] {
+            server.connections.get_mut(&token).unwrap().written = written;
+            assert!(!server.swap_empty_peer_output(key));
+            let conn = &server.connections[&token];
+            assert_eq!(conn.output, bytes);
+            assert_eq!(conn.written, written);
+            assert_eq!(conn.output.as_ptr(), original_pointer);
+            assert_eq!(server.tcp_return_output.as_ptr(), shared_pointer);
+        }
+        let conn = server.connections.get_mut(&token).unwrap();
+        conn.output.clear();
+        conn.written = 0;
+        assert!(server.swap_empty_peer_output(key));
+        let conn = server.connections.get_mut(&token).unwrap();
+        conn.queue(&bytes).unwrap();
+        conn.written = 17;
+        assert!(
+            !server.swap_empty_peer_output(key),
+            "a pending loan stays with its writer"
+        );
+        let conn = &server.connections[&token];
+        assert_eq!(&conn.output[conn.written..], &bytes[17..]);
+        assert_eq!(conn.output.as_ptr(), shared_pointer);
+        assert_eq!(server.tcp_return_output.as_ptr(), original_pointer);
+        assert!(server.tcp_return_output.is_empty());
+    }
+
+    #[test]
+    fn batch_output_close_while_lent_leaves_empty_storage_available() {
+        let (mut server, _clients, tokens) = batch_output_fixture(2);
+        let key = Client::Stream(tokens[0]);
+        server.tcp_return_output = Vec::with_capacity(TCP_RETURN_BATCH_BYTES);
+        let original_pointer = server.connections[&tokens[0]].output.as_ptr();
+        assert!(server.swap_empty_peer_output(key));
+        server
+            .connections
+            .get_mut(&tokens[0])
+            .unwrap()
+            .queue(b"accepted tail")
+            .unwrap();
+        server.close(tokens[0]);
+        assert!(!server.swap_empty_peer_output(key));
+        assert!(!server.connections.contains_key(&tokens[0]));
+        assert!(server.tcp_return_output.is_empty());
+        assert_eq!(server.tcp_return_output.as_ptr(), original_pointer);
+        assert!(server.swap_empty_peer_output(Client::Stream(tokens[1])));
+        assert!(server.connections[&tokens[1]].output.is_empty());
+        assert_eq!(
+            server.connections[&tokens[1]].output.as_ptr(),
+            original_pointer
+        );
+    }
+
+    #[test]
+    fn batch_output_flushes_at_frame_and_byte_limits_and_on_dispatch_end() {
+        let (mut server, mut clients, tokens) = batch_output_fixture(1);
+        let token = tokens[0];
+        let key = Client::Stream(token);
+        let mut batch = server.peer_return_batch(key);
+        let small = [0x41; 8];
+        for _ in 0..TCP_RETURN_BATCH_FRAMES - 1 {
+            assert!(server.send_peer_packet(key, &small, 4, &mut batch));
+        }
+        let mut buffer = [0; TCP_RETURN_BATCH_BYTES + 4];
+        assert_eq!(
+            clients[0].read(&mut buffer).unwrap_err().kind(),
+            io::ErrorKind::WouldBlock
+        );
+        assert!(server.send_peer_packet(key, &small, 4, &mut batch));
+        assert_eq!(batch.frames, 0, "frame limit flushes immediately");
+        clients[0].set_nonblocking(false).unwrap();
+        clients[0]
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        clients[0]
+            .read_exact(&mut buffer[..small.len() * TCP_RETURN_BATCH_FRAMES])
+            .unwrap();
+        assert!(
+            buffer[..small.len() * TCP_RETURN_BATCH_FRAMES]
+                .iter()
+                .all(|b| *b == 0x41)
+        );
+        let half = vec![0x52; TCP_RETURN_BATCH_BYTES / 2];
+        assert!(server.send_peer_packet(key, &half, half.len() - 4, &mut batch));
+        assert!(server.send_peer_packet(key, &half, half.len() - 4, &mut batch));
+        assert_eq!(batch.frames, 0, "byte limit flushes before the frame limit");
+        clients[0]
+            .read_exact(&mut buffer[..TCP_RETURN_BATCH_BYTES])
+            .unwrap();
+        assert!(buffer[..TCP_RETURN_BATCH_BYTES].iter().all(|b| *b == 0x52));
+        assert!(server.send_peer_packet(key, b"tail", 0, &mut batch));
+        server.flush_peer_batch(key, &mut batch);
+        clients[0].read_exact(&mut buffer[..4]).unwrap();
+        assert_eq!(&buffer[..4], b"tail");
+        assert!(server.connections[&token].output.is_empty());
+    }
+
+    #[test]
+    fn batch_output_final_fatal_flush_counts_all_unaccepted_payloads() {
+        let (mut server, _clients, tokens) = batch_output_fixture(1);
+        let token = tokens[0];
+        let key = Client::Stream(token);
+        let mut batch = server.peer_return_batch(key);
+        // A local write shutdown makes the next write fail deterministically,
+        // without relying on delivery of a remote FIN/RST readiness event.
+        server.connections[&token]
+            .socket
+            .shutdown(std::net::Shutdown::Write)
+            .unwrap();
+        assert!(server.send_peer_packet(key, b"framed-payload", 9, &mut batch));
+        assert_eq!(server.stats.forwarded_packets, 0);
+        assert!(!server.flush_peer_batch(key, &mut batch));
+        assert_eq!(server.stats.forwarded_packets, 0);
+        assert_eq!(server.stats.forwarded_bytes, 0);
+        assert_eq!(server.transport.stream_bytes, 0);
+        assert_eq!(server.stats.dropped_packets, 1);
+        assert_eq!(server.transport.stream_errors, 1);
+        assert!(!server.connections.contains_key(&token));
+        assert!(server.flush_peer_batch(key, &mut batch));
+        assert_eq!(server.stats.dropped_packets, 1);
+    }
+
+    #[test]
+    fn batch_output_threshold_failure_does_not_recount_accepted_batch() {
+        let (mut server, _clients, tokens) = batch_output_fixture(1);
+        let token = tokens[0];
+        let key = Client::Stream(token);
+        let mut batch = server.peer_return_batch(key);
+        assert!(server.send_peer_packet(key, b"first", 1, &mut batch));
+        assert!(server.flush_peer_batch(key, &mut batch));
+        assert_eq!(server.stats.forwarded_packets, 1);
+        server.connections[&token]
+            .socket
+            .shutdown(std::net::Shutdown::Write)
+            .unwrap();
+        for _ in 0..TCP_RETURN_BATCH_FRAMES - 1 {
+            assert!(server.send_peer_packet(key, b"next", 2, &mut batch));
+        }
+        assert!(!server.send_peer_packet(key, b"last", 3, &mut batch));
+        assert_eq!(server.stats.forwarded_packets, 1);
+        assert_eq!(server.stats.forwarded_bytes, 1);
+        assert_eq!(server.transport.stream_bytes, 1);
+        assert_eq!(server.stats.dropped_packets, TCP_RETURN_BATCH_FRAMES as u64);
+        assert_eq!(server.transport.stream_errors, 1);
+        assert!(server.flush_peer_batch(key, &mut batch));
+        assert_eq!(server.stats.dropped_packets, TCP_RETURN_BATCH_FRAMES as u64);
+    }
+
+    #[test]
+    #[cfg(all(feature = "connected-udp", unix))]
+    fn batch_output_backpressured_acceptance_is_not_recounted_after_failure() {
+        let (mut server, clients, tokens) = batch_output_fixture(1);
+        let token = tokens[0];
+        let key = Client::Stream(token);
+        socket2::SockRef::from(&server.connections[&token].socket)
+            .set_send_buffer_size(4096)
+            .unwrap();
+        socket2::SockRef::from(&clients[0])
+            .set_recv_buffer_size(4096)
+            .unwrap();
+        let block = [0x5a; TCP_RETURN_BATCH_BYTES];
+        for _ in 0..2048 {
+            server.send_client(key, &block);
+            let conn = &server.connections[&token];
+            if conn.output.len() > conn.written {
+                break;
+            }
+        }
+        assert!(server.connections[&token].output.len() > server.connections[&token].written);
+        let mut batch = server.peer_return_batch(key);
+        assert!(server.send_peer_packet(key, b"queued", 2, &mut batch));
+        assert!(server.flush_peer_batch(key, &mut batch));
+        assert_eq!(server.stats.forwarded_packets, 1);
+        assert_eq!(server.stats.forwarded_bytes, 2);
+        // An accepted pending batch remains forwarded when a later batch fails.
+        server.connections[&token]
+            .socket
+            .shutdown(std::net::Shutdown::Write)
+            .unwrap();
+        assert!(server.send_peer_packet(key, b"failed", 3, &mut batch));
+        assert!(!server.flush_peer_batch(key, &mut batch));
+        assert_eq!(server.stats.forwarded_packets, 1);
+        assert_eq!(server.stats.forwarded_bytes, 2);
+        assert_eq!(server.transport.stream_bytes, 2);
+        assert_eq!(server.stats.dropped_packets, 1);
+    }
+
+    #[test]
+    fn batch_output_queue_retry_fatal_flush_counts_batch_and_new_frame_once() {
+        let (mut server, _clients, tokens) = batch_output_fixture(1);
+        let token = tokens[0];
+        let key = Client::Stream(token);
+        let mut batch = server.peer_return_batch(key);
+        // Model an already accepted full pending queue, leaving room for one
+        // short batch frame. Its historical acceptance must stay untouched.
+        server
+            .connections
+            .get_mut(&token)
+            .unwrap()
+            .queue(&vec![0; MAX_QUEUE - STREAM_CONTROL_RESERVE - 4])
+            .unwrap();
+        server.forwarded(key, 100);
+        assert!(server.send_peer_packet(key, b"next", 2, &mut batch));
+        server.connections[&token]
+            .socket
+            .shutdown(std::net::Shutdown::Write)
+            .unwrap();
+        assert!(!server.send_peer_packet(key, b"last", 3, &mut batch));
+        assert_eq!(server.stats.forwarded_packets, 1);
+        assert_eq!(server.stats.forwarded_bytes, 100);
+        assert_eq!(server.transport.stream_bytes, 100);
+        assert_eq!(server.stats.dropped_packets, 2);
+        assert_eq!(server.transport.stream_errors, 1);
+        assert!(server.flush_peer_batch(key, &mut batch));
+        assert_eq!(server.stats.dropped_packets, 2);
+    }
+
+    #[test]
+    fn batch_output_excludes_udp_and_tls() {
+        let (mut server, _clients, tokens) = batch_output_fixture(1);
+        let key = Client::Stream(tokens[0]);
+        assert!(server.peer_return_batch(key).enabled);
+        assert!(
+            !server
+                .peer_return_batch(Client::Datagram("127.0.0.1:1".parse().unwrap()))
+                .enabled
+        );
+        #[cfg(feature = "tls")]
+        {
+            #[derive(Debug)]
+            struct NoCertificate;
+            impl rustls::server::ResolvesServerCert for NoCertificate {
+                fn resolve(
+                    &self,
+                    _: rustls::server::ClientHello<'_>,
+                ) -> Option<Arc<rustls::sign::CertifiedKey>> {
+                    None
+                }
+            }
+            let config = rustls::ServerConfig::builder()
+                .with_no_client_auth()
+                .with_cert_resolver(Arc::new(NoCertificate));
+            server.connections.get_mut(&tokens[0]).unwrap().tls =
+                Some(rustls::ServerConnection::new(Arc::new(config)).unwrap());
+            assert!(!server.peer_return_batch(key).enabled);
+        }
+        server.close(tokens[0]);
+        assert!(!server.peer_return_batch(key).enabled);
     }
 
     #[test]
@@ -2498,6 +2955,8 @@ pub struct Server {
     next_relay_mapping: usize,
     next_relay_port: u16,
     connections: HashMap<Token, Connection>,
+    // Empty storage lent to one plain TCP peer receive dispatch at a time.
+    tcp_return_output: Vec<u8>,
     pending_streams: VecDeque<Token>,
     next_token: usize,
     nonces: auth::Nonces,
@@ -2775,6 +3234,7 @@ impl Server {
             next_relay_mapping: 0,
             next_relay_port,
             connections: HashMap::new(),
+            tcp_return_output: Vec::new(),
             pending_streams: VecDeque::new(),
             next_token: 3,
             nonces: auth::Nonces::new()
@@ -2821,7 +3281,10 @@ impl Server {
         }
     }
     fn forwarded(&mut self, client: Client, bytes: usize) {
-        self.stats.forwarded_packets += 1;
+        self.forwarded_batch(client, 1, bytes);
+    }
+    fn forwarded_batch(&mut self, client: Client, frames: usize, bytes: usize) {
+        self.stats.forwarded_packets += frames as u64;
         self.stats.forwarded_bytes += bytes as u64;
         let counter = match client {
             Client::Datagram(_) => &mut self.transport.udp_bytes,
@@ -2991,6 +3454,16 @@ impl Server {
     /// Returns whether the whole packet was accepted. UDP relay overload drops
     /// the new packet; it must not truncate queued stream frames or allocations.
     fn send_client_packet(&mut self, client: Client, bytes: &[u8], relay_payload: bool) -> bool {
+        self.send_client_packet_inner(client, bytes, relay_payload, false)
+    }
+
+    fn send_client_packet_inner(
+        &mut self,
+        client: Client,
+        bytes: &[u8],
+        relay_payload: bool,
+        defer_tcp_return: bool,
+    ) -> bool {
         match client {
             Client::Datagram(peer) => {
                 #[cfg(feature = "connected-udp")]
@@ -3045,8 +3518,17 @@ impl Server {
                     self.stats.dropped_packets += 1;
                     return false;
                 }
-                let result = conn.queue(bytes).and_then(|()| conn.flush());
+                let result = conn.queue(bytes).and_then(|()| {
+                    if defer_tcp_return {
+                        Ok(false)
+                    } else {
+                        conn.flush()
+                    }
+                });
                 let accepted = match result {
+                    // The dispatch boundary flushes and updates readiness. Do
+                    // not disable existing write interest for a deferred frame.
+                    Ok(_) if defer_tcp_return => true,
                     Ok(pending) => {
                         if conn
                             .update_interest(self.poll.registry(), token, pending)
@@ -4053,10 +4535,135 @@ impl Server {
         }
     }
 
+    fn flush_peer_batch(&mut self, client: Client, batch: &mut TcpReturnBatch) -> bool {
+        if batch.frames == 0 {
+            return true;
+        }
+        let frames = std::mem::take(&mut batch.frames);
+        let payload_bytes = std::mem::take(&mut batch.payload_bytes);
+        batch.bytes = 0;
+        let Client::Stream(token) = client else {
+            unreachable!("only plain TCP returns are batched");
+        };
+        let accepted = if let Some(conn) = self.connections.get_mut(&token) {
+            if conn
+                .flush()
+                .and_then(|pending| conn.update_interest(self.poll.registry(), token, pending))
+                .is_ok()
+            {
+                true
+            } else {
+                self.fail_stream(token);
+                false
+            }
+        } else {
+            false
+        };
+        // Preserve accepted/queued semantics: WouldBlock succeeds, a fatal
+        // first flush rejects this batch. Previously accepted pending output
+        // has already been counted and must not be counted again here.
+        if accepted {
+            self.forwarded_batch(client, frames, payload_bytes);
+        } else {
+            self.stats.dropped_packets += frames as u64;
+        }
+        accepted
+    }
+
+    fn send_peer_packet(
+        &mut self,
+        client: Client,
+        bytes: &[u8],
+        payload_bytes: usize,
+        batch: &mut TcpReturnBatch,
+    ) -> bool {
+        if !batch.enabled || bytes.len() > TCP_RETURN_BATCH_BYTES {
+            self.flush_peer_batch(client, batch);
+            let accepted = self.send_client_packet(client, bytes, true);
+            if accepted {
+                self.forwarded(client, payload_bytes);
+            }
+            return accepted;
+        }
+        // Settle the current batch before the queue-cap retry can flush it.
+        // Otherwise a successful retry followed by a later fatal flush could
+        // reclassify already accepted packets as dropped.
+        let needs_queue_retry = match client {
+            Client::Stream(token) => self.connections.get(&token).is_some_and(|conn| {
+                bytes.len()
+                    > (MAX_QUEUE - STREAM_CONTROL_RESERVE)
+                        .saturating_sub(conn.output.len() - conn.written)
+            }),
+            Client::Datagram(_) => false,
+        };
+        if bytes.len() > TCP_RETURN_BATCH_BYTES.saturating_sub(batch.bytes) || needs_queue_retry {
+            self.flush_peer_batch(client, batch);
+        }
+        let accepted = self.send_client_packet_inner(client, bytes, true, true);
+        if accepted {
+            batch.frames += 1;
+            batch.bytes += bytes.len();
+            batch.payload_bytes += payload_bytes;
+            if batch.frames >= TCP_RETURN_BATCH_FRAMES || batch.bytes >= TCP_RETURN_BATCH_BYTES {
+                return self.flush_peer_batch(client, batch);
+            }
+        }
+        accepted
+    }
+
+    fn peer_return_batch(&self, client: Client) -> TcpReturnBatch {
+        let enabled = match client {
+            Client::Stream(token) => self.connections.get(&token).is_some_and(|conn| {
+                #[cfg(feature = "tls")]
+                if conn.tls.is_some() {
+                    return false;
+                }
+                let _ = conn;
+                true
+            }),
+            Client::Datagram(_) => false,
+        };
+        TcpReturnBatch::new(enabled)
+    }
+
+    // Swap only empty storage: blocked writes and their cursor always remain
+    // owned by the connection. Closing a borrower releases its owned buffer.
+    fn swap_empty_peer_output(&mut self, client: Client) -> bool {
+        let Client::Stream(token) = client else {
+            return false;
+        };
+        let Some(conn) = self.connections.get_mut(&token) else {
+            return false;
+        };
+        if !conn.output.is_empty() || conn.written != 0 {
+            return false;
+        }
+        debug_assert!(self.tcp_return_output.is_empty());
+        std::mem::swap(&mut conn.output, &mut self.tcp_return_output);
+        true
+    }
+
     fn receive_peer(&mut self, token: Token, input: &mut [u8]) {
         let Some(client) = self.relays.get(&token).copied() else {
             return;
         };
+        let mut batch = self.peer_return_batch(client);
+        let lent_output = batch.enabled && self.swap_empty_peer_output(client);
+        self.receive_peer_packets(client, input, &mut batch);
+        // Includes WouldBlock, expiry/revocation and errors. No pending batch
+        // relies on another readiness edge, timer, or datagram to be flushed.
+        self.flush_peer_batch(client, &mut batch);
+        if lent_output {
+            self.swap_empty_peer_output(client);
+        }
+    }
+
+    fn receive_peer_packets(
+        &mut self,
+        client: Client,
+        input: &mut [u8],
+        batch: &mut TcpReturnBatch,
+    ) {
         loop {
             let now = Instant::now();
             let Some(a) = self.allocations.get_mut(&client).filter(|a| {
@@ -4073,7 +4680,10 @@ impl Server {
             // packets prepend their framing without copying the media payload.
             let (n, peer) = match a.socket.recv_from(&mut input[HEADROOM..]) {
                 Ok(value) => value,
-                Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => {
+                    self.flush_peer_batch(client, batch);
+                    continue;
+                }
                 Err(_) => return,
             };
             let peer = Self::own_public_source(
@@ -4090,6 +4700,7 @@ impl Server {
                 || !Self::within_budget(&mut a.bandwidth, &mut self.aggregate, n, now)
             {
                 self.stats.dropped_packets += 1;
+                self.flush_peer_batch(client, batch);
                 continue;
             }
             if let Some(c) = a
@@ -4106,17 +4717,20 @@ impl Server {
                     HEADROOM + n
                 };
                 input[HEADROOM + n..end].fill(0);
-                if !self.send_client_packet(client, &input[begin..end], true) {
+                if !self.send_peer_packet(client, &input[begin..end], n, batch) {
+                    self.flush_peer_batch(client, batch);
                     continue;
                 }
             } else {
                 // Data indications also use the reserved prefix of this buffer.
                 if n > 65_440 {
                     self.stats.dropped_packets += 1;
+                    self.flush_peer_batch(client, batch);
                     continue;
                 }
                 let mut transaction = [0; 12];
                 if getrandom::fill(&mut transaction).is_err() {
+                    self.flush_peer_batch(client, batch);
                     continue;
                 }
                 let (address, address_len) = address_value(peer, &transaction);
@@ -4134,11 +4748,11 @@ impl Server {
                 output[data_start - 4..data_start - 2].copy_from_slice(&DATA.to_be_bytes());
                 output[data_start - 2..data_start].copy_from_slice(&(n as u16).to_be_bytes());
                 output[data_start + n..len].fill(0);
-                if !self.send_client_packet(client, &output[..len], true) {
+                if !self.send_peer_packet(client, &output[..len], n, batch) {
+                    self.flush_peer_batch(client, batch);
                     continue;
                 }
             }
-            self.forwarded(client, n);
         }
     }
 }
