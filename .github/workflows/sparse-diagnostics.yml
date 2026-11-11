@@ -1,13 +1,5 @@
 name: Sparse CPU phase diagnostics
 on:
-  # Temporary first-run trigger; remove before merging the reviewed diagnostic.
-  push:
-    branches: [perf/sparse-phase-diagnostics-20261111]
-    paths:
-      - examples/load.rs
-      - scripts/sparse-diagnostics.py
-      - tests/test_sparse_diagnostics.py
-      - .github/workflows/sparse-diagnostics.yml
   workflow_dispatch:
 permissions:
   contents: read

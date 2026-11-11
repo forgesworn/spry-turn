@@ -22,10 +22,10 @@ The released download was built with Rust 1.99.1. These diagnostics use 1.94.1 t
 match the earlier failed qualification; they do not measure the published binary.
 The runtime tree must match the released source. The frozen qualification
 script, comparison helper, protocol document and qualification workflow must
-remain byte-identical to v0.4.2. The diagnostic workflow is separate. Its initial
-push trigger is restricted to the task branch and relevant source paths; remove
-that trigger before merge, retaining manual reproduction. Record the measured
-commit and hashes if a later workflow-only cleanup changes HEAD.
+remain byte-identical to v0.4.2. The diagnostic workflow is separate. Its initial task-branch push trigger ran once and is now removed, retaining
+manual reproduction. The [results](sparse-cpu-diagnostic-results-2026-11-11.md)
+record the measured commit and source hashes; the later workflow and evidence
+cleanup did not change the diagnostic loader, observer or relay source.
 
 ## Fixed experiment
 
@@ -110,4 +110,4 @@ and unchanged ordinary-result fields. The first workspace attempt stopped at the
 existing missing-release-binary prerequisite in the fresh worktree; building that
 binary resolved the prerequisite without source changes. No local performance
 measurement was run. Fixture processes and private temporary directories were
-closed and removed. Remote diagnostic results remain pending.
+closed and removed. The [remote results](sparse-cpu-diagnostic-results-2026-11-11.md) retain all 16 rows.
