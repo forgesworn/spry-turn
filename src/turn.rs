@@ -1984,20 +1984,17 @@ mod policy_tests {
     #[test]
     #[cfg(all(feature = "connected-udp", unix))]
     fn relay_overload_preserves_stream_and_resumes_both_framing_paths() {
-        // Above the bytes two 2 KiB socket buffers can hold (the platform may
-        // round each up), below macOS's 9216-byte UDP datagram limit.
+        // Below macOS's 9216-byte UDP datagram limit. Socket capacity can
+        // change while the test runs, so observe an actual drop in a bounded
+        // non-reading burst rather than assuming its first frame must drop.
         const OVERLOAD_PAYLOAD: usize = 8192;
         for channel in [None, Some(0x4000_u16)] {
             let mut config = Config::local(vec![1; 32]);
             config.listen.set_port(0);
             let mut server = bind_server(config);
-            // Fix the client's receive buffer at 2 KiB before connecting, so
-            // the window is negotiated at that size. An explicit size stops the
-            // OS auto-tuning the receive buffer upwards as data arrives, which
-            // on macOS lets the kernel keep trickling queued bytes out for a
-            // while after the first WouldBlock. The non-reading client then
-            // gives real, bounded backpressure: the kernel can never absorb
-            // more than a few KiB of the application queue.
+            // Small buffers reach real backpressure promptly, but neither
+            // their requested size nor an earlier WouldBlock fixes how many
+            // bytes a later retry flush can accept on every supported OS.
             let client = socket2::Socket::new(
                 socket2::Domain::IPV4,
                 socket2::Type::STREAM,
@@ -2070,15 +2067,8 @@ mod policy_tests {
             let fill = MAX_QUEUE - STREAM_CONTROL_RESERVE - pending;
             conn.queue(&vec![0x5a; fill]).unwrap();
             expected += fill;
-            let queued = conn.output.clone();
-            let written = conn.written;
-
-            // Larger than anything the kernel could drain from the full
-            // queue between the fill above and this datagram being handled
-            // (even while the retry flush runs), so the new frame can only
-            // be refused, whatever the scheduler does on a loaded runner.
+            let prefix_len = expected;
             let payload = vec![0x7e; OVERLOAD_PAYLOAD];
-            peer.send_to(&payload, address).unwrap();
             let mut scratch = vec![0; MAX_PACKET + HEADROOM];
             let wait_for_peer = |server: &Server| {
                 let queued_by = Instant::now() + Duration::from_secs(2);
@@ -2097,23 +2087,62 @@ mod policy_tests {
                     }
                 }
             };
-            wait_for_peer(&server);
-            server.receive_peer(relay_token, &mut scratch);
+            let saturate_by = Instant::now() + Duration::from_secs(5);
+            let mut admitted = 0_u64;
+            let mut observed_drop = false;
+            for attempt in 0..256 {
+                assert!(
+                    Instant::now() < saturate_by,
+                    "saturation deadline at {attempt}"
+                );
+                let conn = &server.connections[&token];
+                let queued = conn.output.clone();
+                let written = conn.written;
+                let forwarded = server.stats.forwarded_packets;
+                let dropped = server.stats.dropped_packets;
+                peer.send_to(&payload, address).unwrap();
+                wait_for_peer(&server);
+                server.receive_peer(relay_token, &mut scratch);
+                assert!(
+                    server.connections.contains_key(&token),
+                    "UDP overload must retain control stream"
+                );
+                assert!(server.allocations.contains_key(&key));
+                match (
+                    server.stats.forwarded_packets - forwarded,
+                    server.stats.dropped_packets - dropped,
+                ) {
+                    (1, 0) => admitted += 1,
+                    (0, 1) => {
+                        let conn = &server.connections[&token];
+                        assert!(
+                            conn.output == queued && conn.written >= written,
+                            "drop cannot truncate or partly queue a new frame"
+                        );
+                        observed_drop = true;
+                        break;
+                    }
+                    outcome => panic!("frame must be wholly admitted or dropped: {outcome:?}"),
+                }
+            }
             assert!(
-                server.connections.contains_key(&token),
-                "UDP overload must retain control stream"
-            );
-            assert!(server.allocations.contains_key(&key));
-            let conn = &server.connections[&token];
-            assert!(
-                conn.output == queued && conn.written >= written,
-                "retry may flush old bytes, but drop cannot truncate or partly queue a new frame"
+                observed_drop,
+                "bounded non-reading burst did not reach overload"
             );
             assert_eq!(server.stats.dropped_packets, 1);
             assert_eq!(
                 (server.stats.forwarded_packets, server.stats.forwarded_bytes),
-                (0, 0)
+                (admitted, admitted * payload.len() as u64)
             );
+            // Every admitted frame must survive, even if an earlier retry
+            // flush legitimately freed enough capacity to accept it.
+            let frame_len = if channel.is_some() {
+                4 + payload.len()
+            } else {
+                let (_, address_len) = address_value(peer_address, &[0; 12]);
+                (20 + 4 + address_len + 4 + payload.len() + 3) & !3
+            };
+            expected += admitted as usize * frame_len;
 
             // Ordinary control traffic still has space within the same cap.
             server.send_client(key, b"ctrl");
@@ -2136,7 +2165,22 @@ mod policy_tests {
                 server.poll_once(Duration::from_millis(1)).unwrap();
             }
             assert_eq!(received.len(), expected);
-            assert!(received[..expected - 4].iter().all(|byte| *byte == 0x5a));
+            assert!(received[..prefix_len].iter().all(|byte| *byte == 0x5a));
+            let mut frames = &received[prefix_len..expected - 4];
+            for _ in 0..admitted {
+                let len = wire::frame_len(frames).expect("complete admitted frame");
+                assert_eq!(len, frame_len);
+                let frame = &frames[..len];
+                if let Some(number) = channel {
+                    assert_eq!(wire::channel(frame), Some((number, payload.as_slice())));
+                } else {
+                    let indication = Message::parse(frame).unwrap();
+                    assert_eq!((indication.method, indication.class), (DATA_METHOD, 1));
+                    assert_eq!(indication.attr(DATA), Some(payload.as_slice()));
+                }
+                frames = &frames[len..];
+            }
+            assert!(frames.is_empty(), "no truncated or extra admitted frames");
             assert_eq!(&received[expected - 4..], b"ctrl");
             assert!(server.connections[&token].output.is_empty());
 
@@ -2146,7 +2190,7 @@ mod policy_tests {
             assert_eq!(server.stats.dropped_packets, 1);
             assert_eq!(
                 (server.stats.forwarded_packets, server.stats.forwarded_bytes),
-                (1, payload.len() as u64)
+                (admitted + 1, (admitted + 1) * payload.len() as u64)
             );
             let deadline = Instant::now() + Duration::from_secs(5);
             let mut bytes = Vec::new();
