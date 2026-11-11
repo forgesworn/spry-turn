@@ -940,7 +940,7 @@ dependencies = [
 
 [[package]]
 name = "spry-turn"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "base64",
  "crc32fast",
