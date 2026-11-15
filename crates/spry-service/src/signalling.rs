@@ -192,19 +192,27 @@ async fn manage(
             workers.spawn(async move {
                 let mut backoff = 1;
                 loop {
-                    if let Ok(Ok(socket)) =
-                        timeout(Duration::from_secs(10), connect(&relay, &options)).await
-                    {
-                        backoff = 1;
-                        let _ = session(
-                            identity.clone(),
-                            &relay,
-                            socket,
-                            incoming.clone(),
-                            outgoing.subscribe(),
-                            active.clone(),
-                        )
-                        .await;
+                    match timeout(Duration::from_secs(10), connect(&relay, &options)).await {
+                        Ok(Ok(socket)) => {
+                            backoff = 1;
+                            eprintln!("Spry control relay connected: {relay}");
+                            if let Err(error) = session(
+                                identity.clone(),
+                                &relay,
+                                socket,
+                                incoming.clone(),
+                                outgoing.subscribe(),
+                                active.clone(),
+                            )
+                            .await
+                            {
+                                eprintln!("Spry control relay session failed: {relay}: {error}");
+                            }
+                        }
+                        Ok(Err(error)) => {
+                            eprintln!("Spry control relay connection failed: {relay}: {error}");
+                        }
+                        Err(_) => eprintln!("Spry control relay connection timed out: {relay}"),
                     }
                     tokio::time::sleep(Duration::from_secs(backoff)).await;
                     backoff = (backoff * 2).min(30);

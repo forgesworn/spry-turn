@@ -254,6 +254,7 @@ impl PrivateBridge {
             .control
             .get()
             .ok_or(Refused(503, "Your node is connecting."))?;
+        eprintln!("Spry pairing relays: {}", endpoint.relays.join(", "));
         control.configure(endpoint.clone());
         tokio::time::timeout(Duration::from_secs(15), async {
             while control.active_relays() == 0 {
