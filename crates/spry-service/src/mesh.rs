@@ -36,6 +36,37 @@ pub struct MeshConfig {
     pub peer_listen: SocketAddrV6,
     pub secret: Vec<u8>,
 }
+#[derive(Clone, Copy, Debug, Default)]
+pub struct MeshStats {
+    pub active_allocations: usize,
+    pub allocation_limit: usize,
+    pub per_device_allocation_limit: usize,
+    pub connected_peers: usize,
+    pub forwarded_packets: u64,
+    pub forwarded_bytes: u64,
+    pub dropped_packets: u64,
+    pub started_at: u64,
+}
+
+fn relay_stats(
+    server: &Server,
+    started_at: u64,
+    allocation_limit: usize,
+    per_device_allocation_limit: usize,
+) -> MeshStats {
+    let counters = server.stats();
+    MeshStats {
+        active_allocations: server.allocation_count(),
+        allocation_limit,
+        per_device_allocation_limit,
+        connected_peers: 0,
+        forwarded_packets: counters.forwarded_packets,
+        forwarded_bytes: counters.forwarded_bytes,
+        dropped_packets: counters.dropped_packets,
+        started_at,
+    }
+}
+
 pub struct Mesh {
     identity: Arc<Identity>,
     address: SocketAddrV6,
@@ -44,6 +75,7 @@ pub struct Mesh {
     updates: watch::Sender<Vec<PeerCard>>,
     allowed: Allowed,
     connected: Arc<AtomicUsize>,
+    stats: Arc<RwLock<MeshStats>>,
     stop: Arc<AtomicBool>,
     core: Option<thread::JoinHandle<()>>,
     manager: JoinHandle<()>,
@@ -88,11 +120,21 @@ impl Mesh {
         turn.max_per_user = 8;
         turn.max_connections = 32;
         turn.bytes_per_second = 1_000_000;
+        let allocation_limit = turn.max_allocations;
+        let per_device_allocation_limit = turn.max_per_user;
         let mut server = Server::bind(turn)?;
         let allowed: Allowed = Arc::new(RwLock::new(HashMap::new()));
         let ports: Ports = Arc::new(RwLock::new(HashSet::new()));
         let stop = Arc::new(AtomicBool::new(false));
-        let (stop_core, core_peers, core_ports) = (stop.clone(), allowed.clone(), ports.clone());
+        let started_at = now();
+        let stats = Arc::new(RwLock::new(MeshStats {
+            started_at,
+            allocation_limit,
+            per_device_allocation_limit,
+            ..MeshStats::default()
+        }));
+        let (stop_core, core_peers, core_ports, core_stats) =
+            (stop.clone(), allowed.clone(), ports.clone(), stats.clone());
         let core = thread::Builder::new()
             .name("spry-forwarding".into())
             .spawn(move || {
@@ -113,6 +155,16 @@ impl Mesh {
                         last_peers = desired;
                     }
                     if server.poll_once(Duration::from_millis(20)).is_err() {
+                        break;
+                    }
+                    if let Ok(mut current) = core_stats.write() {
+                        *current = relay_stats(
+                            &server,
+                            started_at,
+                            allocation_limit,
+                            per_device_allocation_limit,
+                        );
+                    } else {
                         break;
                     }
                     let active: HashSet<_> = server.allocated_relay_ports().collect();
@@ -148,6 +200,7 @@ impl Mesh {
             updates,
             allowed,
             connected,
+            stats,
             stop,
             core: Some(core),
             manager,
@@ -186,6 +239,11 @@ impl Mesh {
     }
     pub fn connected_peers(&self) -> usize {
         self.connected.load(Ordering::Relaxed)
+    }
+    pub fn stats(&self) -> io::Result<MeshStats> {
+        let mut stats = *self.stats.read().map_err(|_| failure())?;
+        stats.connected_peers = self.connected_peers();
+        Ok(stats)
     }
     pub fn healthy(&self) -> bool {
         !self.stop.load(Ordering::Acquire) && !self.manager.is_finished()
@@ -602,5 +660,29 @@ async fn connection(
         })
         .await
         .map_err(|_| failure())??;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn owner_stats_describe_an_empty_private_relay() {
+        let mut config = Config::local(vec![7; 32]);
+        config.listen = SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0).into();
+        config.relay_ip = Ipv4Addr::new(127, 64, 1, 1).into();
+        config.local_peer_bridge = true;
+        config.relay_port_range = Some((FIRST_RELAY, LAST_RELAY));
+        let server = Server::bind(config).expect("private relay fixture");
+        let stats = relay_stats(&server, 1234, 32, 8);
+        assert_eq!(stats.active_allocations, 0);
+        assert_eq!(stats.allocation_limit, 32);
+        assert_eq!(stats.per_device_allocation_limit, 8);
+        assert_eq!(stats.connected_peers, 0);
+        assert_eq!(stats.forwarded_packets, 0);
+        assert_eq!(stats.forwarded_bytes, 0);
+        assert_eq!(stats.dropped_packets, 0);
+        assert_eq!(stats.started_at, 1234);
     }
 }

@@ -880,6 +880,38 @@ impl Authority {
                 self.sweep(now);
                 Ok(json!({"removed":true}))
             }
+            "/v1/owner/grants/list" => {
+                need(
+                    self.config.owners.contains(key),
+                    403,
+                    "Node approval required.",
+                )?;
+                let mut grants: Vec<_> = self.grants.iter().collect();
+                grants.sort_by_key(|(left, _)| *left);
+                Ok(json!({"grants":grants.into_iter().map(|(id, grant)| json!({
+                    "id":id,
+                    "pairing":grant.pair,
+                    "expiresAt":grant.expires,
+                    "recentDevices":grant.devices.len(),
+                })).collect::<Vec<_>>()}))
+            }
+            "/v1/owner/grants/remove" => {
+                need(
+                    self.config.owners.contains(key),
+                    403,
+                    "Node approval required.",
+                )?;
+                let id = text(body, "id")?;
+                need(is_key(id), 400, "Invalid request.")?;
+                let old = self.grants.remove(id);
+                if self.save().is_err() {
+                    if let Some(old) = old {
+                        self.grants.insert(id.into(), old);
+                    }
+                    return Err(Refused(503, "Call access could not be revoked."));
+                }
+                Ok(json!({"removed":true}))
+            }
             "/v1/grants" => {
                 let pair = text(body, "pairing")?;
                 let scope = text(body, "scope")?;
