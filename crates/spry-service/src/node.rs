@@ -197,6 +197,35 @@ fn opaque(value: &str) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
+fn pairing_endpoint(
+    public_key: String,
+    saved: Option<&str>,
+    requested: Option<&Value>,
+    preset: &[String],
+    policy: RelayPolicy,
+) -> Result<ControlEndpoint> {
+    if let Some(requested) = requested {
+        let relays = serde_json::from_value(requested.clone())
+            .map_err(|_| Refused(400, "Invalid relay settings."))?;
+        return ControlEndpoint::new(public_key, relays, policy).map_err(|_| {
+            Refused(
+                400,
+                "Your node needs a selected Nostr relay before pairing.",
+            )
+        });
+    }
+    if let Some(endpoint) = saved {
+        return ControlEndpoint::parse(endpoint, policy)
+            .map_err(|_| Refused(503, "Relay settings are unavailable."));
+    }
+    ControlEndpoint::new(public_key, preset.to_vec(), policy).map_err(|_| {
+        Refused(
+            400,
+            "Your node needs a selected Nostr relay before pairing.",
+        )
+    })
+}
+
 pub(crate) struct PrivateBridge {
     pub(crate) mesh: Mesh,
     registry: Mutex<PeerRegistry>,
@@ -226,23 +255,13 @@ impl PrivateBridge {
             if !authority.config.ready || !self.mesh.healthy() {
                 return Err(Refused(503, "Your node is connecting."));
             }
-            if let Some(endpoint) = &authority.config.transport_endpoint {
-                ControlEndpoint::parse(endpoint, self.policy)
-                    .map_err(|_| Refused(503, "Relay settings are unavailable."))?
-            } else {
-                let relays = if body.get("relays").is_some() {
-                    serde_json::from_value(body["relays"].clone())
-                        .map_err(|_| Refused(400, "Invalid relay settings."))?
-                } else {
-                    self.preset_relays.clone()
-                };
-                ControlEndpoint::new(self.mesh.public_key(), relays, self.policy).map_err(|_| {
-                    Refused(
-                        400,
-                        "Your node needs a selected Nostr relay before pairing.",
-                    )
-                })?
-            }
+            pairing_endpoint(
+                self.mesh.public_key(),
+                authority.config.transport_endpoint.as_deref(),
+                body.get("relays"),
+                &self.preset_relays,
+                self.policy,
+            )?
         };
         if endpoint.public_key != self.mesh.public_key() {
             return Err(Refused(
@@ -607,5 +626,39 @@ mod tests {
                 .0,
             403
         );
+    }
+
+    #[test]
+    fn an_owner_relay_selection_replaces_the_saved_choice_and_survives_later_restarts() {
+        let identity = Identity::from_secret(&[9; 32]).unwrap();
+        let old = "ws://127.0.0.1:8080/".to_string();
+        let new = "ws://127.0.0.1:8081/".to_string();
+        let saved = ControlEndpoint::new(
+            identity.public_key(),
+            vec![old.clone()],
+            RelayPolicy::LocalFixture,
+        )
+        .unwrap()
+        .uri()
+        .unwrap();
+        let requested = json!({"relays":[new]});
+        let refreshed = pairing_endpoint(
+            identity.public_key(),
+            Some(&saved),
+            requested.get("relays"),
+            &[],
+            RelayPolicy::LocalFixture,
+        )
+        .unwrap();
+        assert_eq!(refreshed.relays, vec![new]);
+        let restarted = pairing_endpoint(
+            identity.public_key(),
+            Some(&refreshed.uri().unwrap()),
+            None,
+            &[],
+            RelayPolicy::LocalFixture,
+        )
+        .unwrap();
+        assert_eq!(restarted, refreshed);
     }
 }
