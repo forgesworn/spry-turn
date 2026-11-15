@@ -425,6 +425,90 @@ fn device_capacity_expires_without_requiring_a_new_group_grant() {
 }
 
 #[test]
+fn owner_can_list_and_revoke_call_access_without_exposing_room_secrets() {
+    struct Scratch(std::path::PathBuf);
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    let mut random = [0_u8; 16];
+    getrandom::fill(&mut random).expect("fixture randomness");
+    let scratch = Scratch(std::env::temp_dir().join(format!("spry-owner-grants-{}", hex(&random))));
+    std::fs::create_dir(&scratch.0).expect("fixture directory");
+    let path = scratch.0.join("pairings.json");
+    let mut a = fixture();
+    a.config.state_file = Some(path.clone());
+    let (pair, _) = pair(&mut a);
+    let access = grant(&mut a, &pair["id"], NOW);
+    a.handle(
+        "/v1/credentials",
+        &public(2),
+        &json!({"grant":access["token"]}),
+        NOW,
+    )
+    .expect("device credentials");
+
+    for path in ["/v1/owner/grants/list", "/v1/owner/grants/remove"] {
+        assert_eq!(
+            a.handle(path, &public(2), &json!({}), NOW)
+                .expect_err("paired devices are not relay owners")
+                .0,
+            403
+        );
+    }
+    let listed = a
+        .handle("/v1/owner/grants/list", &public(1), &json!({}), NOW)
+        .expect("owner grant list");
+    let grants = listed["grants"].as_array().expect("grant array");
+    assert_eq!(grants.len(), 1);
+    assert_eq!(grants[0]["pairing"], pair["id"]);
+    assert_eq!(grants[0]["expiresAt"], NOW + GRANT_TTL);
+    assert_eq!(grants[0]["recentDevices"], 1);
+    let encoded = serde_json::to_string(&listed).expect("encoded list");
+    assert!(!encoded.contains(access["token"].as_str().expect("token")));
+    assert!(!encoded.contains(&hash("synthetic-scope")));
+    assert!(!encoded.contains(&public(2)));
+    let id = grants[0]["id"].as_str().expect("opaque grant id");
+
+    a.handle(
+        "/v1/owner/grants/remove",
+        &public(1),
+        &json!({"id":id}),
+        NOW,
+    )
+    .expect("owner revocation");
+    assert!(
+        a.handle(
+            "/v1/credentials",
+            &public(3),
+            &json!({"grant":access["token"]}),
+            NOW + 1,
+        )
+        .is_err()
+    );
+    let empty = a
+        .handle("/v1/owner/grants/list", &public(1), &json!({}), NOW)
+        .expect("empty owner grant list");
+    assert_eq!(empty["grants"], json!([]));
+
+    drop(a);
+    let mut restarted = fixture();
+    restarted.config.state_file = Some(path);
+    restarted.restore().expect("restore revoked grants");
+    assert!(
+        restarted
+            .handle(
+                "/v1/credentials",
+                &public(3),
+                &json!({"grant":access["token"]}),
+                NOW + 2,
+            )
+            .is_err()
+    );
+}
+
+#[test]
 fn private_http_proofs_cannot_be_replayed_to_a_node_with_the_same_local_hostname() {
     let mut a = fixture();
     a.config.audience = Some("node-a".into());

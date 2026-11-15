@@ -65,6 +65,29 @@ impl ServiceState {
             }
         }
         let private = self.private()?;
+        if path == "/v1/owner/stats" {
+            if !authority.config.owners.contains(key) {
+                return Err(Refused(403, "Node approval required."));
+            }
+            let Some(private) = private else {
+                return Ok(json!({"available":false}));
+            };
+            let stats = private
+                .mesh
+                .stats()
+                .map_err(|_| Refused(503, "Relay statistics are unavailable."))?;
+            return Ok(json!({
+                "available":true,
+                "activeAllocations":stats.active_allocations,
+                "allocationLimit":stats.allocation_limit,
+                "perDeviceAllocationLimit":stats.per_device_allocation_limit,
+                "connectedPeers":stats.connected_peers,
+                "forwardedPackets":stats.forwarded_packets,
+                "forwardedBytes":stats.forwarded_bytes,
+                "droppedPackets":stats.dropped_packets,
+                "startedAt":stats.started_at,
+            }));
+        }
         if path == "/v1/peers" {
             let private = private.ok_or(Refused(404, "Not found."))?;
             let pair = body["pairing"]
@@ -548,4 +571,40 @@ fn client_address() -> Option<Ipv4Addr> {
                 && !ip.is_multicast()
                 && !ip.is_link_local()
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use spry_access::Config;
+
+    #[test]
+    fn public_stats_are_owner_only_and_never_fabricated() {
+        let owner = "a".repeat(64);
+        let config = Config::new(
+            "https://relay.example:3744",
+            "https://calls.example/j/",
+            &owner,
+            &[7; 32],
+            None,
+        )
+        .expect("public fixture");
+        let state = ServiceState::new(Authority::new(config));
+        let stats = state
+            .api(&owner, "/v1/owner/stats", &json!({}), 1_800_000_000)
+            .expect("owner statistics");
+        assert_eq!(stats, json!({"available":false}));
+        assert_eq!(
+            state
+                .api(
+                    &"b".repeat(64),
+                    "/v1/owner/stats",
+                    &json!({}),
+                    1_800_000_000,
+                )
+                .expect_err("non-owner")
+                .0,
+            403
+        );
+    }
 }

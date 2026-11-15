@@ -799,6 +799,22 @@ trust for explicitly selected control relays. Certificate and hostname
 validation remain enabled. `SPRY_LOCAL_TEST=true` is for generated fixtures, including a private IPv4 interface reachable from a task-owned Android emulator;
 never enable it in a deployed node.
 
+## Owner statistics and access administration
+
+Signed-owner `POST /v1/owner/stats` requests report active allocations,
+configured limits, connected mesh peers, aggregate forwarded/dropped counters
+and the counter start time in the private-node profile. Public mode returns
+`available: false`: its relay is a separate process and the service does not
+invent statistics for it. Counters reset when the embedded relay restarts.
+
+`POST /v1/owner/grants/list` returns opaque grant identifiers, pairing IDs,
+current access expiry and the number of devices issued credentials in the last
+ten minutes. It does not return room scopes, bearer grants or device keys.
+`POST /v1/owner/grants/remove` revokes one opaque grant and persists that
+revocation. Recent credential devices are not call attendance. Revocation stops
+credential renewal; existing TURN allocations can remain until their
+five-minute credentials expire.
+
 Run the independent packet test with `python3 tests/mesh.py --binary <Linux
 mesh-node example> --output .local/mesh.json`. `tests/home-flow.mjs` additionally
 drives actual standalone pairing screens and a built KithMoot PWA across
