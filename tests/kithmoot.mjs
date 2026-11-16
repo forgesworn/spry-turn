@@ -1,14 +1,19 @@
 // Actual KithMoot UI; only generated microphone/camera input and local fixtures.
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 const modulePath = process.env.SPRY_PLAYWRIGHT_PATH;
 const { chromium } = await import(modulePath ? pathToFileURL(modulePath).href : 'playwright');
 const origin = process.env.SPRY_KITHMOOT_ORIGIN;
 const relay = process.env.SPRY_KITHMOOT_RELAY;
 const transport = process.env.SPRY_KITHMOOT_TRANSPORT;
-const iceServer = JSON.parse(process.env.SPRY_KITHMOOT_ICE);
+const iceServer = JSON.parse(process.env.SPRY_KITHMOOT_ICE ??
+  readFileSync(process.env.SPRY_KITHMOOT_ICE_FILE, 'utf8'));
 const operatorHost = process.env.SPRY_KITHMOOT_OPERATOR_HOST ?? '127.0.0.1';
 const operatorBaseHost = process.env.SPRY_KITHMOOT_BASE_HOST ?? operatorHost;
+if (process.env.SPRY_KITHMOOT_FRONT_DOOR_ONLY === '1') {
+  iceServer.urls = iceServer.urls.filter(url => url === `turns:turn.${operatorBaseHost}:443?transport=tcp`);
+}
 assert(/^[a-zA-Z0-9.-]+$/.test(operatorHost) && /^[a-zA-Z0-9.-]+$/.test(operatorBaseHost));
 const operatorPattern = [operatorHost, operatorBaseHost].map(host => host.replaceAll('.', '\\.')).join('|');
 const local = value => ['127.0.0.1', 'localhost', '[::1]'].includes(new URL(value).hostname);
@@ -132,15 +137,13 @@ async function device() {
 
 async function media(page) {
   await page.locator('#callToggle').waitFor({ state: 'visible' });
-  if (await page.locator('#joinCall').isVisible()) await page.locator('#joinCall').evaluate(button => button.click());
-  if (await page.locator('#deviceControls').isHidden()) await page.locator('#callToggle').click();
-  await page.locator('#joinCall').waitFor({ state: 'visible', timeout: 5000 }).catch(() => {});
-  if (await page.locator('#joinCall').isVisible()) await page.locator('#joinCall').evaluate(button => button.click());
+  if (await page.locator('#joinCall').isVisible()) await page.locator('#joinCall').click();
+  else if (await page.locator('#deviceControls').isHidden()) await page.locator('#callToggle').click();
+  await wait(() => page.locator('#callToggle').getAttribute('aria-label'), value => value === 'Leave call', 'Device did not join the call', 60000);
   await page.locator('#deviceControls').waitFor({ state: 'visible', timeout: 60000 });
   await page.locator('#toggleCamera').click();
   await wait(() => page.locator('#toggleCamera').getAttribute('data-on'), value => value === 'true', 'Camera did not start', 60000);
-  await page.locator('#toggleMic').click();
-  await wait(() => page.locator('#toggleMic').getAttribute('data-on'), value => value === 'true', 'Microphone did not start', 60000);
+  await wait(() => page.locator('#toggleMic').getAttribute('data-on'), value => value === 'true', 'Microphone did not start on joining', 60000);
 }
 
 async function configure(page) {
