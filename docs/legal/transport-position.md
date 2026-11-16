@@ -20,17 +20,16 @@ The owner has chosen software publication without a maintainer-operated
 default relay or central KithMoot calling entitlement. The owner authorised
 public MIT source and the existing GitHub prereleases on 23 October 2026.
 Package-registry publication remains disabled in `Cargo.toml`.
-The owner reports local implementation and tests only: no service is
-deployed. Code publication, a build and a running communications service
-are separate events. No public operational service is established by the
-presence of server source.
+Owner-controlled qualification deployments are documented separately. Code
+publication, a build and a running communications service are separate events;
+this draft is not a current deployment or operator assessment.
 
 The intended deployment is a standalone, coturn-style TURN server on an
-independently operated Archy node. KithMoot would select it through ordinary
-TURN configuration. Local KithMoot web interoperability is now qualified
-with owner-selected credentials and no credential-service request; see the
-[application receipt and limits](../kithmoot-acceptance.md). Archy packaging,
-actual operator independence, cross-network and physical-device acceptance
+independently operated host, with or without Archipelago. KithMoot would select
+it through ordinary TURN configuration or the standalone pairing service. Local
+KithMoot web interoperability is now qualified with owner-selected credentials
+and no credential-service request; see the [application receipt and limits](../kithmoot-acceptance.md).
+Actual operator independence, cross-network and physical-device acceptance
 remain unproved. Sapflow support is a later optional goal.
 Nothing here changes another application's deployment or legal position.
 
