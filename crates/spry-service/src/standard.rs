@@ -57,6 +57,8 @@ const CONNECTIONS: SetupError =
 const TLS_FILES: SetupError = SetupError(
     "SPRY_TLS_CERT_FILE and SPRY_TLS_KEY_FILE must name certificate and key files together",
 );
+const TLS_ADVERTISE_DIRECT: SetupError =
+    SetupError("SPRY_TLS_ADVERTISE_DIRECT must be true or false");
 
 fn port(value: &str) -> Option<u16> {
     (!value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit()))
@@ -205,8 +207,14 @@ impl Settings {
         if explicit && !settings.direct_tls {
             return Err(TLS_FILES);
         }
-        settings.advertise_tls =
-            settings.direct_tls || env::var("SPRY_TLS_GATE").as_deref() == Ok("true");
+        let advertise_direct =
+            match setting("SPRY_TLS_ADVERTISE_DIRECT", TLS_ADVERTISE_DIRECT)?.as_deref() {
+                None | Some("true") => true,
+                Some("false") => false,
+                Some(_) => return Err(TLS_ADVERTISE_DIRECT),
+            };
+        settings.advertise_tls = advertise_direct
+            && (settings.direct_tls || env::var("SPRY_TLS_GATE").as_deref() == Ok("true"));
         settings.tls_443 = match setting("SPRY_TLS_443", TLS_PORT)?.as_deref() {
             None | Some("false") => false,
             Some("true") => true,
@@ -385,6 +393,33 @@ mod tests {
         assert!(
             args.windows(2)
                 .any(|a| a == ["--aggregate-bytes-per-second", "50000"])
+        );
+    }
+
+    #[test]
+    fn shared_proxy_can_advertise_only_its_tls_443_route() {
+        let mut settings = Settings::parse(None, None, None, None).unwrap();
+        settings.direct_tls = true;
+        settings.advertise_tls = false;
+        settings.tls_443 = true;
+        assert_eq!(
+            settings.urls("node.example"),
+            [
+                "turn:node.example:3478?transport=udp",
+                "turn:node.example:3478?transport=tcp",
+                "turns:turn.node.example:443?transport=tcp"
+            ]
+        );
+        let mut command = Command::new("synthetic-relay");
+        settings.configure_command(&mut command, Ipv4Addr::LOCALHOST);
+        let args: Vec<_> = command
+            .as_std()
+            .get_args()
+            .map(|arg| arg.to_str().unwrap())
+            .collect();
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["--tls-listen", "127.0.0.1:5349"])
         );
     }
 

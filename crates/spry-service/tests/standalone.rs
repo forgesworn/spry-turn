@@ -245,6 +245,7 @@ mod profiles {
         tls_port: u16,
         relay_ports: (u16, u16),
         secret: String,
+        shared_proxy: bool,
         _blocked_turn: Option<UdpSocket>,
     }
     impl Drop for Profile {
@@ -334,6 +335,10 @@ mod profiles {
 
     impl Profile {
         fn start(block_turn: bool, private: bool) -> Self {
+            Self::start_with_proxy(block_turn, private, false)
+        }
+
+        fn start_with_proxy(block_turn: bool, private: bool, shared_proxy: bool) -> Self {
             let _starting = STARTING
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -390,6 +395,11 @@ mod profiles {
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
                 .stderr(Stdio::null());
+            if shared_proxy {
+                command
+                    .env("SPRY_TLS_443", "true")
+                    .env("SPRY_TLS_ADVERTISE_DIRECT", "false");
+            }
             if private {
                 command
                     .env("SPRY_PEER_BIND", "[fd12:3456::2]:3745")
@@ -425,6 +435,7 @@ mod profiles {
                 tls_port: base + 2,
                 relay_ports: (base + 4, base + 5),
                 secret,
+                shared_proxy,
                 _blocked_turn: blocked,
             };
             let deadline = Instant::now() + Duration::from_secs(8);
@@ -531,14 +542,19 @@ mod profiles {
             assert!(fields.keys().all(|key| {
                 ["urls", "username", "credential", "expiresAt"].contains(&key.as_str())
             }));
-            assert_eq!(
-                lease["urls"],
-                json!([
-                    format!("turn:relay.example:{}?transport=udp", self.turn.port()),
-                    format!("turn:relay.example:{}?transport=tcp", self.turn.port()),
-                    format!("turns:relay.example:{}?transport=tcp", self.tls_port)
-                ])
-            );
+            let mut urls = vec![
+                format!("turn:relay.example:{}?transport=udp", self.turn.port()),
+                format!("turn:relay.example:{}?transport=tcp", self.turn.port()),
+            ];
+            if self.shared_proxy {
+                urls.push("turns:turn.relay.example:443?transport=tcp".into());
+            } else {
+                urls.push(format!(
+                    "turns:relay.example:{}?transport=tcp",
+                    self.tls_port
+                ));
+            }
+            assert_eq!(lease["urls"], json!(urls));
             let expiry = lease["expiresAt"].as_u64().unwrap();
             let after = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -641,6 +657,13 @@ mod profiles {
             unavailable.json().get("credential").is_none(),
             "another profile cannot make this relay ready"
         );
+    }
+
+    #[test]
+    fn shared_proxy_credentials_advertise_only_the_sni_tls_route() {
+        let profile = Profile::start_with_proxy(false, false, true);
+        let lease = profile.lease();
+        assert_eq!(lease["urls"].as_array().unwrap().len(), 3);
     }
 
     #[test]
