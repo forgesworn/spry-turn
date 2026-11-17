@@ -210,7 +210,9 @@ cards registered by one of its paired apps. Revoking that pairing withdraws
 its routes. The core rejects host services, LAN addresses and arbitrary
 Internet destinations in this profile.
 
-Choose **Pair with KithMoot**. The owner signing provider supplies the person's
+Choose **Pair with KithMoot**. While the handoff is outstanding, the owner page
+checks for KithMoot's claim, then clears the one-use link and reports
+**KithMoot paired successfully**. The owner signing provider supplies the person's
 existing read/write Nostr relays; standalone hosts may explicitly configure
 `SPRY_CONTROL_RELAYS` as a JSON array instead. Spry verifies connectivity before
 issuing the pairing link and persists that selection for restarts. No extra

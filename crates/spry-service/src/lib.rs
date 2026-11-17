@@ -243,7 +243,7 @@ async fn dispatch(
                 } else {
                     json_response(
                         200,
-                        json!({"ready":authority.config.ready,"endpoint":authority.config.endpoint,"audience":authority.config.audience,"privateRelay":authority.config.audience.is_some(),"controlReady":state.private()?.is_some_and(|private|private.control_ready()),"message":if authority.config.ready { "Ready to pair with KithMoot." } else { authority.config.readiness }}),
+                        json!({"ready":authority.config.ready,"endpoint":authority.config.endpoint,"audience":authority.config.audience,"paired":authority.has_pairings(),"privateRelay":authority.config.audience.is_some(),"controlReady":state.private()?.is_some_and(|private|private.control_ready()),"message":if authority.config.ready { "Ready to pair with KithMoot." } else { authority.config.readiness }}),
                     )
                 }
             }

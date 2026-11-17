@@ -84,8 +84,9 @@ uses half the advertised lifetime below two minutes, giving this profile a
 
 In the private-node profile, `POST /v1/node/status` requires the existing
 paired authority and signed HTTP proof. It adds `metrics` to the legacy
-status fields. The unauthenticated `GET /v1/status` shape stays unchanged.
-No participant addresses, usernames, room identifiers or content appear.
+status fields. The unauthenticated `GET /v1/status` also carries a `paired`
+boolean for owner-page feedback. No participant addresses, usernames, pairing
+identifiers, room identifiers or content appear.
 
 `metrics` is `null` until the relay has produced a sample. Version 1 contains
 `v`, a random per-start `epoch`, monotonic `elapsedMillis`, sample

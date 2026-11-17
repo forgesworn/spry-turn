@@ -3,7 +3,8 @@
 Open Spry and choose **Pair with KithMoot**. Approve the request using your
 node's existing owner signer. Spry then shows **Open KithMoot app** and
 **Copy pairing link**. Choose the app where you are already signed in.
-There is no need to sign into KithMoot again in Safari.
+There is no need to sign into KithMoot again in Safari. Once KithMoot claims the
+link, the owner page clears it and reports **KithMoot paired successfully**.
 
 The copy button produces a `kithmoot://join#spry=…` link. If clipboard access
 is refused, the complete link is selected for ordinary Copy. In KithMoot
