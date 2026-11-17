@@ -164,6 +164,11 @@ per-allocation rate with `SPRY_MAX_ALLOCATIONS`,
 files for the relay reside under `/data/tls`; an external host adapter can
 instead terminate TURN TLS. Setting `SPRY_TLS_GATE=true` advertises that
 host's configured TLS transport and does not start or configure a TLS proxy.
+A shared SNI proxy can route `turns:turn.HOST:443` to Spry's direct TLS listener
+while using a certificate only for that TURN hostname. Set
+`SPRY_TLS_ADVERTISE_DIRECT=false` there so credentials omit the otherwise
+mismatched direct `turns:HOST:PORT` URL; the listener and TLS/443 advertisement
+remain active. The default `true` preserves the dedicated-host URLs.
 
 No Archipelago daemon, node identity store, dashboard, container runtime or
 FIPS installation is required for this standalone path. A reachable relay
