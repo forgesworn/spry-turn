@@ -113,8 +113,21 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  container:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build the standalone image
+        run: docker build --tag localhost/spry-standalone:ci .
+      - name: Check the packaged relay
+        run: docker run --rm --entrypoint /usr/local/bin/spry-turn localhost/spry-standalone:ci --version
+      - name: Check the runtime user and secret entrypoint
+        run: |
+          test "$(docker image inspect localhost/spry-standalone:ci --format '{{.Config.User}}')" = spry
+          docker run --rm --entrypoint /usr/local/bin/docker-entrypoint.sh localhost/spry-standalone:ci /usr/local/bin/spry-turn --version
+
   publish:
-    needs: [name, executables, android]
+    needs: [name, executables, android, container]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
     permissions:

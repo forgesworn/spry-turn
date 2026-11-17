@@ -222,7 +222,8 @@ class Client:
         self.socket.settimeout(2)
         if mode == "tls":
             context = ssl.create_default_context(cafile=str(fixture.cert))
-            self.socket = context.wrap_socket(self.socket, server_hostname="localhost")
+            self.socket = context.wrap_socket(
+                self.socket, server_hostname=getattr(fixture, "server_hostname", "localhost"))
         self.socket.connect((getattr(fixture, "host", "127.0.0.1"), fixture.tls_port if mode == "tls" else fixture.port))
         label = label or "test" + secrets.token_hex(4)
         self.username = f"{expiry or int(time.time()) + 3600}:{label}".encode()

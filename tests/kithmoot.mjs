@@ -1,21 +1,31 @@
 // Actual KithMoot UI; only generated microphone/camera input and local fixtures.
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 const modulePath = process.env.SPRY_PLAYWRIGHT_PATH;
 const { chromium } = await import(modulePath ? pathToFileURL(modulePath).href : 'playwright');
 const origin = process.env.SPRY_KITHMOOT_ORIGIN;
 const relay = process.env.SPRY_KITHMOOT_RELAY;
 const transport = process.env.SPRY_KITHMOOT_TRANSPORT;
-const iceServer = JSON.parse(process.env.SPRY_KITHMOOT_ICE);
+const iceServer = JSON.parse(process.env.SPRY_KITHMOOT_ICE ??
+  readFileSync(process.env.SPRY_KITHMOOT_ICE_FILE, 'utf8'));
+const operatorHost = process.env.SPRY_KITHMOOT_OPERATOR_HOST ?? '127.0.0.1';
+const operatorBaseHost = process.env.SPRY_KITHMOOT_BASE_HOST ?? operatorHost;
+if (process.env.SPRY_KITHMOOT_FRONT_DOOR_ONLY === '1') {
+  iceServer.urls = iceServer.urls.filter(url => url === `turns:turn.${operatorBaseHost}:443?transport=tcp`);
+}
+assert(/^[a-zA-Z0-9.-]+$/.test(operatorHost) && /^[a-zA-Z0-9.-]+$/.test(operatorBaseHost));
+const operatorPattern = [operatorHost, operatorBaseHost].map(host => host.replaceAll('.', '\\.')).join('|');
 const local = value => ['127.0.0.1', 'localhost', '[::1]'].includes(new URL(value).hostname);
 assert(local(origin) && local(relay), 'Application fixture must stay on loopback');
 assert(['udp', 'tcp', 'tls'].includes(transport));
 assert(Array.isArray(iceServer.urls) && iceServer.urls.length > 0 &&
-  iceServer.urls.every(url => /^turns?:127\.0\.0\.1:[0-9]{1,5}\?transport=(udp|tcp)$/.test(url)),
-  'TURN operator fixture must stay on loopback');
+  iceServer.urls.every(url => new RegExp(`^turns?:(?:${operatorPattern}):[0-9]{1,5}\\?transport=(udp|tcp)$`).test(url)),
+  'TURN operator fixture address is invalid');
 const browser = await chromium.launch({ headless: true, args: [
   '--autoplay-policy=no-user-gesture-required', '--use-fake-device-for-media-stream',
   '--use-fake-ui-for-media-stream', '--disable-audio-output', '--ignore-certificate-errors',
+  ...(process.env.SPRY_KITHMOOT_MAP_HOSTS ? [`--host-resolver-rules=${process.env.SPRY_KITHMOOT_MAP_HOSTS}`] : []),
 ] });
 // Playwright owns a separate browser process group. Its synchronous Node exit
 // handler kills that group even if graceful browser.close() stops responding.
@@ -127,12 +137,13 @@ async function device() {
 
 async function media(page) {
   await page.locator('#callToggle').waitFor({ state: 'visible' });
-  if (await page.locator('#deviceControls').isHidden()) await page.locator('#callToggle').click();
-  await page.locator('#deviceControls').waitFor({ state: 'visible' });
+  if (await page.locator('#joinCall').isVisible()) await page.locator('#joinCall').click();
+  else if (await page.locator('#deviceControls').isHidden()) await page.locator('#callToggle').click();
+  await wait(() => page.locator('#callToggle').getAttribute('aria-label'), value => value === 'Leave call', 'Device did not join the call', 60000);
+  await page.locator('#deviceControls').waitFor({ state: 'visible', timeout: 60000 });
   await page.locator('#toggleCamera').click();
-  await wait(() => page.locator('#toggleCamera').getAttribute('data-on'), value => value === 'true', 'Camera did not start', 15000);
-  await page.locator('#toggleMic').click();
-  await wait(() => page.locator('#toggleMic').getAttribute('data-on'), value => value === 'true', 'Microphone did not start', 15000);
+  await wait(() => page.locator('#toggleCamera').getAttribute('data-on'), value => value === 'true', 'Camera did not start', 60000);
+  await wait(() => page.locator('#toggleMic').getAttribute('data-on'), value => value === 'true', 'Microphone did not start on joining', 60000);
 }
 
 async function configure(page) {
@@ -142,12 +153,13 @@ async function configure(page) {
     if (!await page.locator('#settingsPane').isVisible()) await page.locator('#openAppSettings').evaluate(button => button.click());
     return page.locator('#settingsPane').isVisible();
   }, Boolean, 'Settings did not open', 30000);
-  await page.locator('#settingsPane .infoRow', { has: page.locator('.infoRowTitle', { hasText: /^Connections$/ }) }).click();
+  await page.locator('#settingsRowcalls').click();
+  await page.locator('#callsRowServer').click();
   await page.locator('#callRelayUrls').fill(iceServer.urls.join(', '));
   await page.locator('#callRelayUsername').fill(iceServer.username);
   await page.locator('#callRelayPassword').fill(iceServer.credential);
   await page.locator('#callRelaySave').click();
-  await wait(() => page.locator('#callRelayStatus').textContent(), text => text.includes('Call relay saved'), 'Relay Settings did not save', 5000);
+  await wait(() => page.locator('#callRelayStatus').textContent(), text => text.includes('Saved.'), 'Relay Settings did not save', 5000);
   await page.locator('#railChats').evaluate(button => button.click());
   await page.locator('#settingsPane').waitFor({ state: 'hidden' });
 }
@@ -205,6 +217,18 @@ try {
   console.log(JSON.stringify({ transport, passed: true, applicationRelayOnly: true, injectedIceServers: false,
     configuredThroughSettings: true, iceConfigurationMatchesOperator: true, invitationOmitsCredentials: true,
     generatedMediaOnly: true, certificateBypass: true, endpoints }));
+} catch (error) {
+  if (process.env.SPRY_KITHMOOT_FAILURE_DIR) {
+    let index = 0
+    for (const context of contexts) {
+      for (const page of context.pages()) {
+        console.error('Generated page diagnostics', await page.locator('#status,#voiceFailureNotice,#callTabNoticeText,#callRelayStatus').allTextContents(),
+          await page.locator('#callToggle').getAttribute('aria-label'), await page.locator('#deviceControls').evaluate(element => element.hidden))
+        await page.screenshot({ path: `${process.env.SPRY_KITHMOOT_FAILURE_DIR}/failure-${index++}.png`, fullPage: true }).catch(() => {})
+      }
+    }
+  }
+  throw error
 } finally {
   clearTimeout(deadline);
   try {

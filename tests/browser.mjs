@@ -4,11 +4,15 @@ const modulePath = process.env.SPRY_PLAYWRIGHT_PATH;
 const { chromium } = await import(modulePath ? pathToFileURL(modulePath).href : 'playwright');
 const config = JSON.parse(process.env.SPRY_BROWSER_ICE);
 const relayPorts = process.env.SPRY_BROWSER_RELAY_PORTS?.split(':').map(Number);
-const browser = await chromium.launch({ headless: true, args: ['--autoplay-policy=no-user-gesture-required', '--ignore-certificate-errors'] });
+const browser = await chromium.launch({ headless: true, args: [
+  '--autoplay-policy=no-user-gesture-required', '--ignore-certificate-errors',
+  ...(process.env.SPRY_BROWSER_MAP_HOSTS ? [`--host-resolver-rules=${process.env.SPRY_BROWSER_MAP_HOSTS}`] : []),
+] });
 try {
   const page = await browser.newPage();
   await page.goto(process.env.SPRY_BROWSER_ORIGIN);
-  for (const iceServer of config) {
+  const iceServers = config.flatMap(server => Array.isArray(server.urls) ? server.urls.map(url => ({ ...server, urls: url })) : [server]);
+  for (const iceServer of iceServers) {
     const result = await page.evaluate(async iceServer => {
       const a = new RTCPeerConnection({ iceServers: [iceServer], iceTransportPolicy: 'relay' });
       const b = new RTCPeerConnection({ iceServers: [iceServer], iceTransportPolicy: 'relay' });

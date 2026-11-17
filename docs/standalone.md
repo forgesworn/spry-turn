@@ -87,6 +87,24 @@ These are backend controls, not qualification of a complete hosted node.
 Shelter integration, client support and real cross-network/device acceptance
 remain separate gates. No Archipelago UI is changed here.
 
+## Container image
+
+Build the standalone pairing service and relay together:
+
+```sh
+docker build -t localhost/spry-standalone:dev .
+docker run --rm --entrypoint /usr/local/bin/spry-turn localhost/spry-standalone:dev --version
+```
+
+The runtime executes as uid 10001. `SPRY_STATE_FILE` defaults to
+`/data/pairings.json` and `SPRY_RELAY_BINARY` points beside the service's two
+binaries. `SPRY_TURN_SECRET` can be supplied directly or mounted read-only at
+`/run/secrets/spry_turn_secret`; the entrypoint exports it without placing the
+value in the image or its inspected environment. Mount persistent state and
+operator certificates explicitly. The service still requires its HTTPS reverse
+proxy, reachable relay address and owner configuration described below. Building
+an image does not expose or deploy it.
+
 ## Linux CI artefact
 
 The existing verify workflow is configured to build both TLS-enabled standalone
