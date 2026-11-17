@@ -799,7 +799,9 @@ cards registered by one of its paired apps. Revoking that pairing withdraws
 its routes. The core rejects host services, LAN addresses and arbitrary
 Internet destinations in this profile.
 
-Choose **Pair with KithMoot**. The owner signing provider supplies the person's
+Choose **Pair with KithMoot**. While the handoff is outstanding, the owner page
+checks for KithMoot's claim, then clears the one-use link and reports
+**KithMoot paired successfully**. The owner signing provider supplies the person's
 existing read/write Nostr relays; standalone hosts may explicitly configure
 `SPRY_CONTROL_RELAYS` as a JSON array instead. Spry verifies connectivity before
 issuing the pairing link and persists that selection for restarts. No extra
@@ -1000,8 +1002,9 @@ uses half the advertised lifetime below two minutes, giving this profile a
 
 In the private-node profile, `POST /v1/node/status` requires the existing
 paired authority and signed HTTP proof. It adds `metrics` to the legacy
-status fields. The unauthenticated `GET /v1/status` shape stays unchanged.
-No participant addresses, usernames, room identifiers or content appear.
+status fields. The unauthenticated `GET /v1/status` also carries a `paired`
+boolean for owner-page feedback. No participant addresses, usernames, pairing
+identifiers, room identifiers or content appear.
 
 `metrics` is `null` until the relay has produced a sample. Version 1 contains
 `v`, a random per-start `epoch`, monotonic `elapsedMillis`, sample

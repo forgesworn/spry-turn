@@ -411,6 +411,10 @@ impl Authority {
         self.pairs.contains_key(pairing)
     }
 
+    pub fn has_pairings(&self) -> bool {
+        !self.pairs.is_empty()
+    }
+
     /// A supervising node can require that only its keeper admits devices.
     /// This policy is supplied at startup, never changed by a room member.
     pub fn set_vouching(&mut self, enabled: bool) {

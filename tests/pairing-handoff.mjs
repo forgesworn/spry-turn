@@ -57,5 +57,40 @@ try {
     assert.equal(requests, 1);
     await context.close();
   }
-  console.log('Owner approval, app/copy handoff, clipboard refusal, mobile reflow and expiry passed without navigating to KithMoot web.');
+  const context = await browser.newContext({ viewport: { width: 360, height: 800 } });
+  let claimed = false;
+  let statusRequests = 0;
+  await context.addInitScript(() => {
+    window.nostr = { signEvent: async event => ({ ...event, pubkey: '1'.repeat(64), id: '2'.repeat(64), sig: '3'.repeat(128) }) };
+  });
+  await context.route('**/*', async route => {
+    const u = new URL(route.request().url());
+    if (u.origin !== 'https://relay.example') throw new Error('Unexpected network request');
+    if (u.pathname === '/v1/status') {
+      statusRequests++;
+      return route.fulfill({ json: { ready: true, endpoint: u.origin, paired: claimed, message: 'Ready' } });
+    }
+    if (u.pathname === '/v1/pairings') {
+      claimed = true;
+      const expiresAt = Math.floor(Date.now() / 1000) + 100;
+      const hash = '#spry=' + Buffer.from(JSON.stringify({ v: 1, endpoint: 'https://relay.example', code: 'a'.repeat(43), expiresAt })).toString('base64url');
+      return route.fulfill({ json: { url: 'https://app.example/j/' + hash } });
+    }
+    const name = u.pathname === '/' ? '/index.html' : u.pathname;
+    assert.ok(files.has(name));
+    return route.fulfill({ body: files.get(name), contentType: name.endsWith('.mjs') ? 'text/javascript' : name.endsWith('.css') ? 'text/css' : 'text/html' });
+  });
+  const page = await context.newPage();
+  await page.goto('https://relay.example/');
+  await page.getByRole('button', { name: 'Pair with KithMoot', exact: true }).click();
+  await page.locator('#handoff').waitFor({ state: 'visible' });
+  await page.waitForTimeout(3000);
+  assert.equal(await page.locator('#status').textContent(), 'KithMoot paired successfully.');
+  assert.equal(await page.locator('#handoff').isHidden(), true);
+  assert.equal(await page.locator('#pairing-link').inputValue(), '');
+  const settledRequests = statusRequests;
+  await page.waitForTimeout(2500);
+  assert.equal(statusRequests, settledRequests);
+  await context.close();
+  console.log('Owner approval, app/copy handoff, pairing success feedback, clipboard refusal, mobile reflow and expiry passed.');
 } finally { await browser.close(); }

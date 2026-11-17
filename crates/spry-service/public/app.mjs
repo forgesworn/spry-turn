@@ -23,7 +23,11 @@ async function refreshStatus() {
   try {
     const response = await fetch(new URL('v1/status', base), { credentials: 'omit', cache: 'no-store', signal: AbortSignal.timeout(5000) });
     if (!response.ok) throw new Error();
-    const state = await response.json(); status.textContent = state.message;
+    const state = await response.json();
+    const paired = state.paired === true || (typeof state.audience === 'string' && state.audience.length === 64);
+    if (paired && pairingExpiresAt) {
+      clearPairing(); status.textContent = 'KithMoot paired successfully.';
+    } else status.textContent = paired ? 'KithMoot is paired.' : state.message;
     endpoint = state.endpoint; audience = state.audience; privateRelay = state.privateRelay === true;
     ready = state.ready === true;
     document.querySelector('#pair').disabled = !ready;
@@ -32,7 +36,7 @@ async function refreshStatus() {
       await action(document.querySelector('#pair'), pair);
     }
   } catch { status.textContent = 'Spry is starting. Waiting for your node…'; }
-  if (!ready) setTimeout(refreshStatus, 2000);
+  if (!ready || pairingExpiresAt) setTimeout(refreshStatus, 2000);
 }
 void refreshStatus();
 const hex = bytes => [...bytes].map(value => value.toString(16).padStart(2, '0')).join('');
@@ -79,6 +83,7 @@ async function pair() {
   document.querySelector('#handoff').hidden = false;
   status.textContent = 'Pairing link ready. Open KithMoot app or copy the link. You do not need to sign into KithMoot in this browser.';
   pairingTimer = setTimeout(() => { clearPairing(); status.textContent = 'That pairing link has expired. Choose Pair with KithMoot for a fresh link.'; }, Math.max(0, payload.expiresAt * 1000 - Date.now()));
+  setTimeout(refreshStatus, 2000);
 }
 document.querySelector('#pairing-link').onclick = event => { if (currentPairingLink()) event.currentTarget.select(); };
 for (const id of ['open-app', 'open-browser']) document.querySelector('#' + id).onclick = event => {

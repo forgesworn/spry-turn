@@ -1942,8 +1942,10 @@ fn a_trusted_pairing_keeps_its_id_and_grants_across_restarts_and_stands_alone() 
     let scratch = Scratch::new();
     let mut a = fixture();
     a.config.state_file = Some(scratch.file());
+    assert!(!a.has_pairings());
     // A claimed pairing from an earlier run, with its own grant.
     let claimed = pair_with(&mut a, &public(5), NOW);
+    assert!(a.has_pairings());
     let other = grant_for(&mut a, &claimed, &public(5), "other-scope", NOW);
     let id = a.trust_pairing(&public(2), NOW).expect("trusted");
     assert_eq!(id.len(), 43);
