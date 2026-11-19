@@ -14,6 +14,13 @@ The full v0.2.1 native ARM64 M4 Max loopback matrix measured 16–22% higher UDP
 
 These files provide navigation and source context for readers and tools. They do not change repository visibility or guarantee indexing by search engines or language models.
 
+## ForgeSworn ecosystem
+
+- [ForgeSworn library guide](https://forgesworn.dev/llms.txt): Find related libraries, tools and integration guides by task and runtime.
+- [ForgeSworn on GitHub](https://github.com/forgesworn): Browse the organisation’s public repositories.
+- [Project source](https://github.com/forgesworn/spry-turn): Canonical source repository, documentation and release information.
+- [RelaySwarm](https://github.com/forgesworn/relayswarm): Peer-assisted HLS with browser ICE configuration for optional TURN.
+
 ## Get started
 
 - [Overview](https://github.com/forgesworn/spry-turn/blob/main/README.md): Scope, features, quick commands and measured performance.
