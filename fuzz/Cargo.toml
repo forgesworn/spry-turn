@@ -10,10 +10,26 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "=0.4.13"
 spry-turn = { path = "..", default-features = false, features = ["turn"] }
+spry-link = { path = "../crates/spry-link" }
+spry-portmap = { path = "../crates/spry-portmap" }
 
 [[bin]]
 name = "wire"
 path = "fuzz_targets/wire.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "portmap"
+path = "fuzz_targets/portmap.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "link"
+path = "fuzz_targets/link.rs"
 test = false
 doc = false
 bench = false
