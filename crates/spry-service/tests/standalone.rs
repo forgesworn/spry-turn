@@ -17,6 +17,18 @@ impl Drop for Service {
     }
 }
 
+/// Fixtures start children with a cleared environment so nothing from the
+/// developer's shell reaches them. Windows cannot initialise sockets or its
+/// random source without `SystemRoot`, so that one variable is kept there.
+fn platform_environment() -> impl Iterator<Item = (std::ffi::OsString, std::ffi::OsString)> {
+    std::env::vars_os().filter(|(name, _)| {
+        cfg!(windows)
+            && name
+                .to_str()
+                .is_some_and(|name| name.eq_ignore_ascii_case("SystemRoot"))
+    })
+}
+
 fn request(address: SocketAddr, method: &str, path: &str, auth: Option<&str>) -> String {
     let mut socket = TcpStream::connect_timeout(&address, Duration::from_secs(2)).unwrap();
     socket
@@ -41,6 +53,7 @@ fn standalone_host_uses_owner_signatures_without_an_archipelago_installation() {
     drop(reserved);
     let child = Command::new(env!("CARGO_BIN_EXE_spry-node"))
         .env_clear()
+        .envs(crate::platform_environment())
         .env("SPRY_PUBLIC_URL", "https://relay.example:3744")
         .env("SPRY_KITHMOOT_URL", "https://calls.example/j/")
         .env("SPRY_OWNER_KEYS", &public)
@@ -121,6 +134,7 @@ fn refused_setup(extra: &[(&str, &str)]) -> String {
     let mut command = Command::new(env!("CARGO_BIN_EXE_spry-node"));
     command
         .env_clear()
+        .envs(crate::platform_environment())
         .env("SPRY_PUBLIC_URL", "https://relay.example")
         .env("SPRY_OWNER_URL", "https://owner.example")
         .env("SPRY_KITHMOOT_URL", "https://calls.example/j/")
@@ -376,6 +390,7 @@ mod profiles {
             let mut command = Command::new(env!("CARGO_BIN_EXE_spry-node"));
             command
                 .env_clear()
+                .envs(crate::platform_environment())
                 .env("SPRY_PUBLIC_URL", format!("https://relay.example:{base}"))
                 .env(
                     "SPRY_OWNER_KEYS",

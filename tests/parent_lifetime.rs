@@ -15,6 +15,18 @@ struct Relay(Child);
 // fixture between its port preflight and child bind.
 static FIXTURE_PORTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+/// Fixtures start children with a cleared environment so nothing from the
+/// developer's shell reaches them. Windows cannot initialise sockets or its
+/// random source without `SystemRoot`, so that one variable is kept there.
+fn platform_environment() -> impl Iterator<Item = (std::ffi::OsString, std::ffi::OsString)> {
+    std::env::vars_os().filter(|(name, _)| {
+        cfg!(windows)
+            && name
+                .to_str()
+                .is_some_and(|name| name.eq_ignore_ascii_case("SystemRoot"))
+    })
+}
+
 fn fixture_ports() -> std::sync::MutexGuard<'static, ()> {
     FIXTURE_PORTS
         .lock()
@@ -35,6 +47,7 @@ fn command() -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_spry-turn"));
     command
         .env_clear()
+        .envs(crate::platform_environment())
         .env("SPRY_TURN_SECRET", secret)
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
