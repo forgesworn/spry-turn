@@ -24,7 +24,7 @@ jobs:
       RELEASE_SHA: '4c58eece7566a1602475db79feefa3c1ae0c2604'
       DIAGNOSTIC_SHA: ${{ github.sha }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
           ref: ${{ github.sha }}

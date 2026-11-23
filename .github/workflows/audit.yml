@@ -1,0 +1,31 @@
+name: audit
+# Dependencies are pinned exactly, so a fix never arrives by itself. This
+# checks every lockfile against the RustSec advisory database on each change
+# and weekly, when a new advisory can appear without a commit.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  advisories:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master, 15 November 2026
+        with:
+          toolchain: stable
+      - run: cargo install cargo-audit --version 0.22.2 --locked
+      - name: Check the shipped, fuzz and experiment lockfiles
+        run: |
+          status=0
+          for lock in Cargo.lock fuzz/Cargo.lock experiments/linux-batch/Cargo.lock; do
+            echo "::group::$lock"
+            cargo audit --deny warnings --file "$lock" || status=1
+            echo "::endgroup::"
+          done
+          exit "$status"

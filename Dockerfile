@@ -1,10 +1,11 @@
 # syntax=docker/dockerfile:1
-FROM rust:1.94.1-slim-trixie AS build
+# Base images are pinned by digest; update the tag and digest together.
+FROM rust:1.94.1-slim-trixie@sha256:cf09adf8c3ebaba10779e5c23ff7fe4df4cccdab8a91f199b0c142c53fef3e1a AS build
 WORKDIR /src
 COPY . .
 RUN cargo build --locked --release --workspace --features tls --bins
 
-FROM debian:trixie-slim
+FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/* \
