@@ -30,6 +30,9 @@ Changes on `main` since 0.4.2. Not a release: the version is unchanged.
 - Check every lockfile against the RustSec advisory database in CI and
   weekly. Pin all workflow actions by commit and the container base images
   by digest.
+- Remove `curl` from the container image: nothing in the image uses it and
+  the service has no HTTP health endpoint to probe. Propose action and base
+  image pin updates weekly through Dependabot.
 - Configure the release and container workflows to attest build provenance
   with GitHub artefact attestations. Releases up to 0.4.2 carry checksums
   only; no attested release or image exists until those workflows next run.
