@@ -81,7 +81,7 @@ qualification. [Compatibility and remaining work](GOALS.md) are explicit.
 
 ## Run locally
 
-Rust 1.85 or later; stable Rust 1.94 is tested. Build output uses `target/`.
+Rust 1.85 or later: CI builds on 1.85 and tests on current stable. Build output uses `target/`.
 
 ```sh
 cargo build --release

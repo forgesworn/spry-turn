@@ -112,7 +112,7 @@ qualification. [Compatibility and remaining work](https://github.com/forgesworn/
 
 ## Run locally
 
-Rust 1.85 or later; stable Rust 1.94 is tested. Build output uses `target/`.
+Rust 1.85 or later: CI builds on 1.85 and tests on current stable. Build output uses `target/`.
 
 ```sh
 cargo build --release
@@ -362,6 +362,11 @@ it in an empty directory:
 gh release download v0.4.1 --repo forgesworn/spry-turn
 shasum -a 256 -c SHA256SUMS
 ```
+
+The release workflow is configured to attest build provenance for every
+artefact of releases after v0.4.2; check one with
+`gh attestation verify <file> --repo forgesworn/spry-turn`. Releases up to
+v0.4.2 have checksums only.
 
 [Download v0.4.1](https://github.com/forgesworn/spry-turn/releases/tag/v0.4.1).
 WASM is a source build.
@@ -700,6 +705,22 @@ value in the image or its inspected environment. Mount persistent state and
 operator certificates explicitly. The service still requires its HTTPS reverse
 proxy, reachable relay address and owner configuration described below. Building
 an image does not expose or deploy it.
+
+The container workflow also publishes `ghcr.io/forgesworn/spry-standalone` for
+amd64 and arm64. A `v*` release tag publishes that version and `latest`; each
+commit to `main` publishes `edge` and a tag named after the full commit.
+Before this arrangement `latest` was pushed from `main`, so it holds
+unreleased changes until the next release tag replaces it. Deploy by digest.
+Images published from this arrangement onwards carry a build provenance
+attestation; earlier ones do not. Check where an image was built before
+running it:
+
+```sh
+gh attestation verify oci://ghcr.io/forgesworn/spry-standalone:edge --repo forgesworn/spry-turn
+```
+
+The attestation shows which workflow run and commit produced the image. It is
+not a code signature, a security review or evidence about any deployment.
 
 ## Linux CI artefact
 
@@ -4143,6 +4164,46 @@ Canonical source: [CHANGELOG.md](https://github.com/forgesworn/spry-turn/blob/ma
 
 # Changelog
 
+## Unreleased
+
+Changes on `main` since 0.4.2. Not a release: the version is unchanged.
+
+- Add standalone container packaging: a non-root image holding `spry-node`
+  and `spry-turn`, with the relay secret readable from a mounted secret
+  file. See [the container image](https://github.com/forgesworn/spry-turn/blob/main/docs/standalone.md#container-image).
+- Publish the image's `latest` and version tags only from a `v*` release
+  tag that matches `Cargo.toml`. Commits to `main` publish a moving `edge`
+  tag and an immutable commit tag instead of `latest`. Until then `latest`
+  was pushed from every commit to `main`, so the existing `latest` holds
+  unreleased changes until the next release tag replaces it.
+- Add `SPRY_TLS_ADVERTISE_DIRECT=false` for a shared SNI proxy, so
+  credentials omit the direct `turns:HOST:PORT` URL whose certificate would
+  not match. The default keeps the dedicated-host URLs.
+- Add signed-owner relay statistics and grant administration
+  (`/v1/owner/stats`, `/v1/owner/grants/list`, `/v1/owner/grants/remove`) in
+  the private-node profile.
+- Report `paired` on `GET /v1/status`; the owner page confirms a successful
+  KithMoot pairing and clears the one-use link.
+- Refresh saved control relays when the owner approves, and log control
+  relay connection outcomes.
+- Update `url` to 2.5.9 for RUSTSEC-2026-0592 (stack overflow in
+  `Url::origin()` on nested `blob:` URLs). Spry calls it only on operator
+  configuration. Replace the unmaintained `rustls-pemfile`
+  (RUSTSEC-2025-0134) with the PEM reader already in `rustls`; a TLS key
+  file without a private key is still refused.
+- Check every lockfile against the RustSec advisory database in CI and
+  weekly. Pin all workflow actions by commit and the container base images
+  by digest.
+- Configure the release and container workflows to attest build provenance
+  with GitHub artefact attestations. Releases up to 0.4.2 carry checksums
+  only; no attested release or image exists until those workflows next run.
+- Fuzz the port-mapping gateway parsers and the Nostr event, advert, card
+  and pairing-link parsers alongside the existing wire target.
+- Build on Rust 1.85 and run the Rust suite on Windows in CI. Run CI once
+  per pull-request commit rather than twice.
+- Move the relay's unit tests from `src/turn.rs` to
+  `src/turn/policy_tests.rs`; no behaviour change.
+
 ## 0.4.2 (11 November 2026)
 
 Public MIT prerelease through the existing native executable and Android
@@ -4540,14 +4601,23 @@ python3 tests/fuzz.py --toolchain nightly-2025-12-05 --seconds 300 \
 
 The isolated [fuzz target](https://github.com/forgesworn/spry-turn/blob/main/fuzz/README.md) has no effect on shipping
 dependencies and reuses the checkout's `target/`. Its corpus and logs stay
-under ignored `.local/fuzz/`. CI runs a bounded 30-second campaign; longer
-manual runs are separate evidence. Test the actual KithMoot application with
+under ignored `.local/fuzz/`. Pass `--target portmap` or `--target link` for
+the gateway-reply and Nostr-event parsers. CI runs a bounded 30-second
+campaign for each target; longer manual runs are separate evidence. Test the actual KithMoot application with
 the [operator acceptance runner](https://github.com/forgesworn/spry-turn/blob/main/docs/kithmoot-acceptance.md).
 
 For WASM build and actual execution, use [the API commands](https://github.com/forgesworn/spry-turn/blob/main/docs/api.md#wasm-build).
 Run an appropriate credential/source scan before pushing; never suppress a
 finding without inspecting and resolving its cause. Current CI runs native
-checks and interop on Linux/macOS and builds the WASM codec on Linux.
+checks and interop on Linux/macOS, the Rust suite on Windows, a Rust 1.85
+build and the WASM codec build on Linux.
+
+Dependencies are pinned exactly, so the `audit` workflow checks all three
+lockfiles against the RustSec advisory database on every change and weekly.
+Run it locally with `cargo audit --deny warnings` (and `--file` for
+`fuzz/Cargo.lock` and `experiments/linux-batch/Cargo.lock`). Workflow actions
+and container base images are pinned by commit and digest; update the version
+comment and the hash together.
 
 ## Performance and cleanup
 
