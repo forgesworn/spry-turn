@@ -155,13 +155,13 @@ fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(address) = tls_address {
         #[cfg(feature = "tls")]
         {
-            use std::{fs::File, io::BufReader, sync::Arc};
+            use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
+            use std::sync::Arc;
             let cert = cert.ok_or("--tls-cert is required")?;
             let key = key.ok_or("--tls-key is required")?;
-            let certificates = rustls_pemfile::certs(&mut BufReader::new(File::open(cert)?))
-                .collect::<Result<Vec<_>, _>>()?;
-            let key = rustls_pemfile::private_key(&mut BufReader::new(File::open(key)?))?
-                .ok_or("no private key in file")?;
+            let certificates =
+                CertificateDer::pem_file_iter(cert)?.collect::<Result<Vec<_>, _>>()?;
+            let key = PrivateKeyDer::from_pem_file(key)?;
             let tls = rustls::ServerConfig::builder()
                 .with_no_client_auth()
                 .with_single_cert(certificates, key)?;

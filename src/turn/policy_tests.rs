@@ -967,9 +967,9 @@ fn tls_control_reads_consume_budget_without_plaintext_or_false_eof() {
 #[test]
 #[cfg(all(feature = "tls", feature = "connected-udp", unix))]
 fn tls_flush_retries_application_after_ciphertext_drain() {
+    use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
     use std::{
-        fs::{self, File, OpenOptions},
-        io::BufReader,
+        fs::{self, OpenOptions},
         os::unix::fs::{DirBuilderExt, OpenOptionsExt},
         path::PathBuf,
         process::{Child, Command, Stdio},
@@ -1057,12 +1057,11 @@ fn tls_flush_retries_application_after_ciphertext_drain() {
         std::thread::sleep(Duration::from_millis(10));
     }
     drop(generating);
-    let certificates = rustls_pemfile::certs(&mut BufReader::new(File::open(certificate).unwrap()))
+    let certificates = CertificateDer::pem_file_iter(certificate)
+        .unwrap()
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
-    let key = rustls_pemfile::private_key(&mut BufReader::new(File::open(private_key).unwrap()))
-        .unwrap()
-        .unwrap();
+    let key = PrivateKeyDer::from_pem_file(private_key).unwrap();
     let mut roots = rustls::RootCertStore::empty();
     roots.add(certificates[0].clone()).unwrap();
     let tls_server = rustls::ServerConfig::builder()

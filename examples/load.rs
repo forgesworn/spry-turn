@@ -50,11 +50,12 @@ impl Client {
         #[cfg(feature = "tls")]
         {
             let mut roots = rustls::RootCertStore::empty();
-            let mut file = io::BufReader::new(std::fs::File::open(
-                ca.ok_or_else(|| io::Error::other("TLS requires --ca"))?,
-            )?);
-            for cert in rustls_pemfile::certs(&mut file) {
-                roots.add(cert?).map_err(io::Error::other)?;
+            use rustls::pki_types::{CertificateDer, pem::PemObject};
+            let ca = ca.ok_or_else(|| io::Error::other("TLS requires --ca"))?;
+            for cert in CertificateDer::pem_file_iter(ca).map_err(io::Error::other)? {
+                roots
+                    .add(cert.map_err(io::Error::other)?)
+                    .map_err(io::Error::other)?;
             }
             if roots.is_empty() {
                 return Err(io::Error::other("empty TLS trust store"));

@@ -22,7 +22,7 @@ resolver = "3"
 default = ["runtime", "turn", "connected-udp"]
 runtime = ["dep:mio", "dep:getrandom"]
 turn = ["dep:base64", "dep:crc32fast", "dep:hmac", "dep:md-5", "dep:sha1"]
-tls = ["runtime", "turn", "dep:rustls", "dep:rustls-pemfile"]
+tls = ["runtime", "turn", "dep:rustls"]
 wasm = ["turn", "dep:wasm-bindgen"]
 direct-index = ["runtime", "turn"]
 connected-udp = ["direct-index", "dep:socket2"]
@@ -39,7 +39,6 @@ hmac = { version = "=0.12.1", optional = true }
 md-5 = { version = "=0.10.6", optional = true }
 sha1 = { version = "=0.10.6", optional = true }
 rustls = { version = "=0.23.46", default-features = false, features = ["std", "ring", "tls12"], optional = true }
-rustls-pemfile = { version = "=2.2.0", optional = true }
 wasm-bindgen = { version = "=0.2.129", optional = true }
 socket2 = { version = "=0.6.5", features = ["all"], optional = true }
 
