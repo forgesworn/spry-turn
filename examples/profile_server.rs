@@ -6,8 +6,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     use spry_turn::turn::{Config, Server};
     use std::{
         env,
-        fs::File,
-        io::BufReader,
         sync::Arc,
         time::{Duration, Instant},
     };
@@ -49,14 +47,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if !address.ip().is_loopback() {
             return Err("profile training TLS is restricted to loopback".into());
         }
-        let certificates = rustls_pemfile::certs(&mut BufReader::new(File::open(
-            certificate.ok_or("TLS certificate required")?,
-        )?))
-        .collect::<Result<Vec<_>, _>>()?;
-        let key = rustls_pemfile::private_key(&mut BufReader::new(File::open(
-            private_key.ok_or("TLS private key required")?,
-        )?))?
-        .ok_or("missing TLS private key")?;
+        use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
+        let certificates =
+            CertificateDer::pem_file_iter(certificate.ok_or("TLS certificate required")?)?
+                .collect::<Result<Vec<_>, _>>()?;
+        let key = PrivateKeyDer::from_pem_file(private_key.ok_or("TLS private key required")?)?;
         let tls = rustls::ServerConfig::builder()
             .with_no_client_auth()
             .with_single_cert(certificates, key)?;

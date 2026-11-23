@@ -285,15 +285,23 @@ impl Settings {
         config.bytes_per_second = self.bytes_per_second;
         config.aggregate_bytes_per_second = self.aggregate_bytes_per_second;
         if self.direct_tls {
-            use std::{
-                fs::File,
-                io::{self, BufReader},
-                sync::Arc,
+            use rustls::pki_types::{
+                CertificateDer, PrivateKeyDer,
+                pem::{self, PemObject},
             };
-            let certs = rustls_pemfile::certs(&mut BufReader::new(File::open(&self.certificate)?))
-                .collect::<io::Result<Vec<_>>>()?;
-            let key = rustls_pemfile::private_key(&mut BufReader::new(File::open(&self.key)?))?
-                .ok_or_else(|| io::Error::other("TLS key unavailable"))?;
+            use std::{io, sync::Arc};
+            // Keep the operating system's reason when a file cannot be read.
+            let unreadable = |reason: &'static str| {
+                move |error: pem::Error| match error {
+                    pem::Error::Io(error) => error,
+                    _ => io::Error::other(reason),
+                }
+            };
+            let certs = CertificateDer::pem_file_iter(&self.certificate)
+                .and_then(Iterator::collect::<Result<Vec<_>, _>>)
+                .map_err(unreadable("TLS certificate unavailable"))?;
+            let key = PrivateKeyDer::from_pem_file(&self.key)
+                .map_err(unreadable("TLS key unavailable"))?;
             let tls = rustls::ServerConfig::builder()
                 .with_no_client_auth()
                 .with_single_cert(certs, key)

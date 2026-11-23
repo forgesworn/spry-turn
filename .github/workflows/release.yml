@@ -2,8 +2,10 @@ name: release
 # Builds every release artefact on each pull request, so the release path is
 # proven before a tag exists. On a v* tag that matches Cargo.toml it also
 # writes SHA256SUMS over every artefact and creates a draft prerelease for a
-# maintainer to review and publish. Nothing is signed: the Windows
-# executables are unsigned, the macOS ones are ad hoc signed by the linker.
+# maintainer to review and publish. The artefacts carry a GitHub build
+# provenance attestation (`gh attestation verify <file> --repo
+# forgesworn/spry-turn`). No code is signed: the Windows executables are
+# unsigned, the macOS ones are ad hoc signed by the linker.
 on:
   push:
     tags: ["v*"]
@@ -21,7 +23,7 @@ jobs:
     outputs:
       name: ${{ steps.name.outputs.name }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - id: name
         run: echo "name=$(python3 scripts/package-release.py name)" >> "$GITHUB_OUTPUT"
 
@@ -48,8 +50,10 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master, 15 November 2026
+        with:
+          toolchain: stable
       - name: Remap build paths out of the binaries
         run: ${{ matrix.python }} scripts/package-release.py rustflags >> "$GITHUB_ENV"
       - name: Build both executables natively
@@ -85,9 +89,10 @@ jobs:
     needs: name
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master, 15 November 2026
         with:
+          toolchain: stable
           targets: aarch64-linux-android, x86_64-linux-android
       - name: Remap build paths out of the libraries
         run: python3 scripts/package-release.py rustflags >> "$GITHUB_ENV"
@@ -116,7 +121,7 @@ jobs:
   container:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Build the standalone image
         run: docker build --tag localhost/spry-standalone:ci .
       - name: Check the packaged relay
@@ -132,11 +137,13 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     env:
       GH_TOKEN: ${{ github.token }}
       NAME: ${{ needs.name.outputs.name }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: release-*
@@ -152,6 +159,10 @@ jobs:
         run: |
           python3 scripts/package-release.py sums .local/dist "$NAME"
           (cd .local/dist && sha256sum --strict -c SHA256SUMS)
+      - name: Attest every artefact's build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-checksums: .local/dist/SHA256SUMS
       - name: Create the draft prerelease
         run: |
           if gh release view "$NAME" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then

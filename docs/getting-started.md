@@ -26,6 +26,11 @@ gh release download v0.4.1 --repo forgesworn/spry-turn
 shasum -a 256 -c SHA256SUMS
 ```
 
+The release workflow is configured to attest build provenance for every
+artefact of releases after v0.4.2; check one with
+`gh attestation verify <file> --repo forgesworn/spry-turn`. Releases up to
+v0.4.2 have checksums only.
+
 [Download v0.4.1](https://github.com/forgesworn/spry-turn/releases/tag/v0.4.1).
 WASM is a source build.
 The older [v0.4.0](https://github.com/forgesworn/spry-turn/releases/tag/v0.4.0)

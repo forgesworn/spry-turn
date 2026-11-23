@@ -24,6 +24,18 @@ use tokio_tungstenite::{accept_async, connect_async, tungstenite::Message};
 const SECRET: &str = "synthetic-supervised-secret-not-for-deployment";
 const PUBLIC_IP: &str = "203.0.113.7";
 
+/// Fixtures start children with a cleared environment so nothing from the
+/// developer's shell reaches them. Windows cannot initialise sockets or its
+/// random source without `SystemRoot`, so that one variable is kept there.
+fn platform_environment() -> impl Iterator<Item = (std::ffi::OsString, std::ffi::OsString)> {
+    std::env::vars_os().filter(|(name, _)| {
+        cfg!(windows)
+            && name
+                .to_str()
+                .is_some_and(|name| name.eq_ignore_ascii_case("SystemRoot"))
+    })
+}
+
 fn now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -164,6 +176,7 @@ fn spawn_with(
     let mut command = Command::new(env!("CARGO_BIN_EXE_spry-node"));
     command
         .env_clear()
+        .envs(crate::platform_environment())
         .env("SPRY_TURN_SECRET", SECRET)
         .env("SPRY_LOCAL_TEST", "true")
         .args(["supervised", "--exit-on-stdin-close", "--pairing-key", host])
@@ -720,6 +733,7 @@ fn refused(arguments: &[&str], environment: &[(&str, &str)]) -> String {
     let mut command = Command::new(env!("CARGO_BIN_EXE_spry-node"));
     command
         .env_clear()
+        .envs(crate::platform_environment())
         .env("SPRY_TURN_SECRET", SECRET)
         .arg("supervised")
         .args(arguments)
@@ -823,6 +837,7 @@ fn other_profiles_settings_and_open_modes_refuse_to_start() {
         let mut command = Command::new(env!("CARGO_BIN_EXE_spry-node"));
         let output = command
             .env_clear()
+            .envs(crate::platform_environment())
             .env("SPRY_TURN_SECRET", "too-short")
             .arg("supervised")
             .args(&valid)
@@ -891,6 +906,7 @@ fn mapped_node(
     let mut command = Command::new(env!("CARGO_BIN_EXE_spry-node"));
     command
         .env_clear()
+        .envs(crate::platform_environment())
         .env("SPRY_TURN_SECRET", SECRET)
         .env("SPRY_LOCAL_TEST", "true")
         .args([
@@ -1389,6 +1405,7 @@ async fn a_router_that_goes_quiet_for_good_ends_the_node_with_the_cannot_host_co
 fn map_ports_refuses_explicit_public_values_and_names_the_setting() {
     let output = Command::new(env!("CARGO_BIN_EXE_spry-node"))
         .env_clear()
+        .envs(crate::platform_environment())
         .env("SPRY_TURN_SECRET", SECRET)
         .env("SPRY_LOCAL_TEST", "true")
         .args([

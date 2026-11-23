@@ -59,14 +59,23 @@ python3 tests/fuzz.py --toolchain nightly-2025-12-05 --seconds 300 \
 
 The isolated [fuzz target](fuzz/README.md) has no effect on shipping
 dependencies and reuses the checkout's `target/`. Its corpus and logs stay
-under ignored `.local/fuzz/`. CI runs a bounded 30-second campaign; longer
-manual runs are separate evidence. Test the actual KithMoot application with
+under ignored `.local/fuzz/`. Pass `--target portmap` or `--target link` for
+the gateway-reply and Nostr-event parsers. CI runs a bounded 30-second
+campaign for each target; longer manual runs are separate evidence. Test the actual KithMoot application with
 the [operator acceptance runner](docs/kithmoot-acceptance.md).
 
 For WASM build and actual execution, use [the API commands](docs/api.md#wasm-build).
 Run an appropriate credential/source scan before pushing; never suppress a
 finding without inspecting and resolving its cause. Current CI runs native
-checks and interop on Linux/macOS and builds the WASM codec on Linux.
+checks and interop on Linux/macOS, the Rust suite on Windows, a Rust 1.85
+build and the WASM codec build on Linux.
+
+Dependencies are pinned exactly, so the `audit` workflow checks all three
+lockfiles against the RustSec advisory database on every change and weekly.
+Run it locally with `cargo audit --deny warnings` (and `--file` for
+`fuzz/Cargo.lock` and `experiments/linux-batch/Cargo.lock`). Workflow actions
+and container base images are pinned by commit and digest; update the version
+comment and the hash together.
 
 ## Performance and cleanup
 

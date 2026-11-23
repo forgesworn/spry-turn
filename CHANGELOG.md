@@ -1,5 +1,45 @@
 # Changelog
 
+## Unreleased
+
+Changes on `main` since 0.4.2. Not a release: the version is unchanged.
+
+- Add standalone container packaging: a non-root image holding `spry-node`
+  and `spry-turn`, with the relay secret readable from a mounted secret
+  file. See [the container image](docs/standalone.md#container-image).
+- Publish the image's `latest` and version tags only from a `v*` release
+  tag that matches `Cargo.toml`. Commits to `main` publish a moving `edge`
+  tag and an immutable commit tag instead of `latest`. Until then `latest`
+  was pushed from every commit to `main`, so the existing `latest` holds
+  unreleased changes until the next release tag replaces it.
+- Add `SPRY_TLS_ADVERTISE_DIRECT=false` for a shared SNI proxy, so
+  credentials omit the direct `turns:HOST:PORT` URL whose certificate would
+  not match. The default keeps the dedicated-host URLs.
+- Add signed-owner relay statistics and grant administration
+  (`/v1/owner/stats`, `/v1/owner/grants/list`, `/v1/owner/grants/remove`) in
+  the private-node profile.
+- Report `paired` on `GET /v1/status`; the owner page confirms a successful
+  KithMoot pairing and clears the one-use link.
+- Refresh saved control relays when the owner approves, and log control
+  relay connection outcomes.
+- Update `url` to 2.5.9 for RUSTSEC-2026-0592 (stack overflow in
+  `Url::origin()` on nested `blob:` URLs). Spry calls it only on operator
+  configuration. Replace the unmaintained `rustls-pemfile`
+  (RUSTSEC-2025-0134) with the PEM reader already in `rustls`; a TLS key
+  file without a private key is still refused.
+- Check every lockfile against the RustSec advisory database in CI and
+  weekly. Pin all workflow actions by commit and the container base images
+  by digest.
+- Configure the release and container workflows to attest build provenance
+  with GitHub artefact attestations. Releases up to 0.4.2 carry checksums
+  only; no attested release or image exists until those workflows next run.
+- Fuzz the port-mapping gateway parsers and the Nostr event, advert, card
+  and pairing-link parsers alongside the existing wire target.
+- Build on Rust 1.85 and run the Rust suite on Windows in CI. Run CI once
+  per pull-request commit rather than twice.
+- Move the relay's unit tests from `src/turn.rs` to
+  `src/turn/policy_tests.rs`; no behaviour change.
+
 ## 0.4.2 (11 November 2026)
 
 Public MIT prerelease through the existing native executable and Android

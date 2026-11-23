@@ -105,6 +105,22 @@ operator certificates explicitly. The service still requires its HTTPS reverse
 proxy, reachable relay address and owner configuration described below. Building
 an image does not expose or deploy it.
 
+The container workflow also publishes `ghcr.io/forgesworn/spry-standalone` for
+amd64 and arm64. A `v*` release tag publishes that version and `latest`; each
+commit to `main` publishes `edge` and a tag named after the full commit.
+Before this arrangement `latest` was pushed from `main`, so it holds
+unreleased changes until the next release tag replaces it. Deploy by digest.
+Images published from this arrangement onwards carry a build provenance
+attestation; earlier ones do not. Check where an image was built before
+running it:
+
+```sh
+gh attestation verify oci://ghcr.io/forgesworn/spry-standalone:edge --repo forgesworn/spry-turn
+```
+
+The attestation shows which workflow run and commit produced the image. It is
+not a code signature, a security review or evidence about any deployment.
+
 ## Linux CI artefact
 
 The existing verify workflow is configured to build both TLS-enabled standalone

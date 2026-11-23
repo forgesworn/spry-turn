@@ -1,8 +1,12 @@
 name: Container image
 
+# main publishes a moving `edge` tag and an immutable commit tag. Only a v*
+# release tag that matches Cargo.toml publishes the version tag and `latest`,
+# so `latest` always corresponds to a changelog entry.
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
   workflow_dispatch:
 
@@ -32,14 +36,33 @@ jobs:
           docker run --rm --entrypoint /usr/local/bin/docker-entrypoint.sh localhost/spry-standalone:ci /usr/local/bin/spry-turn --version
 
   publish:
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     needs: verify
     runs-on: ubuntu-24.04
     permissions:
       contents: read
       packages: write
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - id: tags
+        name: Choose the tags for this ref
+        run: |
+          image=ghcr.io/forgesworn/spry-standalone
+          {
+            echo "tags<<EOF"
+            echo "$image:$GITHUB_SHA"
+            if [ "$GITHUB_REF_TYPE" = tag ]; then
+              # Refuses a tag that does not match the Cargo.toml version.
+              name="$(python3 scripts/package-release.py name)"
+              echo "$image:${name#v}"
+              echo "$image:latest"
+            else
+              echo "$image:edge"
+            fi
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
@@ -54,10 +77,14 @@ jobs:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: |
-            ghcr.io/forgesworn/spry-standalone:${{ github.sha }}
-            ghcr.io/forgesworn/spry-standalone:latest
+          tags: ${{ steps.tags.outputs.tags }}
           cache-from: type=gha,scope=spry-publish
           cache-to: type=gha,scope=spry-publish,mode=max
+      - name: Attest the image's build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ghcr.io/forgesworn/spry-standalone
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
       - name: Record the immutable image reference
         run: echo "ghcr.io/forgesworn/spry-standalone@${{ steps.build.outputs.digest }}"

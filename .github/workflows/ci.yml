@@ -1,7 +1,15 @@
 name: ci
-on: [push, pull_request]
+# Branch pushes are covered by their pull request; running both doubled the
+# runner demand for every commit.
+on:
+  push:
+    branches: [main]
+  pull_request:
 permissions:
   contents: read
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   verify:
     strategy:
@@ -11,15 +19,16 @@ jobs:
     env:
       CARGO_INCREMENTAL: "0"
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
       - run: npm run check:docs
       - run: node tests/kithmoot-guard.mjs
       - run: python3 -B -m unittest discover -s tests -p 'test_*.py'
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master, 15 November 2026
         with:
+          toolchain: stable
           components: rustfmt, clippy
       - name: Remap Linux build paths
         if: matrix.os == 'ubuntu-24.04'
@@ -73,14 +82,48 @@ jobs:
             .local/linux-artifact/*.sha256
           if-no-files-found: error
           retention-days: 3
+  # Cargo.toml and the README state Rust 1.85 as the minimum; keep it true.
+  msrv:
+    runs-on: ubuntu-24.04
+    env:
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master, 15 November 2026
+        with:
+          toolchain: "1.85"
+      - run: cargo check --locked --workspace --all-features
+  # The release workflow ships x86_64-pc-windows-msvc executables. The
+  # socket, browser and stress fixtures above are POSIX harnesses; this job
+  # runs the Rust suite against the Windows release build.
+  windows:
+    runs-on: windows-latest
+    env:
+      CARGO_INCREMENTAL: "0"
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master, 15 November 2026
+        with:
+          toolchain: stable
+      - run: cargo build --locked --release --workspace --features tls
+      - run: cargo test --locked --workspace --all-features --no-fail-fast
+        env:
+          SPRY_TEST_RELAY_BINARY: target/release/spry-turn.exe
   fuzz:
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [wire, portmap, link]
     runs-on: ubuntu-latest
     env:
       CARGO_INCREMENTAL: "0"
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master, 15 November 2026
         with:
           toolchain: nightly-2025-12-05
       - run: cargo install cargo-fuzz --version 0.13.2 --locked
-      - run: python3 tests/fuzz.py --toolchain nightly-2025-12-05 --seconds 30 --output .local/ci-fuzz.json
+      - run: python3 tests/fuzz.py --toolchain nightly-2025-12-05 --target ${{ matrix.target }} --seconds 30 --output .local/ci-fuzz-${{ matrix.target }}.json
