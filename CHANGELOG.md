@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+Changes on `main` since 0.4.3. Not a release: the version is unchanged.
+
+- Restrict IPv6 peers to global unicast addresses. This refuses the ranges
+  that embed or translate to IPv4 (IPv4-compatible, NAT64, 6to4, Teredo),
+  the site-local, discard and RFC 9637 documentation ranges, and anything
+  outside `2000::/3`. IPv4 instances are unaffected.
+- Give each client with an allocation its own small control-request budget,
+  drawn before the budget every source shares, so its refreshes and
+  permissions do not depend on what other sources send.
+- Document the control-request and connection limits in
+  [operations](docs/operations.md).
+- The two hosted qualification runs of the change above **failed** guards:
+  the sparse TCP CPU guard in both, and a memory guard on one pair of the
+  512-client profile against `main`. Loaded throughput and CPU were flat
+  against `main`. The owner accepted the change with both results
+  disclosed; see [the results](docs/tcp-pr63-results-2026-11-24.md).
+
 ## 0.4.3 (24 November 2026)
 
 Public MIT prerelease through the existing native executable, Android

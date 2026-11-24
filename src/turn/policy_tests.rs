@@ -123,6 +123,11 @@ fn batch_output_relay(
                 expires,
             }],
             bandwidth: Bucket::new(64 * 1024 * 1024, 128 * 1024 * 1024, Instant::now()),
+            requests: Bucket::new(
+                ALLOCATION_REQUESTS_PER_SECOND,
+                ALLOCATION_REQUEST_BURST,
+                Instant::now(),
+            ),
         },
     );
     (token, address)
@@ -1259,6 +1264,11 @@ fn two_allocations(
                 }],
                 channels: Vec::new(),
                 bandwidth: Bucket::new(64 * 1024 * 1024, 128 * 1024 * 1024, Instant::now()),
+                requests: Bucket::new(
+                    ALLOCATION_REQUESTS_PER_SECOND,
+                    ALLOCATION_REQUEST_BURST,
+                    Instant::now(),
+                ),
             },
         );
         relays.push((token, address));
@@ -1913,6 +1923,11 @@ fn relay_overload_preserves_stream_and_resumes_both_framing_paths() {
                     .into_iter()
                     .collect(),
                 bandwidth: Bucket::new(64 * 1024 * 1024, 128 * 1024 * 1024, Instant::now()),
+                requests: Bucket::new(
+                    ALLOCATION_REQUESTS_PER_SECOND,
+                    ALLOCATION_REQUEST_BURST,
+                    Instant::now(),
+                ),
             },
         );
 
@@ -2139,6 +2154,11 @@ fn recovered_relay_packet(channel: Option<u16>) {
                 .into_iter()
                 .collect(),
             bandwidth: Bucket::new(64 * 1024 * 1024, 128 * 1024 * 1024, Instant::now()),
+            requests: Bucket::new(
+                ALLOCATION_REQUESTS_PER_SECOND,
+                ALLOCATION_REQUEST_BURST,
+                Instant::now(),
+            ),
         },
     );
 
@@ -2857,4 +2877,137 @@ fn ipv6_instance_allocates_and_relays_both_directions() {
     assert_eq!((data.method, data.class), (DATA_METHOD, 1));
     assert_eq!(data.address(PEER), Some(peer_address));
     assert_eq!(data.attr(DATA), Some(&b"back to the client"[..]));
+}
+
+#[test]
+fn ipv6_peers_are_global_unicast_without_embedded_or_translated_ipv4() {
+    let mut config = Config::local(vec![1; 32]);
+    config.relay_ip = "2a00:1450:4009::1".parse().unwrap();
+    let none = HashSet::new();
+    let allowed = |peer: &str| {
+        let address = SocketAddr::new(peer.parse().unwrap(), 3478);
+        Server::allowed_peer(&config, &none, &none, address)
+    };
+    for peer in [
+        "2606:4700::1111",
+        "2a00:1450:4009::2",
+        "2001:200::1",
+        "2001:4860::8888",
+        "3fef:ffff::1",
+        "3000::1",
+    ] {
+        assert!(allowed(peer), "{peer} is ordinary global unicast");
+    }
+    for (peer, why) in [
+        ("::ffff:10.0.0.1", "IPv4-mapped"),
+        ("::10.0.0.1", "IPv4-compatible"),
+        ("64:ff9b::10.0.0.1", "NAT64 to a private address"),
+        ("64:ff9b::127.0.0.1", "NAT64 to loopback"),
+        ("64:ff9b::169.254.169.254", "NAT64 to link-local"),
+        ("64:ff9b::8.8.8.8", "NAT64 to any IPv4"),
+        ("64:ff9b:1::10.0.0.1", "local-use NAT64"),
+        ("2002:a00:1::1", "6to4 embedding 10.0.0.1"),
+        ("2001:0:4136:e378:8000:63bf:3fff:fdd2", "Teredo"),
+        ("2001:1ff:ffff::1", "end of the IETF special block"),
+        ("2001:db8::1", "documentation"),
+        ("3fff::1", "documentation, RFC 9637"),
+        (
+            "3fff:fff:ffff::1",
+            "end of the RFC 9637 documentation range",
+        ),
+        ("4000::1", "outside global unicast"),
+        ("fd00::1", "unique local"),
+        ("fe80::1", "link-local"),
+        ("fec0::1", "site-local"),
+        ("100::1", "discard-only"),
+        ("::1", "loopback"),
+        ("::", "unspecified"),
+        ("ff02::1", "multicast"),
+    ] {
+        assert!(!allowed(peer), "{peer} ({why}) must be refused");
+    }
+}
+
+/// An unauthenticated flood may spend the budget every source shares, but
+/// not the control requests of a client that already holds an allocation.
+#[test]
+fn an_allocated_client_keeps_control_requests_when_the_shared_budget_is_spent() {
+    let mut config = Config::local(vec![1; 32]);
+    config.listen.set_port(0);
+    let mut server = bind_server(config);
+    let endpoint = server.local_addr().unwrap();
+    let client = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    client.set_nonblocking(true).unwrap();
+    let address = client.local_addr().unwrap();
+    let username = format!("{}:budget-fixture", unix_time() + 300);
+    let key = auth::key(
+        &username,
+        &server.config.realm,
+        &auth::credential(&server.config.secret, &username),
+    );
+    let nonce = server
+        .nonces
+        .issue(unix_time(), address.ip(), &server.config.realm);
+    let signed = |method, transaction: u8| {
+        let mut value = Builder::new(method, 0, [transaction; 12]);
+        value.attr(USERNAME, username.as_bytes());
+        value.attr(REALM, server.config.realm.as_bytes());
+        value.attr(NONCE, nonce.as_bytes());
+        if method == ALLOCATE {
+            value.attr(TRANSPORT, &[17, 0, 0, 0]);
+        }
+        value.finish(Some(&key))
+    };
+    let allocate = signed(ALLOCATE, 1);
+    let refresh = signed(REFRESH, 2);
+    fn reply(server: &mut Server, socket: &std::net::UdpSocket, wait: u64) -> Option<(u16, u8)> {
+        let mut bytes = [0; 2048];
+        let deadline = Instant::now() + Duration::from_millis(wait);
+        loop {
+            match socket.recv_from(&mut bytes) {
+                Ok((length, _)) => {
+                    let message = Message::parse(&bytes[..length]).unwrap();
+                    return Some((message.method, message.class));
+                }
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                    if Instant::now() >= deadline {
+                        return None;
+                    }
+                    server.poll_once(Duration::from_millis(5)).unwrap();
+                }
+                Err(error) => panic!("receive failed: {error}"),
+            }
+        }
+    }
+    client.send_to(&allocate, endpoint).unwrap();
+    assert_eq!(reply(&mut server, &client, 2_000), Some((ALLOCATE, 2)));
+
+    // Another source spends the whole shared budget.
+    let stranger: SocketAddr = "198.51.100.9:40000".parse().unwrap();
+    let binding = Builder::new(BINDING, 0, [3; 12]).finish(None);
+    for _ in 0..8_000 {
+        server.receive(Client::Datagram(stranger), stranger, &binding);
+    }
+    // Hold it empty: a real flood keeps taking what refills, and the test
+    // must not depend on outrunning that refill.
+    server.requests = Bucket::new(0, 0, Instant::now());
+
+    // A newcomer shares that budget and gets nothing.
+    let newcomer = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    newcomer.set_nonblocking(true).unwrap();
+    newcomer.send_to(&binding, endpoint).unwrap();
+    assert_eq!(reply(&mut server, &newcomer, 100), None);
+
+    // The allocated client is still answered, for the whole of its burst.
+    // Its own budget is frozen too, so the count is exact.
+    let allocation = server.allocations.values_mut().next().unwrap();
+    allocation.requests = Bucket::new(0, ALLOCATION_REQUEST_BURST, Instant::now());
+    for _ in 0..ALLOCATION_REQUEST_BURST {
+        client.send_to(&refresh, endpoint).unwrap();
+        assert_eq!(reply(&mut server, &client, 2_000), Some((REFRESH, 2)));
+    }
+    // That budget is bounded: once spent it falls back to the shared one,
+    // which is empty.
+    client.send_to(&refresh, endpoint).unwrap();
+    assert_eq!(reply(&mut server, &client, 100), None);
 }
