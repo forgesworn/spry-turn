@@ -4176,7 +4176,10 @@ Open product decisions:
   investigations established no cause and could not exclude host noise.
   A further hosted run on 24 November 2026
   [passed every guard](https://github.com/forgesworn/spry-turn/blob/main/docs/tcp-main-cd9d027-results-2026-11-24.md); one
-  pass on shared hardware does not settle it either.
+  pass on shared hardware does not settle it either. Two runs of the later
+  peer-policy and control-budget change
+  [failed guards and were accepted by the owner](https://github.com/forgesworn/spry-turn/blob/main/docs/tcp-pr63-results-2026-11-24.md);
+  include that change in the bare-metal run.
 
 TCP relay allocations (RFC 6062), DTLS client transport, database integrations,
 OAuth, telnet/HTTP administration and clustering are outside the first release.
@@ -4214,6 +4217,11 @@ Changes on `main` since 0.4.3. Not a release: the version is unchanged.
   permissions do not depend on what other sources send.
 - Document the control-request and connection limits in
   [operations](https://github.com/forgesworn/spry-turn/blob/main/docs/operations.md).
+- The two hosted qualification runs of the change above **failed** guards:
+  the sparse TCP CPU guard in both, and a memory guard on one pair of the
+  512-client profile against `main`. Loaded throughput and CPU were flat
+  against `main`. The owner accepted the change with both results
+  disclosed; see [the results](https://github.com/forgesworn/spry-turn/blob/main/docs/tcp-pr63-results-2026-11-24.md).
 
 ## 0.4.3 (24 November 2026)
 
