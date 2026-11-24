@@ -36,6 +36,10 @@ pub const PUBLIC_TTL: u64 = 3600;
 pub const PUBLIC_PER_MINUTE: u16 = 32;
 pub const PUBLIC_PER_SOURCE: u16 = 6;
 pub const PUBLIC_SOURCES: usize = 256;
+/// Requests the per-source limiter refused that claim an owner's or paired
+/// app's key and are still checked, in total each minute. It bounds the
+/// signature checks such claims can cause.
+pub const KNOWN_KEY_CLAIMS_PER_MINUTE: u16 = 3000;
 /// Registered signing keys one room grant may hold.
 pub const MAX_MEMBERS: usize = 64;
 /// Registered signing keys across every grant on the node.
@@ -372,6 +376,8 @@ pub struct Authority {
     // so callers spread over many addresses cannot fill the table that
     // owners and paired apps need after they authenticate.
     key_rates: HashMap<String, (u64, u16)>,
+    /// Window end and count of refused requests admitted on a known-key claim.
+    known_claims: (u64, u16),
     // Kept apart from `rates`, so anonymous callers cannot exhaust the
     // limiter that paired apps and owners rely on.
     public_rates: HashMap<String, (u64, u16)>,
@@ -390,6 +396,7 @@ impl Authority {
             replays: HashMap::new(),
             rates: HashMap::new(),
             key_rates: HashMap::new(),
+            known_claims: (0, 0),
             public_rates: HashMap::new(),
             public_window: (0, 0),
             revisions: HashMap::new(),
@@ -648,6 +655,30 @@ impl Authority {
         let known = self.known_key(key);
         count(&mut self.key_rates, hash(key), known, now)
     }
+    /// Lets a request the per-source limiter refused go on to authentication
+    /// when it claims an owner's or paired app's key. The source table is
+    /// small and filled before authentication, so without this a spread of
+    /// sources could keep those few keys out. The claim is unverified here:
+    /// authentication still checks the signature, and the per-key limit
+    /// still applies. A total cap bounds the checks false claims can cause.
+    pub fn admit_known_key_claim(&mut self, header: &str, now: u64) -> Result<()> {
+        let claimed = auth_event(header)?.pubkey;
+        need(
+            self.known_key(&claimed),
+            429,
+            "Spry is busy. Try again shortly.",
+        )?;
+        if now >= self.known_claims.0 {
+            self.known_claims = (now + 60, 0);
+        }
+        need(
+            self.known_claims.1 < KNOWN_KEY_CLAIMS_PER_MINUTE,
+            429,
+            "Spry is busy. Try again shortly.",
+        )?;
+        self.known_claims.1 += 1;
+        Ok(())
+    }
     /// An owner or a paired app.
     fn known_key(&self, key: &str) -> bool {
         self.config.owners.contains(key) || self.pairs.values().any(|pair| pair.key == key)
@@ -712,16 +743,7 @@ impl Authority {
         body: &[u8],
         now: u64,
     ) -> Result<String> {
-        need(header.len() <= 4096, 401, "Approval required.")?;
-        let bytes = STANDARD
-            .decode(
-                header
-                    .strip_prefix("Nostr ")
-                    .ok_or(Refused(401, "Approval required."))?,
-            )
-            .map_err(|_| Refused(401, "Approval required."))?;
-        let event: AuthEvent =
-            serde_json::from_slice(&bytes).map_err(|_| Refused(401, "Approval required."))?;
+        let event = auth_event(header)?;
         need(
             event.kind == 27235
                 && event.content.is_empty()
@@ -1250,6 +1272,19 @@ impl Authority {
         entry.1 += named;
         Ok(json!({"v":1,"added":named}))
     }
+}
+
+/// The proof carried by an `Authorization: Nostr …` header, undecided.
+fn auth_event(header: &str) -> Result<AuthEvent> {
+    need(header.len() <= 4096, 401, "Approval required.")?;
+    let bytes = STANDARD
+        .decode(
+            header
+                .strip_prefix("Nostr ")
+                .ok_or(Refused(401, "Approval required."))?,
+        )
+        .map_err(|_| Refused(401, "Approval required."))?;
+    serde_json::from_slice(&bytes).map_err(|_| Refused(401, "Approval required."))
 }
 
 #[derive(Deserialize)]
