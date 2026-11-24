@@ -744,14 +744,22 @@ fn what_the_router_grants_becomes_the_urls_the_map_and_the_caps() {
 #[test]
 fn a_restarted_relay_binds_the_same_ports_again_and_keeps_its_counts() {
     // A loopback port free for both UDP and TCP.
-    let port = (0..64)
-        .find_map(|_| {
-            let tcp = std::net::TcpListener::bind("127.0.0.1:0").ok()?;
-            let port = tcp.local_addr().ok()?.port();
-            std::net::UdpSocket::bind(("127.0.0.1", port)).ok()?;
-            (port >= 1024).then_some(port)
-        })
-        .unwrap();
+    let mut refused = None;
+    let port = (0..64).find_map(|_| {
+        let found = std::net::TcpListener::bind("127.0.0.1:0").and_then(|tcp| {
+            let port = tcp.local_addr()?.port();
+            std::net::UdpSocket::bind(("127.0.0.1", port))?;
+            Ok(port)
+        });
+        match found {
+            Ok(port) => (port >= 1024).then_some(port),
+            Err(error) => {
+                refused = Some(error);
+                None
+            }
+        }
+    });
+    let port = port.unwrap_or_else(|| panic!("no loopback port free for UDP and TCP: {refused:?}"));
     let mut list = with("--bind", "127.0.0.1");
     list.retain(|(name, _)| !matches!(*name, "--control-relay" | "--listen-port"));
     list.push(("--control-relay", "ws://127.0.0.1:7777/".into()));

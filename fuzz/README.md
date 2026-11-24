@@ -21,6 +21,11 @@ python3 tests/fuzz.py --toolchain nightly --target portmap --seconds 300
 python3 tests/fuzz.py --toolchain nightly --target link --seconds 300
 ```
 
+For campaigns of many minutes add `--rss-limit-mb 2048`: the fuzzer process
+itself grows with its corpus and the sanitiser's quarantine, and a 20-minute
+`portmap` run reached the default 768 MB with no input at fault (the reported
+input replayed alone in 38 MB).
+
 `--target` defaults to `wire`. Each target keeps its own corpus, log and
 artefact directory and records the hashes of the sources it covers.
 

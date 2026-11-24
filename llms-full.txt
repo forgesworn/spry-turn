@@ -4227,6 +4227,8 @@ Changes on `main` since 0.4.4. Not a release: the version is unchanged.
 - Document that the container's HTTP API listens on loopback only: a
   published port does not reach it, and the reverse proxy must share the
   container's network namespace or the container must use host networking.
+  The image no longer lists port 3744 as exposed.
+- Let the fuzz wrapper raise the fuzzer's memory limit for long campaigns.
 
 ## 0.4.4 (24 November 2026)
 
