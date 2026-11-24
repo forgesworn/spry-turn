@@ -1,8 +1,12 @@
 # Changelog
 
-## Unreleased
+## 0.4.4 (24 November 2026)
 
-Changes on `main` since 0.4.3. Not a release: the version is unchanged.
+Public MIT prerelease through the existing native executable, Android
+library and container image channels. It tightens the IPv6 peer policy and
+makes control-request limits fairer to clients that already hold an
+allocation. The payload path is the 0.4.2 one. Operators of an IPv6
+instance should update. This release does not deploy a hosted relay.
 
 - Restrict IPv6 peers to global unicast addresses. This refuses the ranges
   that embed or translate to IPv4 (IPv4-compatible, NAT64, 6to4, Teredo),
