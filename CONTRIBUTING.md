@@ -74,7 +74,8 @@ Dependencies are pinned exactly, so the `audit` workflow checks all three
 lockfiles against the RustSec advisory database on every change and weekly.
 Run it locally with `cargo audit --deny warnings` (and `--file` for
 `fuzz/Cargo.lock` and `experiments/linux-batch/Cargo.lock`). Workflow actions
-and container base images are pinned by commit and digest; update the version
+and container base images are pinned by commit and digest; Dependabot
+proposes their updates weekly. When changing one by hand, update the version
 comment and the hash together.
 
 ## Performance and cleanup

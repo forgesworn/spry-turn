@@ -1,0 +1,21 @@
+# Workflow actions are pinned by commit and the container base images by
+# digest, so neither moves by itself. Dependabot proposes each update as a
+# pull request that CI checks. Cargo dependencies stay pinned by hand: the
+# audit workflow reports advisories, and each bump is a reviewed change.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci
+    groups:
+      actions:
+        patterns: ["*"]
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: chore
