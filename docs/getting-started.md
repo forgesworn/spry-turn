@@ -26,8 +26,9 @@ gh release download v0.4.1 --repo forgesworn/spry-turn
 shasum -a 256 -c SHA256SUMS
 ```
 
-The release workflow is configured to attest build provenance for every
-artefact of releases after v0.4.2; check one with
+The release workflow attests build provenance for every artefact of releases
+after v0.4.2 (rehearsed by a manual run; no such release exists yet); check
+one with
 `gh attestation verify <file> --repo forgesworn/spry-turn`. Releases up to
 v0.4.2 have checksums only.
 

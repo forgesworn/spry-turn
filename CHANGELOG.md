@@ -52,6 +52,10 @@ Changes on `main` since 0.4.2. Not a release: the version is unchanged.
   default IPv4 family with 440, allocates an IPv6 relayed address and
   forwards data both ways over loopback sockets. Field IPv6 acceptance on a
   real network remains open.
+- A manual run of the release workflow now rehearses the whole publish path
+  (artefacts, `SHA256SUMS`, manifest and provenance attestation) and stops
+  before creating a release. One rehearsal passed and its attestation
+  verifies with `gh attestation verify`; no tagged release has run it yet.
 - Fix and lint the TLS-only feature set's test build in CI.
 - Move the relay's unit tests from `src/turn.rs` to
   `src/turn/policy_tests.rs`; no behaviour change.
