@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+Changes on `main` since 0.4.4. Not a release: the version is unchanged.
+
+- When the HTTP API's per-caller table is full, a request that claims an
+  owner's or paired app's key still goes on to have its signature checked,
+  within a total cap, so those keys keep access however many other callers
+  arrive. Unsigned and unknown callers are refused as before.
+- Document that the container's HTTP API listens on loopback only: a
+  published port does not reach it, and the reverse proxy must share the
+  container's network namespace or the container must use host networking.
+
 ## 0.4.4 (24 November 2026)
 
 Public MIT prerelease through the existing native executable, Android

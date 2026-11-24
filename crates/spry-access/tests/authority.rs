@@ -2010,3 +2010,26 @@ fn a_trusted_pairing_keeps_its_id_and_grants_across_restarts_and_stands_alone() 
         );
     }
 }
+
+#[test]
+fn a_known_key_claim_passes_a_full_source_table_within_a_total_cap() {
+    let mut a = fixture();
+    for n in 0..256 {
+        a.rate(&format!("2001:db8:0:{n:x}::"), NOW).unwrap();
+    }
+    assert_eq!(a.rate("198.51.100.77", NOW).unwrap_err().0, 429);
+    let owner = signed("/v1/pairings/list", b"{}", NOW, 1);
+    a.admit_known_key_claim(&owner, NOW).expect("owner claim");
+    // A well-formed proof from a key that is neither owner nor paired, and
+    // anything that is not a proof, stay refused.
+    for refused in ["Nostr e30=", "Bearer token", ""] {
+        assert!(a.admit_known_key_claim(refused, NOW).is_err(), "{refused}");
+    }
+    // The total is bounded and the window is reclaimed.
+    for _ in 1..spry_access::KNOWN_KEY_CLAIMS_PER_MINUTE {
+        a.admit_known_key_claim(&owner, NOW).unwrap();
+    }
+    assert_eq!(a.admit_known_key_claim(&owner, NOW).unwrap_err().0, 429);
+    a.admit_known_key_claim(&owner, NOW + 60)
+        .expect("new window");
+}

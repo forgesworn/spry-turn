@@ -105,6 +105,13 @@ operator certificates explicitly. The service still requires its HTTPS reverse
 proxy, reachable relay address and owner configuration described below. Building
 an image does not expose or deploy it.
 
+`spry-node` accepts HTTP only on loopback, inside the container as anywhere
+else. A published port (`-p 3744:3744`) therefore does not reach it: the
+connection is reset. Run the container with host networking, or run the HTTPS
+reverse proxy in the container's own network namespace, so that the proxy
+reaches `127.0.0.1:3744`. Setting `SPRY_HTTP_BIND` to another address refuses
+startup.
+
 The container workflow also publishes `ghcr.io/forgesworn/spry-standalone` for
 amd64 and arm64. A `v*` release tag publishes that version and `latest`; each
 commit to `main` publishes `edge` and a tag named after the full commit.
@@ -168,8 +175,11 @@ with every address and port supplied by the supervisor.
 reverse proxy. That proxy must append or set `X-Forwarded-For`: requests
 are rate-limited per caller before authentication, keyed on the right-most
 entry (IPv6 grouped by /64), and without the header every caller shares the
-proxy's one allowance. Authenticated requests also have a per-key limit, in
-which owners and paired apps always keep a place. `spry-node` finds
+proxy's one allowance. That table tracks 256 callers a minute; when it is
+full, or one caller has spent its allowance, a request that claims an owner's
+or paired app's key still goes on to have its signature checked, up to 3,000
+such requests a minute in total. Authenticated requests also have a per-key
+limit, in which owners and paired apps always keep a place. `spry-node` finds
 `spry-turn` beside itself; `SPRY_RELAY_BINARY`
 overrides that location. Standard TURN listeners and the bounded peer range
 are described in the [operator guide](operations.md). A small host can lower

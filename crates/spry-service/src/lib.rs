@@ -256,10 +256,30 @@ async fn dispatch(
     // Keyed by the caller the proxy saw, not the proxy itself, so one
     // caller's flood cannot spend the allowance of owners and paired apps.
     let source = public_source(request.headers(), peer).to_string();
-    state
+    let refused = state
         .lock()
         .map_err(|_| Refused(503, "Unavailable."))?
-        .rate(&source, now())?;
+        .rate(&source, now())
+        .err();
+    if let Some(refusal) = refused {
+        // An owner or paired app is not kept out by other sources filling
+        // the table: a request claiming such a key goes on to be verified.
+        let admitted = match request
+            .headers()
+            .get("authorization")
+            .and_then(|h| h.to_str().ok())
+        {
+            Some(claim) => state
+                .lock()
+                .map_err(|_| Refused(503, "Unavailable."))?
+                .admit_known_key_claim(claim, now())
+                .is_ok(),
+            None => false,
+        };
+        if !admitted {
+            return Err(refusal);
+        }
+    }
     json_headers(request.headers(), MAX_BODY)?;
     let header = request
         .headers()
@@ -1033,6 +1053,72 @@ mod tests {
                 .await
                 .starts_with("http/1.1 429")
         );
+    }
+
+    /// Other sources filling the pre-authentication table do not keep an
+    /// owner out, and a false claim to the owner's key gains nothing.
+    #[tokio::test]
+    async fn a_full_source_table_still_admits_a_signed_owner() {
+        let address = host(false, true).await;
+        for n in 0..256 {
+            let refused = unsigned(address, &format!("2001:db8:0:{n:x}::1")).await;
+            assert!(refused.starts_with("http/1.1 401"), "{refused}");
+        }
+        // `proof` returns the whole Authorization header line.
+        let from = |source: &str, authorization: &str| {
+            json(&format!("X-Forwarded-For: {source}\r\n{authorization}"))
+        };
+        // A new source with no proof, or with a stranger's valid proof, is
+        // refused as before.
+        let stranger = unsigned(address, "198.51.100.9").await;
+        assert!(stranger.starts_with("http/1.1 429"), "{stranger}");
+        let other = send(
+            address,
+            "POST",
+            "/v1/pairings/list",
+            &from("198.51.100.9", &proof(9, "/v1/pairings/list", "{}")),
+            "{}",
+        )
+        .await;
+        assert!(other.starts_with("http/1.1 429"), "{other}");
+        // The owner's signed request is served from a source not in the table.
+        let owner = send(
+            address,
+            "POST",
+            "/v1/pairings/list",
+            &from("198.51.100.77", &proof(1, "/v1/pairings/list", "{}")),
+            "{}",
+        )
+        .await;
+        assert!(owner.starts_with("http/1.1 200"), "{owner}");
+        // Claiming the owner's key without the owner's signature reaches
+        // authentication and fails there.
+        use base64::Engine;
+        let stranger_proof = proof(9, "/v1/pairings/list", "{}");
+        let mut forged: Value = serde_json::from_slice(
+            &base64::engine::general_purpose::STANDARD
+                .decode(
+                    stranger_proof
+                        .trim_start_matches("Authorization: Nostr ")
+                        .trim_end(),
+                )
+                .unwrap(),
+        )
+        .unwrap();
+        forged["pubkey"] = json!(OWNER);
+        let forged = format!(
+            "Authorization: Nostr {}\r\n",
+            base64::engine::general_purpose::STANDARD.encode(forged.to_string())
+        );
+        let refused = send(
+            address,
+            "POST",
+            "/v1/pairings/list",
+            &from("198.51.100.78", &forged),
+            "{}",
+        )
+        .await;
+        assert!(refused.starts_with("http/1.1 401"), "{refused}");
     }
 
     async fn unsigned(address: SocketAddr, forwarded: &str) -> String {
