@@ -2,7 +2,8 @@ name: release
 # Builds every release artefact on each pull request, so the release path is
 # proven before a tag exists. On a v* tag that matches Cargo.toml it also
 # writes SHA256SUMS over every artefact and creates a draft prerelease for a
-# maintainer to review and publish. The artefacts carry a GitHub build
+# maintainer to review and publish. A manual run does everything except create
+# the release, which proves the publish path without a tag. The artefacts carry a GitHub build
 # provenance attestation (`gh attestation verify <file> --repo
 # forgesworn/spry-turn`). No code is signed: the Windows executables are
 # unsigned, the macOS ones are ad hoc signed by the linker.
@@ -133,7 +134,9 @@ jobs:
 
   publish:
     needs: [name, executables, android, container]
-    if: startsWith(github.ref, 'refs/tags/v')
+    # A manual run is a dry run: it gathers, sums and attests the artefacts
+    # exactly as a tag does, then stops before creating a release.
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -164,6 +167,7 @@ jobs:
         with:
           subject-checksums: .local/dist/SHA256SUMS
       - name: Create the draft prerelease
+        if: startsWith(github.ref, 'refs/tags/v')
         run: |
           if gh release view "$NAME" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
             echo "A release for $NAME already exists; its assets are not replaced." >&2
