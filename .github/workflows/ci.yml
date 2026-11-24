@@ -125,7 +125,9 @@ jobs:
         with:
           toolchain: stable
       - run: |
-          bin=$(cargo test --locked --workspace --all-features --lib --no-run 2>&1 | grep -oE "target/debug/deps/spry_turn-[0-9a-f]+" | head -1)
+          cargo test --locked --all-features --lib --no-run
+          bin=$(find target/debug/deps -maxdepth 1 -type f -name 'spry_turn-*' -executable | head -1)
+          test -n "$bin"
           echo "binary $bin"
           : > fails.txt
           for i in $(seq 1 1500); do
