@@ -592,6 +592,33 @@ impl Server {
         }
     }
 
+    /// Binds the UDP listener and a TCP listener on the same port.
+    ///
+    /// With port 0 the system offers a UDP port and the same TCP number can
+    /// be held by an unrelated socket, or excluded by Windows, which reports
+    /// that as a permission error. A few fresh offers settle it. A configured
+    /// port is tried once: a clash there is the operator's to resolve.
+    fn bind_listeners(address: SocketAddr) -> io::Result<(UdpSocket, TcpListener)> {
+        let attempts = if address.port() == 0 { 8 } else { 1 };
+        let mut attempt = 1;
+        loop {
+            let listener = Self::bind_listener(address)?;
+            match TcpListener::bind(listener.local_addr()?) {
+                Ok(tcp) => return Ok((listener, tcp)),
+                Err(error)
+                    if attempt < attempts
+                        && matches!(
+                            error.kind(),
+                            io::ErrorKind::AddrInUse | io::ErrorKind::PermissionDenied
+                        ) =>
+                {
+                    attempt += 1;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+    }
+
     #[cfg(feature = "connected-udp")]
     fn connected_client(&self, client: Client, token: Token) -> Option<UdpSocket> {
         #[cfg(unix)]
@@ -750,10 +777,9 @@ impl Server {
             ));
         }
         let poll = Poll::new()?;
-        let mut listener = Self::bind_listener(config.listen)?;
+        let (mut listener, mut tcp) = Self::bind_listeners(config.listen)?;
         poll.registry()
             .register(&mut listener, UDP, Interest::READABLE)?;
-        let mut tcp = TcpListener::bind(listener.local_addr()?)?;
         poll.registry()
             .register(&mut tcp, TCP, Interest::READABLE)?;
         #[cfg(feature = "tls")]

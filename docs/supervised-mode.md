@@ -110,6 +110,12 @@ profile (`SPRY_PUBLIC`, `SPRY_HTTP_PORT`, `SPRY_PEER_BIND`, `SPRY_RELAY_IP` and
 so on) cannot appear to apply. Supervisors should start the node with a
 cleared environment.
 
+On Windows, keep `SystemRoot` when clearing the environment. Windows needs it
+to initialise networking: in CI, `spry-node` started with no variables but its
+own settings exited at once with "Spry setup is not ready", and stayed up when
+`SystemRoot` alone was added. This applies to any Windows process, not to a
+Spry setting.
+
 ## The aggregate bandwidth cap
 
 A home uplink is small, and every allocation can ask for its own

@@ -1935,6 +1935,12 @@ profile (`SPRY_PUBLIC`, `SPRY_HTTP_PORT`, `SPRY_PEER_BIND`, `SPRY_RELAY_IP` and
 so on) cannot appear to apply. Supervisors should start the node with a
 cleared environment.
 
+On Windows, keep `SystemRoot` when clearing the environment. Windows needs it
+to initialise networking: in CI, `spry-node` started with no variables but its
+own settings exited at once with "Spry setup is not ready", and stayed up when
+`SystemRoot` alone was added. This applies to any Windows process, not to a
+Spry setting.
+
 ## The aggregate bandwidth cap
 
 A home uplink is small, and every allocation can ask for its own
@@ -4204,6 +4210,15 @@ Changes on `main` since 0.4.2. Not a release: the version is unchanged.
   and pairing-link parsers alongside the existing wire target.
 - Build on Rust 1.85 and run the Rust suite on Windows in CI. Run CI once
   per pull-request commit rather than twice.
+- Fix a race in the `hot_stream_yields_to_other_clients_and_expiry_sweeps`
+  unit test, which could drain its own backlog while accepting connections
+  and then fail on a loaded machine. The relay is unchanged.
+- Document that a Windows host must keep `SystemRoot` when it starts the
+  node with a cleared environment; without it the service exits at start-up.
+- When the relay is asked for an ephemeral listener (port 0), try a few
+  offered ports if the matching TCP port is taken or, on Windows, excluded.
+  A configured port is still bound once and a clash still fails.
+- Fix and lint the TLS-only feature set's test build in CI.
 - Move the relay's unit tests from `src/turn.rs` to
   `src/turn/policy_tests.rs`; no behaviour change.
 
