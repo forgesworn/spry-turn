@@ -56,6 +56,10 @@ Changes on `main` since 0.4.2. Not a release: the version is unchanged.
   (artefacts, `SHA256SUMS`, manifest and provenance attestation) and stops
   before creating a release. One rehearsal passed and its attestation
   verifies with `gh attestation verify`; no tagged release has run it yet.
+- Record a further hosted TCP qualification of `main`, which passed every
+  guard including the sparse CPU guard 0.4.2 failed. It is one shared-host
+  run and leaves the 0.4.2 decision and the bare-metal item unchanged. See
+  [the results](docs/tcp-main-cd9d027-results-2026-11-24.md).
 - Fix and lint the TLS-only feature set's test build in CI.
 - Move the relay's unit tests from `src/turn.rs` to
   `src/turn/policy_tests.rs`; no behaviour change.

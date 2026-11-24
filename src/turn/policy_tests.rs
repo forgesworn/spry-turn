@@ -1470,7 +1470,10 @@ fn zero_lifetime_refresh_tears_down_before_ack_and_preserves_endpoint() {
                 match client.recv_from(&mut bytes) {
                     Ok(answer) => break answer,
                     Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                        assert!(Instant::now() < deadline, "reply did not arrive");
+                        assert!(
+                            Instant::now() < deadline,
+                            "{phase}, wildcard={wildcard}: reply did not arrive"
+                        );
                         // A poll can first report another readiness edge,
                         // including the removed socket. Drive the event
                         // loop until the reply arrives; never resend.

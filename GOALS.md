@@ -443,6 +443,9 @@ Open product decisions:
   [release decision](docs/release-v0.4.2-acceptance-2026-11-11.md) stands and
   the guard is parked until that bare-metal run; the hosted-runner
   investigations established no cause and could not exclude host noise.
+  A further hosted run on 24 November 2026
+  [passed every guard](docs/tcp-main-cd9d027-results-2026-11-24.md); one
+  pass on shared hardware does not settle it either.
 
 TCP relay allocations (RFC 6062), DTLS client transport, database integrations,
 OAuth, telnet/HTTP administration and clustering are outside the first release.
