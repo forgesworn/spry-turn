@@ -96,6 +96,17 @@ profile does not read these settings. See
 
 The server additionally bounds peer entries, stream queues and control
 request rate in code. It has no per-room or application membership policy.
+
+Control requests from every source share one budget of 2,000 a second (burst
+4,000), which bounds the integrity checks a flood can cause. A client that
+already holds an allocation first draws on its own budget of 10 a second
+(burst 30), so its refreshes and permissions do not depend on what other
+sources send. New clients share the common budget. Relayed payload does not
+use either budget.
+
+A TCP/TLS connection without an allocation is closed after 15 seconds, and
+`--max-connections` is shared by every source.
+
 The allocation limit does not reserve memory or raise the process's file
 descriptor limit. Authentication and stream setup also consume resources.
 
@@ -131,6 +142,13 @@ runner's descriptor limit applies only to its own child processes.
 ## Peer policy and TLS
 
 Private, loopback, link-local and multicast peers are blocked by default.
+An IPv6 instance relays only to global unicast addresses (`2000::/3`), and
+within that refuses `2001::/23` (including Teredo), the documentation ranges
+`2001:db8::/32` and `3fff::/20`, and 6to4 `2002::/16`. This also refuses IPv4-mapped and IPv4-compatible
+addresses and the NAT64 prefixes `64:ff9b::/96` and `64:ff9b:1::/48`, which a
+translator would turn into IPv4 destinations. A network-specific NAT64 prefix
+inside an operator's own global range cannot be recognised: do not give an
+IPv6 relay host a route through one.
 The CLI's `--allow-loopback-peers` exists for generated local tests and
 requires a loopback-only listener. It is not a public deployment option.
 Do not relax peer restrictions to work around a reachability problem.

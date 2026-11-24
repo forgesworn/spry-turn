@@ -34,6 +34,11 @@ const MAX_PEERS: usize = 32;
 const STREAM_READS_PER_TURN: usize = 16;
 const STREAM_BYTES_PER_TURN: usize = MAX_QUEUE;
 const STREAM_FRAMES_PER_TURN: usize = 64;
+/// Control requests a client with a live allocation may always make, apart
+/// from the budget every source shares. Enough for refreshes, permissions and
+/// channel binds during ICE; small enough to bound integrity checks.
+const ALLOCATION_REQUESTS_PER_SECOND: u64 = 10;
+const ALLOCATION_REQUEST_BURST: u64 = 30;
 // Coalesce only already queued plain TCP peer returns. Flush within the current
 // receive dispatch, never wait for a later packet or timer to fill a batch.
 const TCP_RETURN_BATCH_FRAMES: usize = 16;
@@ -269,6 +274,8 @@ struct Allocation {
     permissions: Vec<Permission>,
     channels: Vec<Channel>,
     bandwidth: Bucket,
+    /// Control requests this client may make whatever other sources send.
+    requests: Bucket,
 }
 
 enum StreamRead {
@@ -1566,7 +1573,20 @@ impl Server {
             self.send_indication(client, &m);
             return;
         }
-        if m.class != 0 || !self.requests.take(1, Instant::now()) {
+        if m.class != 0 {
+            return;
+        }
+        // Every source shares one request budget, which bounds the integrity
+        // checks an unauthenticated flood can cause. A client that already
+        // holds an allocation first draws on its own small budget, so such a
+        // flood cannot stop it refreshing or adding permissions.
+        let now = Instant::now();
+        if !self
+            .allocations
+            .get_mut(&client)
+            .is_some_and(|a| a.requests.take(1, now))
+            && !self.requests.take(1, now)
+        {
             return;
         }
         if m.method == BINDING {
@@ -1759,6 +1779,11 @@ impl Server {
                 bandwidth: Bucket::new(
                     self.config.bytes_per_second,
                     self.config.bytes_per_second,
+                    now,
+                ),
+                requests: Bucket::new(
+                    ALLOCATION_REQUESTS_PER_SECOND,
+                    ALLOCATION_REQUEST_BURST,
                     now,
                 ),
             },
@@ -1998,11 +2023,21 @@ impl Server {
                     || (a == 192 && b == 0 && c == 0))
             }
             IpAddr::V6(v) => {
-                let first = v.segments()[0];
-                v.to_ipv4_mapped().is_none()
-                    && first & 0xfe00 != 0xfc00
-                    && first & 0xffc0 != 0xfe80
-                    && v.segments()[..2] != [0x2001, 0x0db8]
+                // Only global unicast, 2000::/3. That alone refuses the
+                // ranges a translator can turn into an IPv4 destination the
+                // rules above would refuse: IPv4-mapped and IPv4-compatible
+                // addresses and NAT64 64:ff9b::/96 and 64:ff9b:1::/48. It
+                // also refuses unique-local, link-local, site-local and the
+                // discard prefix. Inside 2000::/3, refuse the IETF special
+                // block 2001::/23 (Teredo and others), the documentation
+                // ranges 2001:db8::/32 and 3fff::/20, and 6to4 2002::/16,
+                // which embeds IPv4.
+                let [first, second, ..] = v.segments();
+                first & 0xe000 == 0x2000
+                    && !(first == 0x2001 && second < 0x0200)
+                    && !(first == 0x2001 && second == 0x0db8)
+                    && first != 0x2002
+                    && first & 0xfff0 != 0x3ff0
             }
         }
     }
