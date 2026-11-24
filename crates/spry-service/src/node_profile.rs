@@ -427,7 +427,15 @@ mod tests {
                     bound = Some(relay);
                     break;
                 }
-                Err(error) if error.kind() == std::io::ErrorKind::AddrInUse => continue,
+                // Windows reports an excluded TCP port as a permission error.
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::AddrInUse | std::io::ErrorKind::PermissionDenied
+                    ) =>
+                {
+                    continue;
+                }
                 Err(error) => panic!("private relay: {error}"),
             }
         }

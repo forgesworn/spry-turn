@@ -45,6 +45,9 @@ Changes on `main` since 0.4.2. Not a release: the version is unchanged.
   and then fail on a loaded machine. The relay is unchanged.
 - Document that a Windows host must keep `SystemRoot` when it starts the
   node with a cleared environment; without it the service exits at start-up.
+- When the relay is asked for an ephemeral listener (port 0), try a few
+  offered ports if the matching TCP port is taken or, on Windows, excluded.
+  A configured port is still bound once and a clash still fails.
 - Fix and lint the TLS-only feature set's test build in CI.
 - Move the relay's unit tests from `src/turn.rs` to
   `src/turn/policy_tests.rs`; no behaviour change.
