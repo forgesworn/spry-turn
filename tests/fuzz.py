@@ -163,6 +163,10 @@ def main():
     parser.add_argument("--seed", type=positive, default=7411)
     parser.add_argument("--toolchain", default="nightly")
     parser.add_argument("--target", choices=sorted(TARGETS), default="wire")
+    # The fuzzer process grows with its corpus and the sanitiser's quarantine.
+    # A long campaign can reach the default without any input being at fault.
+    parser.add_argument("--rss-limit-mb", type=int, choices=range(256, 8193), default=768,
+                        metavar="256..8192")
     parser.add_argument("--output", type=Path, default=Path(".local/fuzz/receipt.json"))
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
@@ -182,7 +186,7 @@ def main():
     command = ["cargo", f"+{args.toolchain}", "fuzz", "run", "--target-dir", str(root / "target"),
                "--sanitizer", "address", args.target, str(corpus), "--",
                f"-max_total_time={args.seconds}", f"-seed={args.seed}", f"-max_len={target['max_len']}",
-               "-timeout=5", "-rss_limit_mb=768", "-print_final_stats=1",
+               "-timeout=5", f"-rss_limit_mb={args.rss_limit_mb}", "-print_final_stats=1",
                f"-artifact_prefix={artifacts}{os.sep}"]
     started = time.monotonic()
     with log.open("w") as stream:
@@ -206,6 +210,7 @@ def main():
         "schema": 1, "engine": "libFuzzer", "coverage_guided": True,
         "target": f"fuzz/fuzz_targets/{args.target}.rs", "sanitizer": "address",
         "toolchain": args.toolchain, "seed": args.seed, "requested_seconds": args.seconds,
+        "rss_limit_mb": args.rss_limit_mb,
         "elapsed_seconds_including_build": round(time.monotonic() - started, 3),
         "returncode": status, "completed": status == 0 and bool(done) and not new_artifacts and source_unchanged,
         "executions": int(executions[-1]) if executions else None,
