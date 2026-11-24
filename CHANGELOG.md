@@ -48,6 +48,10 @@ Changes on `main` since 0.4.2. Not a release: the version is unchanged.
 - When the relay is asked for an ephemeral listener (port 0), try a few
   offered ports if the matching TCP port is taken or, on Windows, excluded.
   A configured port is still bound once and a clash still fails.
+- Add an end-to-end IPv6 unit test: a native IPv6 instance refuses the
+  default IPv4 family with 440, allocates an IPv6 relayed address and
+  forwards data both ways over loopback sockets. Field IPv6 acceptance on a
+  real network remains open.
 - Fix and lint the TLS-only feature set's test build in CI.
 - Move the relay's unit tests from `src/turn.rs` to
   `src/turn/policy_tests.rs`; no behaviour change.

@@ -421,19 +421,28 @@ Open product decisions:
   a separately chosen operator, without a project-operated credential service.
 - [ ] Packet-loss, jitter, blocked UDP, IPv6, long-lived refresh, reconnect,
   certificate validation/renewal and resource-exhaustion qualification.
+  A loopback unit test now relays end to end on a native IPv6 instance;
+  IPv6 on a real network is still part of this item.
 - [ ] Broader RFC conformance and longer network/runtime fuzzing campaigns;
   the recorded bounded codec/auth campaign is not a security review.
 - [ ] Independent security review, including nonce/auth state and relay targets.
 - [ ] Static long-term user credentials if the target deployments require them.
-- [ ] Decide whether supported coturn deployments need EVEN-PORT, reservation
+- [x] Decide whether supported coturn deployments need EVEN-PORT, reservation
   tokens, dual allocations, RFC 8489 SHA-256 auth or other extensions.
-  Unsupported comprehension-required attributes currently receive 420.
+  Owner decision, 24 November 2026: none is needed by KithMoot or browsers
+  today, so none is implemented until a concrete deployment requires one.
+  Unsupported comprehension-required attributes continue to receive 420.
 - [x] Measure Linux receive batching and multiple independent processes before
   adding runtime paths; the development experiments retain their VM limits.
 - [x] Measure a same-source M4 PGO trial; retain the ordinary release build
   because the small observed changes do not establish a useful gain.
 - [ ] Repeat Linux performance and resource qualification on independent
   bare-metal hardware before generalising the virtual-machine observations.
+  This includes the sparse TCP CPU guard that 0.4.2 failed. Owner decision,
+  24 November 2026: the disclosed trade-off in the
+  [release decision](docs/release-v0.4.2-acceptance-2026-11-11.md) stands and
+  the guard is parked until that bare-metal run; the hosted-runner
+  investigations established no cause and could not exclude host noise.
 
 TCP relay allocations (RFC 6062), DTLS client transport, database integrations,
 OAuth, telnet/HTTP administration and clustering are outside the first release.

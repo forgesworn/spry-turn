@@ -2723,3 +2723,135 @@ fn own_address_is_limited_to_live_relay_ports() {
         "[::ffff:127.0.0.1]:22".parse().unwrap()
     ));
 }
+
+/// One instance relays one address family. This drives a native IPv6
+/// instance end to end over real loopback sockets: the family rules on
+/// Allocate, IPv6 XOR address encoding, and data in both directions.
+#[test]
+fn ipv6_instance_allocates_and_relays_both_directions() {
+    let mut config = Config::local(vec![1; 32]);
+    config.listen = "[::1]:0".parse().unwrap();
+    config.relay_ip = "::1".parse().unwrap();
+    config.allow_loopback_peers = true;
+    let client = match std::net::UdpSocket::bind("[::1]:0") {
+        Ok(socket) => socket,
+        // A host without IPv6 loopback cannot run this; say so and stop.
+        Err(error) if error.kind() == io::ErrorKind::AddrNotAvailable => {
+            eprintln!("skipped: no IPv6 loopback on this host");
+            return;
+        }
+        Err(error) => panic!("IPv6 client socket: {error}"),
+    };
+    let mut server = bind_server(config);
+    let endpoint = server.local_addr().unwrap();
+    assert!(endpoint.is_ipv6());
+    client.set_nonblocking(true).unwrap();
+    let address = client.local_addr().unwrap();
+    let peer = std::net::UdpSocket::bind("[::1]:0").unwrap();
+    peer.set_nonblocking(true).unwrap();
+    let peer_address = peer.local_addr().unwrap();
+
+    let username = format!("{}:ipv6-fixture", unix_time() + 300);
+    let key = auth::key(
+        &username,
+        &server.config.realm,
+        &auth::credential(&server.config.secret, &username),
+    );
+    let nonce = server
+        .nonces
+        .issue(unix_time(), address.ip(), &server.config.realm);
+    let signed = |method, transaction, family: Option<u8>, to: Option<SocketAddr>| {
+        let mut value = Builder::new(method, 0, transaction);
+        value.attr(USERNAME, username.as_bytes());
+        value.attr(REALM, server.config.realm.as_bytes());
+        value.attr(NONCE, nonce.as_bytes());
+        if method == ALLOCATE {
+            value.attr(TRANSPORT, &[17, 0, 0, 0]);
+        }
+        if let Some(family) = family {
+            value.attr(FAMILY, &[family, 0, 0, 0]);
+        }
+        if let Some(to) = to {
+            value.address(PEER, to);
+        }
+        value.finish(Some(&key))
+    };
+    let allocate_v4 = signed(ALLOCATE, [1; 12], None, None);
+    let allocate_v6 = signed(ALLOCATE, [2; 12], Some(2), None);
+    let permit = signed(PERMISSION, [3; 12], None, Some(peer_address));
+    // Drive the event loop until `socket` has a datagram; never resend.
+    fn receive(
+        server: &mut Server,
+        socket: &std::net::UdpSocket,
+        what: &str,
+    ) -> (Vec<u8>, SocketAddr) {
+        let mut bytes = [0; 2048];
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            match socket.recv_from(&mut bytes) {
+                Ok((length, source)) => return (bytes[..length].to_vec(), source),
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                    assert!(Instant::now() < deadline, "{what} did not arrive");
+                    server.poll_once(Duration::from_millis(10)).unwrap();
+                }
+                Err(error) => panic!("{what}: {error}"),
+            }
+        }
+    }
+    let error_code = |message: &Message| {
+        message
+            .attr(ERROR)
+            .map(|error| u16::from(error[2]) * 100 + u16::from(error[3]))
+    };
+
+    // The default family is IPv4, which this instance does not relay.
+    client.send_to(&allocate_v4, endpoint).unwrap();
+    let (bytes, _) = receive(&mut server, &client, "family refusal");
+    let refused = Message::parse(&bytes).unwrap();
+    assert_eq!((refused.method, refused.class), (ALLOCATE, 3));
+    assert_eq!(error_code(&refused), Some(440));
+
+    client.send_to(&allocate_v6, endpoint).unwrap();
+    let (bytes, source) = receive(&mut server, &client, "allocation");
+    assert_eq!(source, endpoint);
+    let allocated = Message::parse(&bytes).unwrap();
+    assert_eq!(
+        (allocated.method, allocated.class),
+        (ALLOCATE, 2),
+        "unexpected TURN error {:?}",
+        error_code(&allocated)
+    );
+    assert!(allocated.verify(&key));
+    assert_eq!(allocated.address(MAPPED), Some(address));
+    let relayed = allocated.address(RELAYED).unwrap();
+    assert_eq!(relayed.ip(), endpoint.ip());
+    assert_ne!(relayed.port(), 0);
+
+    client.send_to(&permit, endpoint).unwrap();
+    let (bytes, _) = receive(&mut server, &client, "permission");
+    let permitted = Message::parse(&bytes).unwrap();
+    assert_eq!(
+        (permitted.method, permitted.class),
+        (PERMISSION, 2),
+        "unexpected TURN error {:?}",
+        error_code(&permitted)
+    );
+
+    // Client to peer: a Send indication leaves from the relayed address.
+    let mut send = Builder::new(SEND, 1, [4; 12]);
+    send.address(PEER, peer_address);
+    send.attr(DATA, b"to the peer over IPv6");
+    client.send_to(&send.finish(None), endpoint).unwrap();
+    let (bytes, source) = receive(&mut server, &peer, "relayed payload");
+    assert_eq!(bytes, b"to the peer over IPv6");
+    assert_eq!(source, relayed);
+
+    // Peer to client: a Data indication names the IPv6 peer.
+    peer.send_to(b"back to the client", relayed).unwrap();
+    let (bytes, source) = receive(&mut server, &client, "data indication");
+    assert_eq!(source, endpoint);
+    let data = Message::parse(&bytes).unwrap();
+    assert_eq!((data.method, data.class), (DATA_METHOD, 1));
+    assert_eq!(data.address(PEER), Some(peer_address));
+    assert_eq!(data.attr(DATA), Some(&b"back to the client"[..]));
+}

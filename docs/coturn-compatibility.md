@@ -22,8 +22,8 @@ The goal is a small forwarding core with measured resource costs.
 | NAT-advertised relay IP | `--public-ip`; actual NAT mapping is operator responsibility |
 | Static long-term username/password database | Not implemented |
 | Fixed UDP relay-port range | `--relay-ports FIRST:LAST`; exhaustion fails with 508, no ephemeral fallback |
-| Dual allocations, EVEN-PORT and reservation tokens | Not implemented |
-| RFC 8489 SHA-256 authentication | Not implemented |
+| Dual allocations, EVEN-PORT and reservation tokens | Not implemented; not planned until a deployment needs them |
+| RFC 8489 SHA-256 authentication | Not implemented; not planned until a deployment needs it |
 | TCP relay allocations (RFC 6062) | Not implemented |
 | DTLS client transport | Not implemented |
 | OAuth, database backends, clustering, HTTP/telnet administration | Not implemented |
