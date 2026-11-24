@@ -114,6 +114,14 @@ jobs:
       - run: cargo test --locked --workspace --all-features --no-fail-fast
         env:
           SPRY_TEST_RELAY_BINARY: target/release/spry-turn.exe
+      # Loopback binds are sometimes refused on this runner. Record which
+      # ports the system reserves so a failure can be explained.
+      - if: failure()
+        run: |
+          for protocol in tcp udp; do
+            netsh int ipv4 show dynamicport "$protocol"
+            netsh int ipv4 show excludedportrange "protocol=$protocol"
+          done
   fuzz:
     strategy:
       fail-fast: false
