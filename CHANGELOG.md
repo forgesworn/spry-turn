@@ -1,8 +1,12 @@
 # Changelog
 
-## Unreleased
+## 0.4.5 (24 November 2026)
 
-Changes on `main` since 0.4.4. Not a release: the version is unchanged.
+Public MIT prerelease through the existing native executable, Android
+library and container image channels. It keeps the standalone HTTP API
+answering owner and paired keys when its per-caller table is full. The
+relay itself is unchanged from 0.4.4. Operators who run the standalone HTTP
+API should update. This release does not deploy a hosted relay.
 
 - When the HTTP API's per-caller table is full, a request that claims an
   owner's or paired app's key still goes on to have its signature checked,
