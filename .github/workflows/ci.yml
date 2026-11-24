@@ -114,6 +114,31 @@ jobs:
       - run: cargo test --locked --workspace --all-features --no-fail-fast
         env:
           SPRY_TEST_RELAY_BINARY: target/release/spry-turn.exe
+  # TEMPORARY: hunt the intermittent deallocation test failure. Not for merge.
+  hunt:
+    runs-on: ubuntu-24.04
+    env:
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master, 15 November 2026
+        with:
+          toolchain: stable
+      - run: |
+          bin=$(cargo test --locked --workspace --all-features --lib --no-run 2>&1 | grep -oE "target/debug/deps/spry_turn-[0-9a-f]+" | head -1)
+          echo "binary $bin"
+          : > fails.txt
+          for i in $(seq 1 1500); do
+            "$bin" > out.log 2>&1 || { grep -h -A2 "panicked at" out.log >> fails.txt; echo "--" >> fails.txt; }
+          done
+          echo "== full parallel suite, 1500 runs"; grep -c "^--" fails.txt || true
+          grep -h "wildcard=\|panicked" fails.txt | sed -E 's/\([0-9]+\)//' | sort | uniq -c | sort -rn | head -20
+          : > alone.txt
+          for i in $(seq 1 3000); do
+            "$bin" zero_lifetime > out.log 2>&1 || { grep -h -A2 "panicked at" out.log >> alone.txt; echo "--" >> alone.txt; }
+          done
+          echo "== test alone, 3000 runs"; grep -c "^--" alone.txt || true
+          grep -h "wildcard=" alone.txt | sort | uniq -c
   fuzz:
     strategy:
       fail-fast: false
