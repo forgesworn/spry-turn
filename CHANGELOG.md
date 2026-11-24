@@ -1,17 +1,22 @@
 # Changelog
 
-## Unreleased
+## 0.4.3 (24 November 2026)
 
-Changes on `main` since 0.4.2. Not a release: the version is unchanged.
+Public MIT prerelease through the existing native executable, Android
+library and container image channels. It carries the standalone container,
+owner statistics, shared-proxy and pairing changes made since 0.4.2, with
+supply-chain and test hardening. The forwarding path is the 0.4.2 one, so
+the performance trade-off disclosed for 0.4.2 still applies. This release
+does not deploy a hosted relay.
 
 - Add standalone container packaging: a non-root image holding `spry-node`
   and `spry-turn`, with the relay secret readable from a mounted secret
   file. See [the container image](docs/standalone.md#container-image).
 - Publish the image's `latest` and version tags only from a `v*` release
   tag that matches `Cargo.toml`. Commits to `main` publish a moving `edge`
-  tag and an immutable commit tag instead of `latest`. Until then `latest`
-  was pushed from every commit to `main`, so the existing `latest` holds
-  unreleased changes until the next release tag replaces it.
+  tag and an immutable commit tag instead of `latest`. Before this
+  release `latest` was pushed from every commit to `main`; this tag is the
+  first to set it from a release.
 - Add `SPRY_TLS_ADVERTISE_DIRECT=false` for a shared SNI proxy, so
   credentials omit the direct `turns:HOST:PORT` URL whose certificate would
   not match. The default keeps the dedicated-host URLs.
@@ -33,9 +38,9 @@ Changes on `main` since 0.4.2. Not a release: the version is unchanged.
 - Remove `curl` from the container image: nothing in the image uses it and
   the service has no HTTP health endpoint to probe. Propose action and base
   image pin updates weekly through Dependabot.
-- Configure the release and container workflows to attest build provenance
-  with GitHub artefact attestations. Releases up to 0.4.2 carry checksums
-  only; no attested release or image exists until those workflows next run.
+- Attest build provenance for the release artefacts and the container
+  image with GitHub artefact attestations. This is the first release built
+  with that step; releases up to 0.4.2 carry checksums only.
 - Fuzz the port-mapping gateway parsers and the Nostr event, advert, card
   and pairing-link parsers alongside the existing wire target.
 - Build on Rust 1.85 and run the Rust suite on Windows in CI. Run CI once
@@ -54,8 +59,8 @@ Changes on `main` since 0.4.2. Not a release: the version is unchanged.
   real network remains open.
 - A manual run of the release workflow now rehearses the whole publish path
   (artefacts, `SHA256SUMS`, manifest and provenance attestation) and stops
-  before creating a release. One rehearsal passed and its attestation
-  verifies with `gh attestation verify`; no tagged release has run it yet.
+  before creating a release. One rehearsal passed before this tag and its
+  attestation verified with `gh attestation verify`.
 - Record a further hosted TCP qualification of `main`, which passed every
   guard including the sparse CPU guard 0.4.2 failed. It is one shared-host
   run and leaves the 0.4.2 decision and the bare-metal item unchanged. See
