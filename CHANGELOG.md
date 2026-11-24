@@ -43,6 +43,8 @@ Changes on `main` since 0.4.2. Not a release: the version is unchanged.
 - Fix a race in the `hot_stream_yields_to_other_clients_and_expiry_sweeps`
   unit test, which could drain its own backlog while accepting connections
   and then fail on a loaded machine. The relay is unchanged.
+- Document that a Windows host must keep `SystemRoot` when it starts the
+  node with a cleared environment; without it the service exits at start-up.
 - Fix and lint the TLS-only feature set's test build in CI.
 - Move the relay's unit tests from `src/turn.rs` to
   `src/turn/policy_tests.rs`; no behaviour change.

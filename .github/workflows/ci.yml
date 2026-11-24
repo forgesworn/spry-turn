@@ -114,31 +114,6 @@ jobs:
       - run: cargo test --locked --workspace --all-features --no-fail-fast
         env:
           SPRY_TEST_RELAY_BINARY: target/release/spry-turn.exe
-      - name: TEMPORARY diagnostic - start the service with and without SystemRoot
-        shell: python
-        run: |
-          import os, subprocess
-          settings = {
-              "SPRY_PUBLIC_URL": "https://relay.example:3744",
-              "SPRY_KITHMOOT_URL": "https://calls.example/j/",
-              "SPRY_OWNER_KEYS": "1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f",
-              "SPRY_TURN_SECRET": "synthetic-test-secret-not-for-deployment",
-              "SPRY_HTTP_PORT": "39744",
-              "SPRY_RELAY_IP": "192.0.2.1",
-              "SPRY_STATE_FILE": "uncreated-diagnostic/pairings.json",
-          }
-          for label, extra in (("empty environment", {}),
-                               ("SystemRoot only", {"SystemRoot": os.environ["SystemRoot"]})):
-              print("==", label, flush=True)
-              try:
-                  done = subprocess.run([r"target\release\spry-node.exe"], env={**settings, **extra},
-                                        stdin=subprocess.DEVNULL, capture_output=True, timeout=5)
-                  print("exited", done.returncode, hex(done.returncode & 0xffffffff))
-                  print("stdout:", done.stdout.decode(errors="replace"))
-                  print("stderr:", done.stderr.decode(errors="replace"))
-              except subprocess.TimeoutExpired as still:
-                  print("still running after 5 seconds")
-                  print("stderr:", (still.stderr or b"").decode(errors="replace"))
   fuzz:
     strategy:
       fail-fast: false
