@@ -82,6 +82,7 @@ fn batch_output_fixture(count: usize) -> (Server, Vec<std::net::TcpStream>, Vec<
     (server, clients, tokens)
 }
 
+#[cfg(all(feature = "connected-udp", unix))]
 fn batch_output_relay(
     server: &mut Server,
     client: Client,
@@ -865,10 +866,6 @@ fn hot_stream_yields_to_other_clients_and_expiry_sweeps() {
     hot.set_nodelay(true).unwrap();
     accept_stream(&mut server);
     let hot_token = *server.connections.keys().next().unwrap();
-    let indication = Builder::new(BINDING, 1, [1; 12]).finish(None);
-    let backlog = indication.repeat(STREAM_FRAMES_PER_TURN * 16);
-    hot.write_all(&backlog).unwrap();
-    wait_for_queued(&server, hot_token, backlog.len());
 
     let mut healthy = std::net::TcpStream::connect(server.local_addr().unwrap()).unwrap();
     healthy
@@ -892,6 +889,13 @@ fn hot_stream_yields_to_other_clients_and_expiry_sweeps() {
     server.sweep_at = Instant::now();
     let sweep_before = server.sweep_at;
 
+    // Queue the backlog only after every connection is accepted. Accepting
+    // drives the server, and each turn spent there would consume part of the
+    // backlog before the single turn measured below.
+    let indication = Builder::new(BINDING, 1, [1; 12]).finish(None);
+    let backlog = indication.repeat(STREAM_FRAMES_PER_TURN * 16);
+    hot.write_all(&backlog).unwrap();
+    wait_for_queued(&server, hot_token, backlog.len());
     let request = Builder::new(BINDING, 0, [254; 12]).finish(None);
     healthy.write_all(&request).unwrap();
     wait_for_queued(&server, healthy_token, request.len());
