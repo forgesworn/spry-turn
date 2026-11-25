@@ -46,6 +46,7 @@ GUARDS = {
     "idle_fraction_min": 0.95, "steal_fraction_max": 0.005,
     "idle_scheduler_p99_ms_max": 10, "idle_scheduler_max_ms_max": 50,
     "missed_dispatch_fraction_max": 0.01,
+    "late_answer_fraction_max": 0.01,
     "control_cpu_one_core_delta_max": 0.002,
 }
 SCRIPTS = ("scripts/qualify-control.py", "scripts/qualify-tcp.py", "scripts/compare.py", "examples/control_probe.rs")
@@ -149,6 +150,8 @@ def row_failures(row, profile):
         failures.append("useful work mismatch")
     if row["missed_dispatch_slots"] / profile["requests"] > GUARDS["missed_dispatch_fraction_max"]:
         failures.append("probe missed offered schedule")
+    if row["late_answers"] / profile["requests"] > GUARDS["late_answer_fraction_max"]:
+        failures.append("answers arrived after the next request was due")
     expected = (profile["requests"] - 1) / profile["rate"]
     if not expected <= row["seconds"] <= expected * 1.01 + 0.01:
         failures.append("probe elapsed time outside offered schedule")
@@ -174,7 +177,6 @@ def evaluate_profile(rows):
         "cpu_seconds_per_request": {"ratios": per_request, "median_ratio": statistics.median(per_request)},
         # Diagnostic only: the probe's round trip includes its own scheduling.
         "round_trip_p99_us": {"ratios": p99},
-        "late_answers": {"parent": [p["late_answers"] for p, _ in pairs], "candidate": [c["late_answers"] for _, c in pairs]},
     }
     failures = []
     if max(utilisation) > GUARDS["control_cpu_one_core_delta_max"]:

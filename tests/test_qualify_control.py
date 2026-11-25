@@ -59,6 +59,11 @@ class ControlQualificationTests(unittest.TestCase):
         slow = row(profile)
         slow["seconds"] *= 1.05
         self.assertIn("probe elapsed time outside offered schedule", control.row_failures(slow, profile))
+        delayed = row(profile)
+        delayed["late_answers"] = profile["requests"] // 50
+        self.assertIn("answers arrived after the next request was due", control.row_failures(delayed, profile))
+        delayed["late_answers"] = profile["requests"] // 200
+        self.assertEqual(control.row_failures(delayed, profile), [])
 
     def test_missing_arms_are_not_evaluated(self):
         profile = control.PROFILES[0]

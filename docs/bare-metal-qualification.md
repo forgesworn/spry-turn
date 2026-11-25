@@ -119,12 +119,14 @@ Binding guards, declared before timing:
 - every request answered exactly once, with no unexpected answers;
 - at most 1% of requests sent one interval or more late, and the phase
   ending between the last scheduled send and 1% plus 10 ms after it;
+- at most 1% of answers arriving after the next request was due, so a row
+  disturbed in a way the host guards miss is labelled as such;
 - no pair may add more than 0.002 of one CPU core. That is the increase in
   relay CPU (`wait4` user plus system, over the relay's lifetime) divided by
   the probe phase's wall time, the same bound as the sparse TCP guard.
 
-CPU per request, late answers and the probe's round-trip p99 are recorded as
-diagnostics only. The round trip runs from send to receipt in the probe, so it
+CPU per request and the probe's round-trip p99 are recorded as diagnostics
+only. The round trip runs from send to receipt in the probe, so it
 includes the probe's own scheduling.
 
 This protocol does not measure floods, refusal paths, IPv6 /64 grouping,
