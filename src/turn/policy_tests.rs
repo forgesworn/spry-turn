@@ -2982,17 +2982,18 @@ fn an_allocated_client_keeps_control_requests_when_the_shared_budget_is_spent() 
     client.send_to(&allocate, endpoint).unwrap();
     assert_eq!(reply(&mut server, &client, 2_000), Some((ALLOCATE, 2)));
 
-    // Another source spends the whole shared budget.
+    // Another source spends the budget for requests without a nonce.
     let stranger: SocketAddr = "198.51.100.9:40000".parse().unwrap();
     let binding = Builder::new(BINDING, 0, [3; 12]).finish(None);
     for _ in 0..8_000 {
         server.receive(Client::Datagram(stranger), stranger, &binding);
     }
-    // Hold it empty: a real flood keeps taking what refills, and the test
-    // must not depend on outrunning that refill.
+    // Hold both shared budgets empty, so the test does not depend on
+    // outrunning their refill.
     server.requests = Bucket::new(0, 0, Instant::now());
+    server.unverified = Bucket::new(0, 0, Instant::now());
 
-    // A newcomer shares that budget and gets nothing.
+    // A newcomer shares those budgets and gets nothing.
     let newcomer = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
     newcomer.set_nonblocking(true).unwrap();
     newcomer.send_to(&binding, endpoint).unwrap();
@@ -3006,8 +3007,8 @@ fn an_allocated_client_keeps_control_requests_when_the_shared_budget_is_spent() 
         client.send_to(&refresh, endpoint).unwrap();
         assert_eq!(reply(&mut server, &client, 2_000), Some((REFRESH, 2)));
     }
-    // That budget is bounded: once spent it falls back to the shared one,
-    // which is empty.
+    // That budget is bounded: once spent it falls back to the shared ones,
+    // which are empty.
     client.send_to(&refresh, endpoint).unwrap();
     assert_eq!(reply(&mut server, &client, 100), None);
 }
@@ -3148,4 +3149,494 @@ fn the_source_cap_is_half_the_table_and_never_below_one() {
     let mut server = source_cap_server(1);
     let _only = open_streams(&mut server, 1);
     assert!(server.source_at_unauthenticated_cap("127.0.0.1".parse().unwrap()));
+}
+
+fn budget_server() -> Server {
+    let mut config = Config::local(vec![1; 32]);
+    config.listen.set_port(0);
+    bind_server(config)
+}
+
+/// Whether `bytes` from `peer` over a datagram transport is admitted.
+fn admitted(server: &mut Server, peer: &str, bytes: &[u8], now: Instant, unix: u64) -> bool {
+    let peer: SocketAddr = peer.parse().unwrap();
+    let message = Message::parse(bytes).unwrap();
+    server.admit_request(Client::Datagram(peer), peer, &message, now, || unix)
+}
+
+fn request(transaction: u8, nonce: Option<&str>) -> Vec<u8> {
+    let mut builder = Builder::new(ALLOCATE, 0, [transaction; 12]);
+    if let Some(nonce) = nonce {
+        builder.attr(NONCE, nonce.as_bytes());
+    }
+    builder.finish(None)
+}
+
+/// Addresses whose slots in the per-source tables are distinct from each
+/// other and from every earlier pick, under this server's own hasher, so a
+/// test never depends on two sources not colliding.
+struct SourcePicker(std::collections::HashSet<usize>, u32);
+
+impl SourcePicker {
+    fn new() -> Self {
+        Self(Default::default(), 0)
+    }
+    fn next(&mut self, server: &Server) -> String {
+        loop {
+            self.1 += 1;
+            let ip = IpAddr::from(std::net::Ipv4Addr::from(0xc612_0000 + self.1));
+            if self.0.insert(server.source_slot(ip)) {
+                return format!("{ip}:40000");
+            }
+        }
+    }
+    /// Reserves the slot of a fixed address so that no pick shares it.
+    fn avoid(&mut self, server: &Server, peer: &str) {
+        let peer: SocketAddr = peer.parse().unwrap();
+        self.0.insert(server.source_slot(peer.ip()));
+    }
+}
+
+#[test]
+fn one_unconfirmed_source_is_held_to_its_allowance() {
+    let mut server = budget_server();
+    let (t0, unix) = (Instant::now(), unix_time());
+    let repeat = "198.51.100.9:40000";
+    let request = request(1, None);
+    let taken = (0..5_000)
+        .filter(|_| admitted(&mut server, repeat, &request, t0, unix))
+        .count();
+    assert_eq!(taken, UNVERIFIED_SOURCE_BURST as usize);
+    let mut picker = SourcePicker::new();
+    picker.avoid(&server, repeat);
+    let newcomer = picker.next(&server);
+    assert!(admitted(&mut server, &newcomer, &request, t0, unix));
+    // The allowance refills at 5 a second: one more request after 200 ms.
+    let later = t0 + Duration::from_millis(200);
+    let again = (0..100)
+        .filter(|_| admitted(&mut server, repeat, &request, later, unix))
+        .count();
+    assert_eq!(again, 1);
+}
+
+#[test]
+fn a_nonce_holder_is_admitted_when_the_unconfirmed_budget_is_spent() {
+    let mut server = budget_server();
+    let (t0, unix) = (Instant::now(), unix_time());
+    let realm = server.config.realm.clone();
+    let mut picker = SourcePicker::new();
+    let holder = "203.0.113.20:40000";
+    let other = "203.0.113.21:40000";
+    let other_value = "203.0.113.22:40000";
+    for fixed in [holder, other, other_value] {
+        picker.avoid(&server, fixed);
+    }
+    // Enough distinct sources to spend the whole unconfirmed budget.
+    let plain = request(1, None);
+    let sources = UNVERIFIED_REQUEST_BURST / UNVERIFIED_SOURCE_BURST;
+    for _ in 0..sources {
+        let source = picker.next(&server);
+        for _ in 0..UNVERIFIED_SOURCE_BURST {
+            assert!(admitted(&mut server, &source, &plain, t0, unix));
+        }
+    }
+    let newcomer = picker.next(&server);
+    assert!(!admitted(&mut server, &newcomer, &plain, t0, unix));
+    let nonce = server
+        .nonces
+        .issue(unix, "203.0.113.20".parse().unwrap(), &realm);
+    assert!(admitted(
+        &mut server,
+        holder,
+        &request(2, Some(&nonce)),
+        t0,
+        unix
+    ));
+    // The same nonce from another address, and an arbitrary value, are both
+    // unconfirmed.
+    assert!(!admitted(
+        &mut server,
+        other,
+        &request(3, Some(&nonce)),
+        t0,
+        unix
+    ));
+    let arbitrary = "A".repeat(32);
+    assert!(!admitted(
+        &mut server,
+        other_value,
+        &request(4, Some(&arbitrary)),
+        t0,
+        unix
+    ));
+    // Neither refusal spent the holder's nonce or the verified budget.
+    assert!(admitted(
+        &mut server,
+        holder,
+        &request(5, Some(&nonce)),
+        t0,
+        unix
+    ));
+}
+
+#[test]
+fn a_source_over_its_allowance_uses_only_the_surplus_above_the_reserve() {
+    let mut server = budget_server();
+    let (t0, unix) = (Instant::now(), unix_time());
+    server.requests = Bucket::new(0, VERIFIED_REQUEST_BURST, t0);
+    let plain = request(1, None);
+    let mut picker = SourcePicker::new();
+    let from = |server: &mut Server, peer: &str, token: usize| {
+        let peer: SocketAddr = peer.parse().unwrap();
+        let message = Message::parse(&plain).unwrap();
+        server.admit_request(Client::Stream(Token(token)), peer, &message, t0, || unix)
+    };
+    let a = picker.next(&server);
+    let b = picker.next(&server);
+    let a_taken = (0..5_000).filter(|_| from(&mut server, &a, 10)).count();
+    // Its own allowance, then what the budget holds above the reserve.
+    assert_eq!(
+        a_taken as u64,
+        VERIFIED_SOURCE_BURST + (VERIFIED_REQUEST_BURST - VERIFIED_RESERVE - VERIFIED_SOURCE_BURST)
+    );
+    assert_eq!(a_taken, 4_000);
+    // Another source still has its own allowance from the reserve.
+    let b_taken = (0..100).filter(|_| from(&mut server, &b, 11)).count();
+    assert_eq!(b_taken as u64, VERIFIED_SOURCE_BURST);
+}
+
+/// With the verified budget refilling, a source over its allowance takes
+/// the surplus above the reserve and no more, and a source within its
+/// allowance that arrives in the same interval is still admitted.
+#[test]
+fn sources_within_their_allowance_keep_priority_as_the_budget_refills() {
+    let mut server = budget_server();
+    let (t0, unix) = (Instant::now(), unix_time());
+    server.requests = Bucket::new(VERIFIED_REQUESTS_PER_SECOND, VERIFIED_REQUEST_BURST, t0);
+    let plain = request(1, None);
+    let mut picker = SourcePicker::new();
+    let (a, b) = (picker.next(&server), picker.next(&server));
+    let from = |server: &mut Server, peer: &str, now: Instant| {
+        let peer: SocketAddr = peer.parse().unwrap();
+        let message = Message::parse(&plain).unwrap();
+        server.admit_request(Client::Stream(Token(10)), peer, &message, now, || unix)
+    };
+    // One source on its own can use its allowance and everything above the
+    // reserve.
+    let first = (0..10_000).filter(|_| from(&mut server, &a, t0)).count();
+    assert_eq!(first, 4_000);
+    // 100 ms refills 200 requests. The same source may take that surplus.
+    let t1 = t0 + Duration::from_millis(100);
+    let surplus = (0..10_000).filter(|_| from(&mut server, &a, t1)).count();
+    assert_eq!(surplus, 200);
+    // A source within its allowance is still admitted in that interval, from
+    // the reserve, and the first source is not admitted again.
+    let own = (0..100).filter(|_| from(&mut server, &b, t1)).count();
+    assert_eq!(own as u64, VERIFIED_SOURCE_BURST);
+    assert!(!from(&mut server, &a, t1));
+}
+
+#[test]
+fn streams_and_loopback_are_address_verified() {
+    let mut server = budget_server();
+    let (t0, unix) = (Instant::now(), unix_time());
+    server.unverified = Bucket::new(0, 0, t0);
+    let plain = request(1, None);
+    let message = Message::parse(&plain).unwrap();
+    let stream: SocketAddr = "203.0.113.5:40000".parse().unwrap();
+    assert!(server.admit_request(Client::Stream(Token(10)), stream, &message, t0, || unix));
+    for loopback in ["127.0.0.1:40000", "[::ffff:127.0.0.1]:40000", "[::1]:40000"] {
+        assert!(
+            admitted(&mut server, loopback, &plain, t0, unix),
+            "{loopback}"
+        );
+    }
+    assert!(!admitted(
+        &mut server,
+        "203.0.113.5:40000",
+        &plain,
+        t0,
+        unix
+    ));
+}
+
+#[test]
+fn source_keys_canonicalise_and_group_ipv6_by_64() {
+    let server = budget_server();
+    let ip = |text: &str| -> IpAddr { text.parse().unwrap() };
+    let key = |text: &str| connection_source(ip(text));
+    assert_eq!(key("203.0.113.5"), key("::ffff:203.0.113.5"));
+    assert_eq!(
+        key("2001:db8:1:2::1"),
+        key("2001:db8:1:2:ffff:ffff:ffff:ffff")
+    );
+    assert_ne!(key("2001:db8:1:2::1"), key("2001:db8:1:3::1"));
+    assert_ne!(key("203.0.113.5"), key("203.0.113.6"));
+    // Equal keys share a slot whatever the port, and the slot is in range.
+    assert_eq!(
+        server.source_slot(ip("203.0.113.5")),
+        server.source_slot(ip("::ffff:203.0.113.5"))
+    );
+    assert_eq!(
+        server.source_slot(ip("2001:db8:1:2::1")),
+        server.source_slot(ip("2001:db8:1:2:aaaa::7"))
+    );
+    assert!(server.source_slot(ip("2001:db8::1")) < SOURCE_SLOTS);
+}
+
+/// A client that has spent its own budget falls back to the verified one,
+/// which requests without a nonce cannot reach.
+#[test]
+fn an_allocated_client_falls_back_to_the_verified_budget() {
+    let mut server = budget_server();
+    let endpoint = server.local_addr().unwrap();
+    let client = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    client.set_nonblocking(true).unwrap();
+    let address = client.local_addr().unwrap();
+    let username = format!("{}:fallback-fixture", unix_time() + 300);
+    let key = auth::key(
+        &username,
+        &server.config.realm,
+        &auth::credential(&server.config.secret, &username),
+    );
+    let nonce = server
+        .nonces
+        .issue(unix_time(), address.ip(), &server.config.realm);
+    let signed = |method, transaction: u8| {
+        let mut value = Builder::new(method, 0, [transaction; 12]);
+        value.attr(USERNAME, username.as_bytes());
+        value.attr(REALM, server.config.realm.as_bytes());
+        value.attr(NONCE, nonce.as_bytes());
+        if method == ALLOCATE {
+            value.attr(TRANSPORT, &[17, 0, 0, 0]);
+        }
+        value.finish(Some(&key))
+    };
+    let allocate = signed(ALLOCATE, 1);
+    let refresh = signed(REFRESH, 2);
+    let reply = |server: &mut Server, wait: u64| -> Option<(u16, u8)> {
+        let mut bytes = [0; 2048];
+        let deadline = Instant::now() + Duration::from_millis(wait);
+        loop {
+            match client.recv_from(&mut bytes) {
+                Ok((length, _)) => {
+                    let message = Message::parse(&bytes[..length]).unwrap();
+                    return Some((message.method, message.class));
+                }
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                    if Instant::now() >= deadline {
+                        return None;
+                    }
+                    server.poll_once(Duration::from_millis(5)).unwrap();
+                }
+                Err(error) => panic!("receive failed: {error}"),
+            }
+        }
+    };
+    client.send_to(&allocate, endpoint).unwrap();
+    assert_eq!(reply(&mut server, 2_000), Some((ALLOCATE, 2)));
+
+    // Requests without a nonce spend their own budget and nothing else.
+    // The verified budget does not refill, so the outcome does not depend on
+    // timing.
+    server.requests = Bucket::new(0, VERIFIED_REQUEST_BURST, Instant::now());
+    let unconfirmed: SocketAddr = "198.51.100.9:40000".parse().unwrap();
+    let binding = Builder::new(BINDING, 0, [3; 12]).finish(None);
+    for _ in 0..8_000 {
+        server.receive(Client::Datagram(unconfirmed), unconfirmed, &binding);
+    }
+    server.unverified = Bucket::new(0, 0, Instant::now());
+
+    let allocation = server.allocations.values_mut().next().unwrap();
+    allocation.requests = Bucket::new(0, ALLOCATION_REQUEST_BURST, Instant::now());
+    for _ in 0..ALLOCATION_REQUEST_BURST {
+        client.send_to(&refresh, endpoint).unwrap();
+        assert_eq!(reply(&mut server, 2_000), Some((REFRESH, 2)));
+    }
+    // Its own budget is spent; the verified one still answers, within the
+    // client's allowance at that budget.
+    for _ in 0..10 {
+        client.send_to(&refresh, endpoint).unwrap();
+        assert_eq!(reply(&mut server, 2_000), Some((REFRESH, 2)));
+    }
+}
+
+#[test]
+fn the_unauthenticated_challenge_is_100_bytes() {
+    let mut server = budget_server();
+    let client = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    client.set_nonblocking(true).unwrap();
+    // The smallest request: a header and no attributes.
+    let mut request = Vec::from(message_type(ALLOCATE, 0).to_be_bytes());
+    request.extend_from_slice(&[0, 0]);
+    request.extend_from_slice(&COOKIE.to_be_bytes());
+    request.extend_from_slice(&[1; 12]);
+    assert_eq!(request.len(), 20);
+    client
+        .send_to(&request, server.local_addr().unwrap())
+        .unwrap();
+    let mut bytes = [0; 2048];
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let length = loop {
+        match client.recv_from(&mut bytes) {
+            Ok((length, _)) => break length,
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                assert!(Instant::now() < deadline, "no challenge");
+                server.poll_once(Duration::from_millis(5)).unwrap();
+            }
+            Err(error) => panic!("receive failed: {error}"),
+        }
+    };
+    let message = Message::parse(&bytes[..length]).unwrap();
+    assert_eq!((message.method, message.class), (ALLOCATE, 3));
+    assert_eq!(message.attr(NONCE).unwrap().len(), 32);
+    assert_eq!(length, 100);
+}
+
+#[test]
+fn refusals_are_counted_per_lane() {
+    let mut server = budget_server();
+    let (t0, unix) = (Instant::now(), unix_time());
+    assert_eq!(server.relay_metrics().unverified_request_refusals, 0);
+    assert_eq!(server.relay_metrics().verified_request_refusals, 0);
+    let plain = request(1, None);
+    // 25 requests from one unverified source: 20 admitted, 5 refused.
+    for _ in 0..25 {
+        admitted(&mut server, "203.0.113.5:40000", &plain, t0, unix);
+    }
+    let metrics = server.relay_metrics();
+    assert_eq!(metrics.unverified_request_refusals, 5);
+    assert_eq!(metrics.verified_request_refusals, 0);
+    // The shared unverified budget refusing is counted too, and the source
+    // allowance it did not use is restored.
+    server.unverified = Bucket::new(0, 0, t0);
+    assert!(!admitted(
+        &mut server,
+        "203.0.113.6:40000",
+        &plain,
+        t0,
+        unix
+    ));
+    assert_eq!(server.relay_metrics().unverified_request_refusals, 6);
+    // Verified: the shared budget empty, then a source over its allowance.
+    server.requests = Bucket::new(0, 0, t0);
+    for _ in 0..3 {
+        assert!(!admitted(&mut server, "127.0.0.1:40000", &plain, t0, unix));
+    }
+    let metrics = server.relay_metrics();
+    assert_eq!(metrics.verified_request_refusals, 3);
+    assert_eq!(metrics.unverified_request_refusals, 6);
+}
+
+/// The slot a source took is given back when the shared budget refuses, so
+/// a refusal does not also spend the source's allowance.
+#[test]
+fn a_refusal_by_a_shared_budget_restores_the_source_allowance() {
+    let mut server = budget_server();
+    let (t0, unix) = (Instant::now(), unix_time());
+    let plain = request(1, None);
+    server.unverified = Bucket::new(0, 0, t0);
+    for _ in 0..1_000 {
+        assert!(!admitted(
+            &mut server,
+            "203.0.113.5:40000",
+            &plain,
+            t0,
+            unix
+        ));
+    }
+    server.unverified = Bucket::new(0, 5, t0);
+    let taken = (0..100)
+        .filter(|_| admitted(&mut server, "203.0.113.5:40000", &plain, t0, unix))
+        .count();
+    assert_eq!(taken, 5);
+    server.requests = Bucket::new(0, 0, t0);
+    for _ in 0..1_000 {
+        assert!(!admitted(&mut server, "127.0.0.1:40000", &plain, t0, unix));
+    }
+    // Below the reserve only a source's own allowance is admitted.
+    server.requests = Bucket::new(0, 100, t0);
+    let taken = (0..100)
+        .filter(|_| admitted(&mut server, "127.0.0.1:40000", &plain, t0, unix))
+        .count();
+    assert_eq!(taken as u64, VERIFIED_SOURCE_BURST);
+}
+
+/// What the load harness sends from one loopback address while it sets up
+/// 512 clients, on a fresh server.
+#[test]
+fn loader_setup_fits_the_verified_budget() {
+    let mut server = budget_server();
+    let (t0, unix) = (Instant::now(), unix_time());
+    let nonce = server
+        .nonces
+        .issue(unix, "127.0.0.1".parse().unwrap(), &server.config.realm);
+    for index in 0..512u16 {
+        let transaction = index as u8;
+        assert!(admitted(
+            &mut server,
+            "127.0.0.1:40000",
+            &request(transaction, None),
+            t0,
+            unix
+        ));
+        assert!(admitted(
+            &mut server,
+            "127.0.0.1:40000",
+            &request(transaction, Some(&nonce)),
+            t0,
+            unix
+        ));
+    }
+}
+
+/// The whole receive path for a source that is not on loopback: a request
+/// without a nonce is answered with a challenge, a request carrying that
+/// challenge's nonce is admitted when the budget for unconfirmed sources is
+/// empty, and the same nonce from another address is not.
+#[test]
+fn a_challenge_nonce_verifies_the_address_it_was_sent_to() {
+    let mut server = budget_server();
+    // Replies go to a real loopback socket; the source the relay classifies
+    // is a synthetic address that is not on loopback.
+    let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    socket
+        .set_read_timeout(Some(Duration::from_millis(250)))
+        .unwrap();
+    let real = Client::Datagram(socket.local_addr().unwrap());
+    let peer: SocketAddr = "203.0.113.30:40000".parse().unwrap();
+    let elsewhere: SocketAddr = "203.0.113.31:40000".parse().unwrap();
+    let challenge = |server: &mut Server, peer: SocketAddr, bytes: &[u8]| {
+        server.receive(real, peer, bytes);
+        let mut reply = [0; 2048];
+        socket.recv_from(&mut reply).ok().map(|(length, _)| {
+            let message = Message::parse(&reply[..length]).unwrap();
+            assert_eq!((message.method, message.class), (ALLOCATE, 3));
+            String::from_utf8(message.attr(NONCE).unwrap().to_vec()).unwrap()
+        })
+    };
+
+    let nonce = challenge(&mut server, peer, &request(1, None)).expect("a challenge");
+    // Only requests carrying the nonce get through once the unconfirmed
+    // budget is empty.
+    server.unverified = Bucket::new(0, 0, Instant::now());
+    assert_eq!(challenge(&mut server, peer, &request(2, None)), None);
+    assert!(challenge(&mut server, peer, &request(3, Some(&nonce))).is_some());
+    assert_eq!(
+        challenge(&mut server, elsewhere, &request(4, Some(&nonce))),
+        None
+    );
+    assert_eq!(
+        challenge(&mut server, peer, &request(5, Some(&"A".repeat(32)))),
+        None
+    );
+    // A nonce with a flipped check byte is not enough either.
+    use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+    let mut altered = URL_SAFE_NO_PAD.decode(&nonce).unwrap();
+    altered[5] ^= 1;
+    let altered = URL_SAFE_NO_PAD.encode(altered);
+    assert_eq!(
+        challenge(&mut server, peer, &request(6, Some(&altered))),
+        None
+    );
 }
