@@ -3043,6 +3043,7 @@ fn allocation_fixture(server: &Server) -> Allocation {
     let now = Instant::now();
     Allocation {
         socket,
+        #[cfg(feature = "connected-udp")]
         client_socket: None,
         token: Token(usize::MAX),
         bound_address: address,
