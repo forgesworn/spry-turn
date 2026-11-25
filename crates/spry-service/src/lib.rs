@@ -3,6 +3,7 @@ pub mod mesh;
 mod node;
 mod node_profile;
 pub mod portmap;
+mod proxy;
 pub mod public;
 pub mod resolver;
 pub mod signalling;
@@ -105,15 +106,21 @@ async fn read_body(body: Incoming, limit: usize) -> spry_access::Result<Bytes> {
             .to_bytes(),
     )
 }
-/// The caller as the operator's reverse proxy saw it. The service listens
-/// only on loopback behind that proxy, which appends the address it saw to
-/// `X-Forwarded-For`, so the right-most entry is the proxy's own. IPv6
+/// The caller as the operator's reverse proxy saw it. By default the service
+/// listens only on loopback behind that proxy; with a non-loopback bind the
+/// proxies are those named in `SPRY_HTTP_TRUSTED_PROXIES`. The proxy appends
+/// the address it saw to `X-Forwarded-For`, so the right-most entry is the
+/// proxy's own and earlier, caller-supplied entries are ignored. IPv6
 /// callers are grouped by /64, the usual smallest customer allocation.
 /// Used only as a hashed, in-memory rate key, by the public limiter and by
 /// the limiter every other API request meets before authentication.
 fn public_source(headers: &hyper::HeaderMap, peer: IpAddr) -> IpAddr {
-    let forwarded = peer
-        .is_loopback()
+    source_key(headers, peer, peer.is_loopback())
+}
+/// `public_source`, with the decision whether `peer` is a trusted proxy
+/// made by the caller. Without trust the header is never read.
+fn source_key(headers: &hyper::HeaderMap, peer: IpAddr, trusted: bool) -> IpAddr {
+    let forwarded = trusted
         .then(|| headers.get_all("x-forwarded-for").iter().next_back())
         .flatten()
         .and_then(|value| value.to_str().ok())
@@ -134,6 +141,13 @@ fn public_source(headers: &hyper::HeaderMap, peer: IpAddr) -> IpAddr {
             }
         },
         ip => ip,
+    }
+}
+/// The rate key for a request, under the service's proxy policy.
+fn client_source(state: &State, headers: &hyper::HeaderMap, peer: IpAddr) -> IpAddr {
+    match &state.proxies {
+        proxy::ProxyPolicy::Loopback => public_source(headers, peer),
+        policy => source_key(headers, peer, policy.trusts(peer)),
     }
 }
 fn public_enabled(state: &State) -> spry_access::Result<bool> {
@@ -169,7 +183,7 @@ async fn public_dispatch(
     if request.method() != "POST" {
         return Err(Refused(404, "Not found."));
     }
-    let source = public_source(request.headers(), peer).to_string();
+    let source = client_source(&state, request.headers(), peer).to_string();
     state
         .lock()
         .map_err(|_| Refused(503, "Unavailable."))?
@@ -255,7 +269,7 @@ async fn dispatch(
     }
     // Keyed by the caller the proxy saw, not the proxy itself, so one
     // caller's flood cannot spend the allowance of owners and paired apps.
-    let source = public_source(request.headers(), peer).to_string();
+    let source = client_source(&state, request.headers(), peer).to_string();
     let refused = state
         .lock()
         .map_err(|_| Refused(503, "Unavailable."))?
@@ -303,6 +317,19 @@ async fn dispatch(
         }
     }
     Ok(json_response(200, state.api(&key, &path, &body, now())?))
+}
+/// The HTTP listener's address and proxy policy from `SPRY_HTTP_BIND`,
+/// `SPRY_HTTP_PORT` and `SPRY_HTTP_TRUSTED_PROXIES`. Unset, it is loopback
+/// port 3744 behind a proxy on the same host.
+fn http_settings(
+    bind: Option<&str>,
+    port: Option<&str>,
+    trusted: Option<&str>,
+) -> std::result::Result<(SocketAddr, proxy::ProxyPolicy), Box<dyn std::error::Error>> {
+    let bind: SocketAddr =
+        format!("{}:{}", bind.unwrap_or("127.0.0.1"), port.unwrap_or("3744")).parse()?;
+    let policy = proxy::ProxyPolicy::configure(bind.ip(), trusted)?;
+    Ok((bind, policy))
 }
 async fn serve(
     request: Request<Incoming>,
@@ -597,24 +624,23 @@ pub async fn run_with_assets(
     if private_settings.is_none() && authority.config.transport_endpoint.is_some() {
         return Err("Private relay settings require a peer network".into());
     }
-    let state = Arc::new(if let Some(key) = pairing_key {
-        let pairing = authority
-            .trust_pairing(&key, now())
-            .map_err(|_| public::SetupError("SPRY_PAIRING_KEY must be a valid signing key"))?;
-        authority.set_vouching(false);
-        ServiceState::node(authority, pairing)
-    } else {
-        ServiceState::new(authority)
-    });
-    let bind: SocketAddr = format!(
-        "{}:{}",
-        env::var("SPRY_HTTP_BIND").unwrap_or_else(|_| "127.0.0.1".into()),
-        env::var("SPRY_HTTP_PORT").unwrap_or_else(|_| "3744".into())
-    )
-    .parse()?;
-    if !bind.ip().is_loopback() {
-        return Err("The control service must sit behind an HTTPS reverse proxy".into());
-    }
+    let (bind, proxies) = http_settings(
+        env::var("SPRY_HTTP_BIND").ok().as_deref(),
+        env::var("SPRY_HTTP_PORT").ok().as_deref(),
+        env::var("SPRY_HTTP_TRUSTED_PROXIES").ok().as_deref(),
+    )?;
+    let state = Arc::new(
+        if let Some(key) = pairing_key {
+            let pairing = authority
+                .trust_pairing(&key, now())
+                .map_err(|_| public::SetupError("SPRY_PAIRING_KEY must be a valid signing key"))?;
+            authority.set_vouching(false);
+            ServiceState::node(authority, pairing)
+        } else {
+            ServiceState::new(authority)
+        }
+        .behind(proxies),
+    );
     let listener = TcpListener::bind(bind).await?;
     let _node_relay = if let (Some(settings), Some(policy)) =
         (&standard_settings, &state.node_policy)
@@ -718,6 +744,8 @@ pub async fn run_with_assets(
             },
             accepted = listener.accept() => {
                 let (stream, address) = accepted?;
+                // Beyond loopback, only the named proxies are served.
+                if !state.proxies.admits(address.ip()) { drop(stream); continue }
                 let Ok(permit) = permits.clone().try_acquire_owned() else { drop(stream); continue };
                 let state = state.clone();
                 tokio::spawn(async move {
@@ -1190,6 +1218,153 @@ mod tests {
             assert_eq!(refused, ROOM_SEAL);
             assert!(refused.to_string().starts_with("SPRY_ROOM_SEAL "));
         }
+    }
+
+    fn behind(list: &str) -> proxy::ProxyPolicy {
+        proxy::ProxyPolicy::configure("192.0.2.10".parse().unwrap(), Some(list)).unwrap()
+    }
+    /// A listener that applies the proxy policy as the service does, with
+    /// `peer` standing in for the connecting address.
+    async fn host_behind(policy: proxy::ProxyPolicy, peer: IpAddr) -> SocketAddr {
+        let mut config = Config::new(
+            "https://relay.example",
+            "https://calls.example/j/",
+            OWNER,
+            b"synthetic-test-secret-not-for-deployment",
+            None,
+        )
+        .unwrap();
+        config.ready = true;
+        let state = Arc::new(ServiceState::new(Authority::new(config)).behind(policy));
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            loop {
+                let (stream, _) = listener.accept().await.unwrap();
+                if !state.proxies.admits(peer) {
+                    drop(stream);
+                    continue;
+                }
+                let state = state.clone();
+                tokio::spawn(async move {
+                    let _ = hyper::server::conn::http1::Builder::new()
+                        .keep_alive(false)
+                        .serve_connection(
+                            TokioIo::new(stream),
+                            service_fn(move |request| {
+                                serve(request, state.clone(), peer, UiAssets::STANDALONE)
+                            }),
+                        )
+                        .await;
+                });
+            }
+        });
+        address
+    }
+    /// The status line, or nothing if the connection was closed unanswered.
+    async fn first_line(address: SocketAddr, headers: &str) -> String {
+        let mut socket = tokio::net::TcpStream::connect(address).await.unwrap();
+        let request = format!(
+            "POST /v1/credentials HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Type: application/json\r\n{headers}Content-Length: 2\r\n\r\n{{}}"
+        );
+        let _ = socket.write_all(request.as_bytes()).await;
+        let mut bytes = Vec::new();
+        let _ = timeout(Duration::from_secs(5), socket.read_to_end(&mut bytes)).await;
+        String::from_utf8_lossy(&bytes)
+            .lines()
+            .next()
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+    }
+
+    #[test]
+    fn the_http_listener_defaults_to_loopback_with_no_proxy_list() {
+        let (bind, policy) = http_settings(None, None, None).unwrap();
+        assert_eq!(bind, "127.0.0.1:3744".parse::<SocketAddr>().unwrap());
+        assert_eq!(policy, proxy::ProxyPolicy::Loopback);
+    }
+
+    #[test]
+    fn a_non_loopback_bind_is_refused_without_a_trusted_list() {
+        let refused = http_settings(Some("192.0.2.10"), None, None).unwrap_err();
+        assert!(refused.to_string().contains("SPRY_HTTP_TRUSTED_PROXIES"));
+        let (bind, policy) =
+            http_settings(Some("192.0.2.10"), Some("3745"), Some("192.0.2.7/32")).unwrap();
+        assert_eq!(bind, "192.0.2.10:3745".parse::<SocketAddr>().unwrap());
+        assert!(policy.trusts("192.0.2.7".parse().unwrap()));
+    }
+
+    #[test]
+    fn wildcard_trust_is_refused_at_startup() {
+        for wildcard in ["0.0.0.0/0", "::/0"] {
+            assert!(http_settings(Some("192.0.2.10"), None, Some(wildcard)).is_err());
+        }
+    }
+
+    #[tokio::test]
+    async fn an_untrusted_peer_is_refused_when_bound_beyond_loopback() {
+        let policy = behind("192.0.2.7");
+        let stranger = host_behind(policy.clone(), "203.0.113.5".parse().unwrap()).await;
+        assert_eq!(first_line(stranger, "").await, "");
+        let proxy = host_behind(policy, "192.0.2.7".parse().unwrap()).await;
+        assert!(first_line(proxy, "").await.starts_with("http/1.1 401"));
+    }
+
+    #[tokio::test]
+    async fn a_forwarded_header_from_an_untrusted_peer_is_not_read() {
+        let state = ServiceState::new(Authority::new(
+            Config::new(
+                "https://relay.example",
+                "https://calls.example/j/",
+                OWNER,
+                b"synthetic-test-secret-not-for-deployment",
+                None,
+            )
+            .unwrap(),
+        ))
+        .behind(behind("192.0.2.7"));
+        let state = Arc::new(state);
+        let mut headers = hyper::HeaderMap::new();
+        headers.insert("x-forwarded-for", "198.51.100.9".parse().unwrap());
+        for peer in ["203.0.113.5", "127.0.0.1"] {
+            let peer: IpAddr = peer.parse().unwrap();
+            assert_eq!(client_source(&state, &headers, peer), peer, "{peer}");
+        }
+        let proxy: IpAddr = "192.0.2.7".parse().unwrap();
+        assert_eq!(
+            client_source(&state, &headers, proxy).to_string(),
+            "198.51.100.9"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_trusted_proxys_forwarded_address_keys_the_limiter() {
+        let address = host_behind(behind("192.0.2.0/24"), "192.0.2.7".parse().unwrap()).await;
+        let from = |source: &str| format!("X-Forwarded-For: {source}\r\n");
+        for _ in 0..120 {
+            let line = first_line(address, &from("198.51.100.1")).await;
+            assert!(line.starts_with("http/1.1 401"), "{line}");
+        }
+        let flooded = first_line(address, &from("198.51.100.1")).await;
+        assert!(flooded.starts_with("http/1.1 429"), "{flooded}");
+        // Another caller behind the same proxy keeps its own allowance.
+        let other = first_line(address, &from("198.51.100.2")).await;
+        assert!(other.starts_with("http/1.1 401"), "{other}");
+    }
+
+    #[tokio::test]
+    async fn a_spoofed_left_most_entry_does_not_change_the_key() {
+        let address = host_behind(behind("192.0.2.7"), "192.0.2.7".parse().unwrap()).await;
+        for n in 0..120 {
+            let line = first_line(
+                address,
+                &format!("X-Forwarded-For: 192.0.2.{n}, 198.51.100.1\r\n"),
+            )
+            .await;
+            assert!(line.starts_with("http/1.1 401"), "{line}");
+        }
+        let flooded = first_line(address, "X-Forwarded-For: 192.0.2.250, 198.51.100.1\r\n").await;
+        assert!(flooded.starts_with("http/1.1 429"), "{flooded}");
     }
 
     fn signing(seed: u8) -> secp256k1::Keypair {

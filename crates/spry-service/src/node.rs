@@ -21,6 +21,7 @@ pub(crate) struct ServiceState {
     authority: Mutex<Authority>,
     private: RwLock<Option<Arc<PrivateBridge>>>,
     pub(crate) node_policy: Option<Arc<crate::node_profile::Policy>>,
+    pub(crate) proxies: crate::proxy::ProxyPolicy,
 }
 impl ServiceState {
     pub(crate) fn new(authority: Authority) -> Self {
@@ -28,6 +29,7 @@ impl ServiceState {
             authority: Mutex::new(authority),
             private: RwLock::new(None),
             node_policy: None,
+            proxies: crate::proxy::ProxyPolicy::Loopback,
         }
     }
     pub(crate) fn node(authority: Authority, pairing: String) -> Self {
@@ -35,7 +37,13 @@ impl ServiceState {
             authority: Mutex::new(authority),
             private: RwLock::new(None),
             node_policy: Some(Arc::new(crate::node_profile::Policy::new(pairing))),
+            proxies: crate::proxy::ProxyPolicy::Loopback,
         }
+    }
+    /// Serve behind the given proxies instead of the loopback default.
+    pub(crate) fn behind(mut self, proxies: crate::proxy::ProxyPolicy) -> Self {
+        self.proxies = proxies;
+        self
     }
     pub(crate) fn lock(&self) -> std::sync::LockResult<std::sync::MutexGuard<'_, Authority>> {
         self.authority.lock()

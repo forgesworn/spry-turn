@@ -82,7 +82,9 @@ whether public mode is on or off:
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `SPRY_HTTP_PORT` | `3744` | Loopback HTTP API port behind the operator's HTTPS proxy |
+| `SPRY_HTTP_PORT` | `3744` | HTTP API port behind the operator's HTTPS proxy |
+| `SPRY_HTTP_BIND` | `127.0.0.1` | HTTP API address; beyond loopback it needs `SPRY_HTTP_TRUSTED_PROXIES` (see [standalone](standalone.md#container-image)) |
+| `SPRY_HTTP_TRUSTED_PROXIES` | unset | Proxy IPs and CIDR ranges allowed to connect and to name the caller; only with a non-loopback bind |
 | `SPRY_TURN_PORT` | `3478` | UDP and TCP TURN listener port |
 | `SPRY_TLS_PORT` | `5349` | Direct TLS listener and advertised TLS port |
 | `SPRY_RELAY_PORTS` | `49160:49191` | Inclusive UDP allocation port range |

@@ -23,8 +23,9 @@ ENV SPRY_RELAY_BINARY=/usr/local/bin/spry-turn \
     SPRY_STATE_FILE=/data/pairings.json
 USER spry
 WORKDIR /data
-# The pairing service answers HTTP on loopback only (port 3744), so it is
-# not listed here: a published port cannot reach it. See docs/standalone.md.
+# The pairing service answers HTTP on loopback only (port 3744) unless
+# SPRY_HTTP_BIND and SPRY_HTTP_TRUSTED_PROXIES are set, so it is not listed
+# here; publish it deliberately. See docs/standalone.md.
 EXPOSE 3478/tcp 3478/udp 5349/tcp
 EXPOSE 49160-49191/udp
 STOPSIGNAL SIGTERM
