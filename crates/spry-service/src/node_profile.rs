@@ -587,6 +587,7 @@ mod tests {
                 allocation_quota_refusals: 8,
                 user_quota_refusals: 9,
                 relay_bind_failures: 10,
+                ..Default::default()
             },
         });
         let body = json!({"v":1,"pairing":pairing});

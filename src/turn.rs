@@ -1,7 +1,7 @@
 //! One non-blocking event loop, bounded per-allocation sockets and state.
 use crate::{
     auth,
-    limits::{Bucket, SWEEP_INTERVAL, Stats},
+    limits::{Bucket, SWEEP_INTERVAL, SourceTable, Stats},
     wire::{self, *},
 };
 use mio::{
@@ -9,6 +9,7 @@ use mio::{
     net::{TcpListener, TcpStream, UdpSocket},
 };
 use std::collections::{HashMap, VecDeque};
+use std::hash::{BuildHasher, RandomState};
 use std::sync::Arc;
 use std::{
     collections::HashSet,
@@ -39,6 +40,30 @@ const STREAM_FRAMES_PER_TURN: usize = 64;
 /// channel binds during ICE; small enough to bound integrity checks.
 const ALLOCATION_REQUESTS_PER_SECOND: u64 = 10;
 const ALLOCATION_REQUEST_BURST: u64 = 30;
+/// Control requests from sources the relay can reach back: TCP and TLS
+/// connections, loopback, and UDP requests carrying a nonce this relay issued
+/// to that address. They share one budget. Each source has a soft allowance
+/// within it: a source over its allowance may still use what the budget
+/// holds above a reserve, so one address on its own can use the whole
+/// refill, but sources within their allowance are served first and cannot be
+/// displaced below the reserve. One address can use its allowance plus the
+/// budget above the reserve at once (4,000 requests), as a single shared
+/// budget of the same size allowed.
+const VERIFIED_REQUESTS_PER_SECOND: u64 = 2000;
+const VERIFIED_REQUEST_BURST: u64 = 6000;
+const VERIFIED_RESERVE: u64 = 2000;
+const VERIFIED_SOURCE_PER_SECOND: u64 = 20;
+const VERIFIED_SOURCE_BURST: u64 = 40;
+/// Other UDP requests, which carry no nonce for the sender's address, share a
+/// second budget. Each address (IPv6: each /64) is held to a small allowance
+/// within it, whatever the budget holds.
+const UNVERIFIED_REQUESTS_PER_SECOND: u64 = 2000;
+const UNVERIFIED_REQUEST_BURST: u64 = 2000;
+const UNVERIFIED_SOURCE_PER_SECOND: u64 = 5;
+const UNVERIFIED_SOURCE_BURST: u64 = 20;
+/// Slots in each per-source table. Sources whose hashes collide share one
+/// allowance; the tables are allocated once and never grow.
+const SOURCE_SLOTS: usize = 4096;
 // Coalesce only already queued plain TCP peer returns. Flush within the current
 // receive dispatch, never wait for a later packet or timer to fill a batch.
 const TCP_RETURN_BATCH_FRAMES: usize = 16;
@@ -185,6 +210,12 @@ pub struct RelayMetrics {
     pub allocation_quota_refusals: u64,
     pub user_quota_refusals: u64,
     pub relay_bind_failures: u64,
+    /// Requests refused by the budget for UDP sources without a nonce, or by
+    /// a source's allowance within it.
+    pub unverified_request_refusals: u64,
+    /// Requests refused by the budget for TCP/TLS, loopback and nonce-bearing
+    /// UDP sources, or by a source's allowance within it.
+    pub verified_request_refusals: u64,
 }
 
 #[derive(Default)]
@@ -196,6 +227,8 @@ struct TransportCounters {
     allocation_quota_refusals: u64,
     user_quota_refusals: u64,
     relay_bind_failures: u64,
+    unverified_request_refusals: u64,
+    verified_request_refusals: u64,
 }
 
 /// Generation-tagged slots for internally assigned readiness tokens. Client
@@ -520,7 +553,16 @@ pub struct Server {
     pending_streams: VecDeque<Token>,
     next_token: usize,
     nonces: auth::Nonces,
+    /// Budget for address-verified sources; see `admit_request`.
     requests: Bucket,
+    /// Budget for UDP sources that have not shown a nonce.
+    unverified: Bucket,
+    verified_sources: SourceTable,
+    unverified_sources: SourceTable,
+    /// Seeds the hash that chooses a source's table slot.
+    sources: RandomState,
+    /// Origin of the nanosecond clock the per-source tables run on.
+    epoch: Instant,
     sweep_at: Instant,
     policy_at: Instant,
     input: Vec<u8>,
@@ -538,9 +580,10 @@ fn unauthenticated_cap(max_connections: usize) -> usize {
     (max_connections / 2).max(1)
 }
 
-/// The key under which connections from one source share a cap. IPv4-mapped
-/// IPv6 addresses count as IPv4, and other IPv6 addresses are grouped by /64,
-/// matching how the service groups callers for its own rate limits.
+/// The key under which connections and requests from one source share a cap
+/// or allowance. IPv4-mapped IPv6 addresses count as IPv4, and other IPv6
+/// addresses are grouped by /64, matching how the service groups callers for
+/// its own rate limits.
 fn connection_source(ip: IpAddr) -> IpAddr {
     match ip.to_canonical() {
         IpAddr::V6(ip) => {
@@ -855,7 +898,24 @@ impl Server {
             next_token: 3,
             nonces: auth::Nonces::new()
                 .map_err(|_| io::Error::other("OS randomness unavailable"))?,
-            requests: Bucket::new(2000, 4000, now),
+            requests: Bucket::new(VERIFIED_REQUESTS_PER_SECOND, VERIFIED_REQUEST_BURST, now),
+            unverified: Bucket::new(
+                UNVERIFIED_REQUESTS_PER_SECOND,
+                UNVERIFIED_REQUEST_BURST,
+                now,
+            ),
+            verified_sources: SourceTable::new(
+                SOURCE_SLOTS,
+                VERIFIED_SOURCE_PER_SECOND,
+                VERIFIED_SOURCE_BURST,
+            ),
+            unverified_sources: SourceTable::new(
+                SOURCE_SLOTS,
+                UNVERIFIED_SOURCE_PER_SECOND,
+                UNVERIFIED_SOURCE_BURST,
+            ),
+            sources: RandomState::new(),
+            epoch: now,
             sweep_at: now + SWEEP_INTERVAL,
             policy_at: now,
             input: vec![0; MAX_PACKET + HEADROOM],
@@ -894,6 +954,8 @@ impl Server {
             allocation_quota_refusals: self.transport.allocation_quota_refusals,
             user_quota_refusals: self.transport.user_quota_refusals,
             relay_bind_failures: self.transport.relay_bind_failures,
+            unverified_request_refusals: self.transport.unverified_request_refusals,
+            verified_request_refusals: self.transport.verified_request_refusals,
         }
     }
     fn forwarded(&mut self, client: Client, bytes: usize) {
@@ -1570,6 +1632,94 @@ impl Server {
         Some((username.to_owned(), key))
     }
 
+    /// The slot a source's allowance lives in, in both per-source tables.
+    fn source_slot(&self, ip: IpAddr) -> usize {
+        self.verified_sources
+            .slot(self.sources.hash_one(connection_source(ip)))
+    }
+
+    /// Draws on the request budgets, which bound the integrity checks that
+    /// requests without credentials can cause. Nothing here computes an HMAC.
+    ///
+    /// 1. A client that already holds an allocation first draws on its own
+    ///    small budget, so it can refresh and add permissions whatever other
+    ///    sources send. This is the only draw such a request makes while it
+    ///    has tokens.
+    /// 2. Otherwise the source is address-verified if it is a stream (the
+    ///    handshake confirmed the address), is on loopback, or sent a UDP
+    ///    request whose nonce passes the cheap keyed check for that address.
+    ///    Verified sources draw on the shared verified budget. A source within
+    ///    its own allowance may use all of it, including the reserve; one over
+    ///    its allowance may use only what is left above the reserve. The
+    ///    allowance is soft: it decides priority when the budget runs low, not
+    ///    a limit.
+    /// 3. Every other UDP request draws on the unverified budget, and on its
+    ///    source's hard allowance within it.
+    ///
+    /// A source's allowance is restored when the shared budget then refuses,
+    /// so a refusal never costs the source twice. `unix` is only read when a
+    /// nonce has to be checked.
+    fn admit_request(
+        &mut self,
+        client: Client,
+        peer: SocketAddr,
+        m: &Message<'_>,
+        now: Instant,
+        unix: impl FnOnce() -> u64,
+    ) -> bool {
+        if self
+            .allocations
+            .get_mut(&client)
+            .is_some_and(|a| a.requests.take(1, now))
+        {
+            return true;
+        }
+        let verified = match client {
+            Client::Stream(_) => true,
+            Client::Datagram(_) => {
+                peer.ip().to_canonical().is_loopback()
+                    || m.attr(NONCE).is_some_and(|nonce| {
+                        self.nonces
+                            .check(nonce, unix(), peer.ip(), &self.config.realm)
+                    })
+            }
+        };
+        let slot = self.source_slot(peer.ip());
+        let at =
+            u64::try_from(now.saturating_duration_since(self.epoch).as_nanos()).unwrap_or(u64::MAX);
+        if verified {
+            let admitted = match self.verified_sources.take(slot, at) {
+                Some(previous) => {
+                    let admitted = self.requests.take(1, now);
+                    if !admitted {
+                        self.verified_sources.restore(slot, previous);
+                    }
+                    admitted
+                }
+                None => self.requests.take_above(1, VERIFIED_RESERVE, now),
+            };
+            if !admitted {
+                self.transport.verified_request_refusals += 1;
+            }
+            admitted
+        } else {
+            let admitted = match self.unverified_sources.take(slot, at) {
+                Some(previous) => {
+                    let admitted = self.unverified.take(1, now);
+                    if !admitted {
+                        self.unverified_sources.restore(slot, previous);
+                    }
+                    admitted
+                }
+                None => false,
+            };
+            if !admitted {
+                self.transport.unverified_request_refusals += 1;
+            }
+            admitted
+        }
+    }
+
     fn receive(&mut self, client: Client, peer: SocketAddr, bytes: &[u8]) {
         if self.config.credential_authorizer.is_some() && Instant::now() >= self.policy_at {
             self.revoke_unauthorised();
@@ -1633,17 +1783,7 @@ impl Server {
         if m.class != 0 {
             return;
         }
-        // Every source shares one request budget, which bounds the integrity
-        // checks an unauthenticated flood can cause. A client that already
-        // holds an allocation first draws on its own small budget, so such a
-        // flood cannot stop it refreshing or adding permissions.
-        let now = Instant::now();
-        if !self
-            .allocations
-            .get_mut(&client)
-            .is_some_and(|a| a.requests.take(1, now))
-            && !self.requests.take(1, now)
-        {
+        if !self.admit_request(client, peer, &m, Instant::now(), unix_time) {
             return;
         }
         if m.method == BINDING {
