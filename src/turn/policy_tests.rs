@@ -3011,3 +3011,140 @@ fn an_allocated_client_keeps_control_requests_when_the_shared_budget_is_spent() 
     client.send_to(&refresh, endpoint).unwrap();
     assert_eq!(reply(&mut server, &client, 100), None);
 }
+
+fn source_cap_server(max_connections: usize) -> Server {
+    let mut config = Config::local(vec![1; 32]);
+    config.listen.set_port(0);
+    config.max_connections = max_connections;
+    bind_server(config)
+}
+
+/// Opens `count` real connections to the relay and waits until it holds them.
+fn open_streams(server: &mut Server, count: usize) -> Vec<std::net::TcpStream> {
+    let mut clients = Vec::new();
+    for _ in 0..count {
+        clients.push(std::net::TcpStream::connect(server.local_addr().unwrap()).unwrap());
+        accept_stream(server);
+    }
+    clients
+}
+
+/// Presents every connection the relay holds as coming from `ip`, so a test
+/// can model a second source without a second local address.
+fn relabel_sources(server: &mut Server, ip: IpAddr) {
+    for conn in server.connections.values_mut() {
+        conn.peer = SocketAddr::new(ip, conn.peer.port());
+    }
+}
+
+fn allocation_fixture(server: &Server) -> Allocation {
+    let socket = UdpSocket::bind("127.0.0.1:0".parse().unwrap()).unwrap();
+    let address = socket.local_addr().unwrap();
+    let now = Instant::now();
+    Allocation {
+        socket,
+        client_socket: None,
+        token: Token(usize::MAX),
+        bound_address: address,
+        advertised_address: address,
+        username: "source-cap-fixture".into(),
+        transaction: [1; 12],
+        expires: now + Duration::from_secs(60),
+        permissions: Vec::new(),
+        channels: Vec::new(),
+        bandwidth: Bucket::new(server.config.bytes_per_second, 1, now),
+        requests: Bucket::new(
+            ALLOCATION_REQUESTS_PER_SECOND,
+            ALLOCATION_REQUEST_BURST,
+            now,
+        ),
+    }
+}
+
+#[test]
+fn one_source_is_limited_to_half_the_connection_table_without_allocations() {
+    let mut server = source_cap_server(64);
+    let mut clients = open_streams(&mut server, 32);
+    let refused = std::net::TcpStream::connect(server.local_addr().unwrap()).unwrap();
+    drive_until(&mut server, |server| {
+        server.relay_metrics().refused_streams == 1
+    });
+    assert_eq!(server.connections.len(), 32, "the 33rd was not admitted");
+    let mut refused = refused;
+    refused
+        .set_read_timeout(Some(Duration::from_millis(500)))
+        .unwrap();
+    assert_eq!(refused.read(&mut [0u8; 1]).unwrap(), 0);
+    // Closing one connection releases its share.
+    drop(clients.pop());
+    drive_until(&mut server, |server| server.connections.len() == 31);
+    clients.push(std::net::TcpStream::connect(server.local_addr().unwrap()).unwrap());
+    accept_stream(&mut server);
+    assert_eq!(server.connections.len(), 32);
+    assert_eq!(server.relay_metrics().refused_streams, 1);
+}
+
+#[test]
+fn a_second_source_connects_while_the_first_is_at_its_cap() {
+    let mut server = source_cap_server(64);
+    let _first = open_streams(&mut server, 32);
+    relabel_sources(&mut server, "192.0.2.10".parse().unwrap());
+    assert!(server.source_at_unauthenticated_cap("192.0.2.10".parse().unwrap()));
+    assert!(!server.source_at_unauthenticated_cap("192.0.2.11".parse().unwrap()));
+    let second = open_streams(&mut server, 1);
+    assert_eq!(server.connections.len(), 33);
+    assert_eq!(server.relay_metrics().refused_streams, 0);
+    drop(second);
+}
+
+#[test]
+fn ipv6_sources_share_a_cap_by_prefix_and_mapped_addresses_count_as_ipv4() {
+    let mut server = source_cap_server(4);
+    let _clients = open_streams(&mut server, 2);
+    let tokens: Vec<_> = server.connections.keys().copied().collect();
+    for (token, ip) in tokens
+        .iter()
+        .zip(["2001:db8:1:2::1", "2001:db8:1:2:ffff::9"])
+    {
+        let conn = server.connections.get_mut(token).unwrap();
+        conn.peer = SocketAddr::new(ip.parse().unwrap(), 4000);
+    }
+    assert!(server.source_at_unauthenticated_cap("2001:db8:1:2:1::1".parse().unwrap()));
+    assert!(!server.source_at_unauthenticated_cap("2001:db8:1:3::1".parse().unwrap()));
+    assert!(!server.source_at_unauthenticated_cap("192.0.2.1".parse().unwrap()));
+    relabel_sources(&mut server, "192.0.2.1".parse().unwrap());
+    assert!(server.source_at_unauthenticated_cap("::ffff:192.0.2.1".parse().unwrap()));
+}
+
+#[test]
+fn a_connection_with_an_allocation_stops_counting_and_counts_again_without_one() {
+    let mut server = source_cap_server(64);
+    let _clients = open_streams(&mut server, 32);
+    let source: IpAddr = "127.0.0.1".parse().unwrap();
+    assert!(server.source_at_unauthenticated_cap(source));
+    let token = *server.connections.keys().next().unwrap();
+    server
+        .allocations
+        .insert(Client::Stream(token), allocation_fixture(&server));
+    assert!(!server.source_at_unauthenticated_cap(source));
+    server.remove_allocation(Client::Stream(token));
+    assert!(server.source_at_unauthenticated_cap(source));
+}
+
+#[test]
+fn the_source_cap_is_half_the_table_and_never_below_one() {
+    for (max, cap) in [
+        (1, 1),
+        (2, 1),
+        (3, 1),
+        (16, 8),
+        (32, 16),
+        (64, 32),
+        (512, 256),
+    ] {
+        assert_eq!(unauthenticated_cap(max), cap, "max_connections {max}");
+    }
+    let mut server = source_cap_server(1);
+    let _only = open_streams(&mut server, 1);
+    assert!(server.source_at_unauthenticated_cap("127.0.0.1".parse().unwrap()));
+}

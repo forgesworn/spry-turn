@@ -17,6 +17,15 @@ Changes on `main` since 0.4.5. Not a release: the version is unchanged.
   With neither variable set, the service stays on loopback as before. The
   image still does not expose port 3744.
 
+- Unauthenticated TCP and TLS connections from one source are now limited
+  to half of `--max-connections` (rounded down, at least one). A connection
+  stops counting once it holds an allocation and counts again if that
+  allocation ends while the stream stays open. IPv6 sources are grouped by
+  /64 and IPv4-mapped addresses count as IPv4. Further connections from a
+  source at its limit are refused and counted in `refusedStreams`, as at the
+  total limit. This is a cap, not a complete safeguard: the total limit still
+  applies, and several sources together can still fill it.
+
 ## 0.4.5 (24 November 2026)
 
 Public MIT prerelease through the existing native executable, Android

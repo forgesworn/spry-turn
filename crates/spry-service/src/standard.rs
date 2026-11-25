@@ -318,8 +318,12 @@ mod tests {
 
     #[test]
     fn replacement_turn_handshakes_have_headroom_without_more_relay_slots() {
+        use spry_turn::{
+            auth,
+            wire::{ALLOCATE, Builder, Message, NONCE, REALM, TRANSPORT, USERNAME},
+        };
         use std::io::{Read, Write};
-        use std::time::Duration;
+        use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
         let settings = Settings::parse(None, None, None, None).unwrap();
         let mut config = settings
@@ -328,14 +332,74 @@ mod tests {
         config.listen.set_port(0);
         assert_eq!(config.max_allocations, 32);
         assert_eq!(config.max_per_user, 8);
+        let secret = config.secret.clone();
+        let realm = config.realm.clone();
         let mut server = spry_turn::turn::Server::bind(config).unwrap();
         let mut clients = Vec::new();
-        // Old-route sockets and replacement handshakes coexist. These are
-        // real TCP/STUN round trips; none reserves an extra relay allocation.
+        let read_message = |client: &mut std::net::TcpStream| {
+            let mut header = [0u8; 20];
+            client.read_exact(&mut header).unwrap();
+            let mut bytes = header.to_vec();
+            bytes.resize(
+                20 + usize::from(u16::from_be_bytes([header[2], header[3]])),
+                0,
+            );
+            client.read_exact(&mut bytes[20..]).unwrap();
+            bytes
+        };
+        // Old-route sockets hold the 32 relay allocations (four users, eight
+        // each) while replacement handshakes arrive on further connections
+        // from the same address. These are real TCP/STUN round trips.
+        let expiry = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            + 300;
+        for index in 0..32u8 {
+            let mut client = std::net::TcpStream::connect(server.local_addr().unwrap()).unwrap();
+            client
+                .set_read_timeout(Some(Duration::from_millis(100)))
+                .unwrap();
+            client.set_nodelay(true).unwrap();
+            server.poll_once(Duration::from_millis(1)).unwrap();
+            let mut request = Builder::new(ALLOCATE, 0, [index; 12]);
+            request.attr(TRANSPORT, &[17, 0, 0, 0]);
+            client.write_all(&request.finish(None)).unwrap();
+            for _ in 0..4 {
+                server.poll_once(Duration::from_millis(1)).unwrap();
+            }
+            let challenge = read_message(&mut client);
+            let nonce = Message::parse(&challenge)
+                .unwrap()
+                .attr(NONCE)
+                .expect("challenge carries a nonce")
+                .to_vec();
+            let username = format!("{expiry}:old-route-{}", index / 8);
+            let password = auth::credential(&secret, &username);
+            let key = auth::key(&username, &realm, &password);
+            let mut request = Builder::new(ALLOCATE, 0, [index; 12]);
+            request.attr(USERNAME, username.as_bytes());
+            request.attr(REALM, realm.as_bytes());
+            request.attr(NONCE, &nonce);
+            request.attr(TRANSPORT, &[17, 0, 0, 0]);
+            client.write_all(&request.finish(Some(&key))).unwrap();
+            for _ in 0..4 {
+                server.poll_once(Duration::from_millis(1)).unwrap();
+            }
+            let response = read_message(&mut client);
+            let response = Message::parse(&response).unwrap();
+            assert_eq!(
+                (response.method, response.class),
+                (ALLOCATE, 2),
+                "allocation {} refused",
+                index + 1
+            );
+            clients.push(client);
+        }
         let mut binding = [0u8; 20];
         binding[1] = 1;
         binding[4..8].copy_from_slice(&[0x21, 0x12, 0xa4, 0x42]);
-        for index in 0..64 {
+        for index in 0..32 {
             let mut client = std::net::TcpStream::connect(server.local_addr().unwrap()).unwrap();
             client
                 .set_read_timeout(Some(Duration::from_millis(100)))
@@ -355,6 +419,7 @@ mod tests {
             assert_eq!(&response[8..20], &binding[8..20]);
             clients.push(client);
         }
+        assert_eq!(clients.len(), 64);
         let mut excess = std::net::TcpStream::connect(server.local_addr().unwrap()).unwrap();
         excess
             .set_read_timeout(Some(Duration::from_millis(100)))
@@ -369,6 +434,7 @@ mod tests {
         for _ in 0..4 {
             server.poll_once(Duration::from_millis(1)).unwrap();
         }
+        // An old-route socket still gets an answer, as before.
         clients[0].read_exact(&mut [0u8; 40]).unwrap();
     }
 

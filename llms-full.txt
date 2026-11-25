@@ -1033,7 +1033,7 @@ Source: [src/turn.rs](https://github.com/forgesworn/spry-turn/blob/main/src/turn
 | `allow_loopback_peers` | `false`; explicit loopback testing |
 | `max_allocations` | `1024`, total logical allocation limit |
 | `max_per_user` | `8`, per-username allocation limit |
-| `max_connections` | `256`, TCP/TLS connections |
+| `max_connections` | `256`, TCP/TLS connections; one source may hold at most half of them (at least one) without an allocation |
 | `max_allocation_lifetime` | `3600` seconds, positive maximum lease returned by Allocate/Refresh; the username's earlier expiry still wins |
 | `bytes_per_second` | `67108864`, aggregate byte rate per allocation across both directions |
 | `aggregate_bytes_per_second` | `None`; `Some(rate)` (non-zero) also limits payload bytes per second across every allocation together, after the per-allocation limit |
@@ -1099,7 +1099,7 @@ stream bucket includes TCP and TLS, including TLS terminated by a host
 proxy; it cannot distinguish those transports or listener ports.
 `streamErrors` counts fatal relay stream framing, queue and socket errors;
 normal EOF and revocation do not count. `refusedStreams` counts connection
-capacity refusals. `allocationQuotaRefusals` counts authenticated Allocate
+refusals at the total limit or at a source's limit for connections without an allocation. `allocationQuotaRefusals` counts authenticated Allocate
 requests refused at the whole-server allocation limit; `userQuotaRefusals`
 counts those refused at the username limit after passing that server limit.
 Both return TURN 486. `relayBindFailures` counts relay socket bind failures,
@@ -1697,8 +1697,10 @@ allocations and eight allocations per username. Old-route sockets and new
 handshakes can coexist when a browser changes networks. Sharing the same
 32-slot limit for connections and allocations can refuse replacement handshakes
 while most relay ports are still free. The extra connection headroom does not
-reserve additional relay ports or increase the bandwidth quota. Operators can
-still lower the connection limit. Supervised mode keeps its default of 16.
+reserve additional relay ports or increase the bandwidth quota. At the default
+of 64, one source may hold up to 32 connections that have no allocation, so
+32 old-route sockets with allocations and 32 replacement handshakes from the
+same address fit together. Operators can still lower the connection limit. Supervised mode keeps its default of 16.
 
 ---
 
@@ -1813,7 +1815,15 @@ sources send. New clients share the common budget. Relayed payload does not
 use either budget.
 
 A TCP/TLS connection without an allocation is closed after 15 seconds, and
-`--max-connections` is shared by every source.
+`--max-connections` is shared by every source. One source may also hold at
+most half of `--max-connections` (rounded down, at least one) connections
+that have no allocation. A connection stops counting once it holds an
+allocation, and counts again if that allocation ends while the stream stays
+open. IPv6 sources are grouped by /64 and IPv4-mapped addresses count as
+IPv4. A new connection from a source at its limit is refused in the same way
+as at the total limit, and counted in `refusedStreams`; connections already
+open are not closed. Several sources together can still reach the total
+limit, which also applies.
 
 The allocation limit does not reserve memory or raise the process's file
 descriptor limit. Authentication and stream setup also consume resources.
@@ -4269,6 +4279,15 @@ Changes on `main` since 0.4.5. Not a release: the version is unchanged.
   listed proxy's right-most `X-Forwarded-For` entry keys the rate limiter.
   With neither variable set, the service stays on loopback as before. The
   image still does not expose port 3744.
+
+- Unauthenticated TCP and TLS connections from one source are now limited
+  to half of `--max-connections` (rounded down, at least one). A connection
+  stops counting once it holds an allocation and counts again if that
+  allocation ends while the stream stays open. IPv6 sources are grouped by
+  /64 and IPv4-mapped addresses count as IPv4. Further connections from a
+  source at its limit are refused and counted in `refusedStreams`, as at the
+  total limit. This is a cap, not a complete safeguard: the total limit still
+  applies, and several sources together can still fill it.
 
 ## 0.4.5 (24 November 2026)
 

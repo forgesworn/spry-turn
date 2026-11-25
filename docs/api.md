@@ -39,7 +39,7 @@ Source: [src/turn.rs](../src/turn.rs).
 | `allow_loopback_peers` | `false`; explicit loopback testing |
 | `max_allocations` | `1024`, total logical allocation limit |
 | `max_per_user` | `8`, per-username allocation limit |
-| `max_connections` | `256`, TCP/TLS connections |
+| `max_connections` | `256`, TCP/TLS connections; one source may hold at most half of them (at least one) without an allocation |
 | `max_allocation_lifetime` | `3600` seconds, positive maximum lease returned by Allocate/Refresh; the username's earlier expiry still wins |
 | `bytes_per_second` | `67108864`, aggregate byte rate per allocation across both directions |
 | `aggregate_bytes_per_second` | `None`; `Some(rate)` (non-zero) also limits payload bytes per second across every allocation together, after the per-allocation limit |
@@ -105,7 +105,7 @@ stream bucket includes TCP and TLS, including TLS terminated by a host
 proxy; it cannot distinguish those transports or listener ports.
 `streamErrors` counts fatal relay stream framing, queue and socket errors;
 normal EOF and revocation do not count. `refusedStreams` counts connection
-capacity refusals. `allocationQuotaRefusals` counts authenticated Allocate
+refusals at the total limit or at a source's limit for connections without an allocation. `allocationQuotaRefusals` counts authenticated Allocate
 requests refused at the whole-server allocation limit; `userQuotaRefusals`
 counts those refused at the username limit after passing that server limit.
 Both return TURN 486. `relayBindFailures` counts relay socket bind failures,

@@ -352,5 +352,7 @@ allocations and eight allocations per username. Old-route sockets and new
 handshakes can coexist when a browser changes networks. Sharing the same
 32-slot limit for connections and allocations can refuse replacement handshakes
 while most relay ports are still free. The extra connection headroom does not
-reserve additional relay ports or increase the bandwidth quota. Operators can
-still lower the connection limit. Supervised mode keeps its default of 16.
+reserve additional relay ports or increase the bandwidth quota. At the default
+of 64, one source may hold up to 32 connections that have no allocation, so
+32 old-route sockets with allocations and 32 replacement handshakes from the
+same address fit together. Operators can still lower the connection limit. Supervised mode keeps its default of 16.
