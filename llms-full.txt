@@ -745,7 +745,10 @@ decision. You remain responsible for terminating TLS at the proxy and for
 controlling who can reach the proxy, and the proxy must append the client's
 address to `X-Forwarded-For`. Keep the container's network private to the
 proxy; the trusted list stops other peers from being served, but it does not
-replace network-level access control.
+replace network-level access control. List the proxy's own address where you
+can, not the whole container network: with a published port, the container
+runtime can present outside connections as coming from the network's gateway
+address, and a range that includes the gateway would then trust them.
 
 The container workflow also publishes `ghcr.io/forgesworn/spry-standalone` for
 amd64 and arm64. A `v*` release tag publishes that version and `latest`; each
