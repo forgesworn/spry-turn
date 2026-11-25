@@ -145,7 +145,7 @@ def row_failures(row, profile):
             failures.append(f"{key} mismatch")
     if row["offered_requests_per_second"] != profile["rate"]:
         failures.append("offered rate mismatch")
-    if row["answered"] != profile["requests"] or row["unanswered"] or row["stale_responses"]:
+    if row["answered"] != profile["requests"] or row["unanswered"] or row["unexpected_responses"]:
         failures.append("useful work mismatch")
     if row["missed_dispatch_slots"] / profile["requests"] > GUARDS["missed_dispatch_fraction_max"]:
         failures.append("probe missed offered schedule")
@@ -174,6 +174,7 @@ def evaluate_profile(rows):
         "cpu_seconds_per_request": {"ratios": per_request, "median_ratio": statistics.median(per_request)},
         # Diagnostic only: the probe's round trip includes its own scheduling.
         "round_trip_p99_us": {"ratios": p99},
+        "late_answers": {"parent": [p["late_answers"] for p, _ in pairs], "candidate": [c["late_answers"] for _, c in pairs]},
     }
     failures = []
     if max(utilisation) > GUARDS["control_cpu_one_core_delta_max"]:

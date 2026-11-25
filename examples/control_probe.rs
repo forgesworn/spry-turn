@@ -32,6 +32,50 @@ fn transaction(kind: u8, index: u64) -> [u8; 12] {
     transaction
 }
 
+fn timed_out(error: &io::Error) -> bool {
+    matches!(
+        error.kind(),
+        io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+    )
+}
+
+/// Every Binding answer, matched to its request by transaction ID.
+struct Answers {
+    sources: usize,
+    sent: Vec<Instant>,
+    answered: Vec<bool>,
+    outstanding: Vec<u32>,
+    count: u64,
+    late: u64,
+    unexpected: u64,
+    round_trips: Vec<u64>,
+}
+
+impl Answers {
+    /// Records one datagram from socket `index`; true when it answers `current`.
+    fn record(&mut self, index: usize, bytes: &[u8], current: usize) -> bool {
+        let received = Instant::now();
+        let request = Message::parse(bytes)
+            .filter(|m| m.class == 2 && m.method == BINDING && m.transaction[..4] == [2; 4])
+            .map(|m| u64::from_be_bytes(m.transaction[4..].try_into().expect("eight bytes")))
+            .and_then(|k| usize::try_from(k).ok())
+            .filter(|&k| k < self.sent.len() && k % self.sources == index && !self.answered[k]);
+        let Some(k) = request else {
+            self.unexpected += 1;
+            return false;
+        };
+        self.answered[k] = true;
+        self.outstanding[index] -= 1;
+        self.count += 1;
+        self.round_trips
+            .push(received.duration_since(self.sent[k]).as_nanos() as u64);
+        if k != current {
+            self.late += 1;
+        }
+        k == current
+    }
+}
+
 fn challenge(socket: &UdpSocket, index: u64, buffer: &mut [u8]) -> io::Result<Vec<u8>> {
     let id = transaction(1, index);
     let mut b = Builder::new(ALLOCATE, 0, id);
@@ -111,11 +155,17 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         sockets.push(socket);
     }
     let setup_ms = setup.elapsed().as_secs_f64() * 1000.0;
-    let mut answered = 0_u64;
-    let mut unanswered = 0_u64;
-    let mut stale = 0_u64;
+    let mut answers = Answers {
+        sources,
+        sent: Vec::with_capacity(requests),
+        answered: vec![false; requests],
+        outstanding: vec![0; sources],
+        count: 0,
+        late: 0,
+        unexpected: 0,
+        round_trips: Vec::with_capacity(requests),
+    };
     let mut missed_slots = 0_u64;
-    let mut round_trips = Vec::with_capacity(requests);
     let mut lateness = Vec::with_capacity(requests);
     let interval = Duration::from_secs_f64(1.0 / rate as f64);
     let start = Instant::now();
@@ -133,48 +183,53 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         if late >= interval {
             missed_slots += 1;
         }
-        let socket = &sockets[k % sources];
-        let id = transaction(2, k as u64);
-        let mut b = Builder::new(BINDING, 0, id);
+        let index = k % sources;
+        let socket = &sockets[index];
+        let mut b = Builder::new(BINDING, 0, transaction(2, k as u64));
         if mode == Mode::Nonce {
-            b.attr(NONCE, &nonces[k % sources]);
+            b.attr(NONCE, &nonces[index]);
         }
         socket.send(&b.finish(None))?;
-        // Wait for this request's answer until the next one is due. A request
-        // the relay refuses gets no answer; a late answer is counted as stale
-        // when it turns up on its socket later.
-        loop {
-            let Some(left) = next
-                .checked_duration_since(Instant::now())
-                .filter(|left| !left.is_zero())
-            else {
-                unanswered += 1;
-                break;
-            };
+        answers.sent.push(sent);
+        answers.outstanding[index] += 1;
+        // Read this socket's answers until the next request is due. An answer
+        // that arrives later still counts, as a late answer; a request the
+        // relay refuses is never answered.
+        while let Some(left) = next
+            .checked_duration_since(Instant::now())
+            .filter(|left| !left.is_zero())
+        {
             socket.set_read_timeout(Some(left))?;
             match socket.recv(&mut buffer) {
-                Ok(n) => match Message::parse(&buffer[..n]) {
-                    Some(m) if m.transaction == id && m.class == 2 && m.method == BINDING => {
-                        answered += 1;
-                        round_trips.push(sent.elapsed().as_nanos() as u64);
+                Ok(n) => {
+                    if answers.record(index, &buffer[..n], k) {
                         break;
                     }
-                    _ => stale += 1,
-                },
-                Err(error)
-                    if matches!(
-                        error.kind(),
-                        io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
-                    ) =>
-                {
-                    unanswered += 1;
-                    break;
                 }
+                Err(error) if timed_out(&error) => break,
                 Err(error) => return Err(error.into()),
             }
         }
     }
     let elapsed = start.elapsed().as_secs_f64();
+    // Collect answers still in flight when the schedule ended.
+    for (index, socket) in sockets.iter().enumerate() {
+        socket.set_read_timeout(Some(Duration::from_millis(200)))?;
+        while answers.outstanding[index] > 0 {
+            match socket.recv(&mut buffer) {
+                Ok(n) => {
+                    answers.record(index, &buffer[..n], requests);
+                }
+                Err(error) if timed_out(&error) => break,
+                Err(error) => return Err(error.into()),
+            }
+        }
+    }
+    let answered = answers.count;
+    let unanswered = requests as u64 - answered;
+    let late_answers = answers.late;
+    let unexpected = answers.unexpected;
+    let mut round_trips = answers.round_trips;
     round_trips.sort_unstable();
     lateness.sort_unstable();
     let percentile = |values: &[u64], percent: usize| {
@@ -189,7 +244,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         Mode::Nonce => "nonce",
     };
     println!(
-        "{{\"probe\":\"spry-control-probe-v1\",\"mode\":\"{mode_name}\",\"sources\":{sources},\"setup_requests\":{sources},\"requests\":{requests},\"offered_requests_per_second\":{rate},\"answered\":{answered},\"unanswered\":{unanswered},\"stale_responses\":{stale},\"seconds\":{elapsed:.6},\"setup_ms\":{setup_ms:.3},\"round_trip_p50_us\":{:.3},\"round_trip_p99_us\":{:.3},\"dispatch_lateness_p99_us\":{:.3},\"missed_dispatch_slots\":{missed_slots}}}",
+        "{{\"probe\":\"spry-control-probe-v1\",\"mode\":\"{mode_name}\",\"sources\":{sources},\"setup_requests\":{sources},\"requests\":{requests},\"offered_requests_per_second\":{rate},\"answered\":{answered},\"unanswered\":{unanswered},\"late_answers\":{late_answers},\"unexpected_responses\":{unexpected},\"seconds\":{elapsed:.6},\"setup_ms\":{setup_ms:.3},\"round_trip_p50_us\":{:.3},\"round_trip_p99_us\":{:.3},\"dispatch_lateness_p99_us\":{:.3},\"missed_dispatch_slots\":{missed_slots}}}",
         percentile(&round_trips, 50),
         percentile(&round_trips, 99),
         percentile(&lateness, 99),

@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+Changes on `main` since 0.5.0. Not a release: the version is unchanged.
+
+- Add a [bare-metal qualification runbook](docs/bare-metal-qualification.md)
+  and `scripts/bare-metal.py`, which builds the baselines and runs every
+  campaign once on a dedicated Linux machine. A new control-request protocol
+  and probe (`examples/control_probe.rs`) measure what per-source request
+  budgets and the nonce check cost on UDP sources, which the hosted loader
+  does not exercise. The relay and the hosted protocol are unchanged.
+
 ## 0.5.0 (25 November 2026)
 
 Public MIT prerelease through the existing native executable, Android

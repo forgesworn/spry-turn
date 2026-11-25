@@ -22,7 +22,7 @@ performance and explicit compatibility gaps. The source and GitHub prereleases a
 | Reproduce optional performance experiments | [Batching, process scaling and PGO](performance-experiments.md) |
 | Test the actual KithMoot web client with an owner-selected relay | [KithMoot acceptance](kithmoot-acceptance.md) |
 | Review self-hosting goals, publisher boundaries and acceptance gates | [Goals and acceptance](../GOALS.md) |
-| Check recorded transport qualification | [Verification](verification.md), [transport acceptance checklist](../GOALS.md#existing-transport-compatibility-and-acceptance) |
+| Check recorded transport qualification | [Verification](verification.md), [transport acceptance checklist](../GOALS.md#existing-transport-compatibility-and-acceptance), [bare-metal runbook](bare-metal-qualification.md) |
 | Report bugs or support development | [Support and donations](../SUPPORT.md) |
 
 ## Project references

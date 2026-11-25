@@ -14,7 +14,7 @@ spec.loader.exec_module(control)
 def row(profile, arm="parent", pair=1, cpu=0.15):
     return dict(server=arm, pair=pair, mode=profile["mode"], sources=profile["sources"], requests=profile["requests"],
                 setup_requests=profile["sources"], offered_requests_per_second=profile["rate"],
-                answered=profile["requests"], unanswered=0, stale_responses=0, missed_dispatch_slots=0,
+                answered=profile["requests"], unanswered=0, late_answers=0, unexpected_responses=0, missed_dispatch_slots=0,
                 seconds=(profile["requests"] - 1) / profile["rate"] + 0.0001, server_cpu_seconds=cpu,
                 cpu_seconds_per_request=cpu / (profile["requests"] + profile["sources"]), round_trip_p99_us=60)
 
@@ -44,9 +44,9 @@ class ControlQualificationTests(unittest.TestCase):
         data[1]["server_cpu_seconds"] += 0.03
         self.assertTrue(control.evaluate_profile(data)["pass"])
 
-    def test_unanswered_or_stale_requests_invalidate_the_row(self):
+    def test_unanswered_requests_or_unexpected_answers_invalidate_the_row(self):
         profile = control.PROFILES[0]
-        for key, value in (("answered", profile["requests"] - 1), ("unanswered", 1), ("stale_responses", 1)):
+        for key, value in (("answered", profile["requests"] - 1), ("unanswered", 1), ("unexpected_responses", 1)):
             bad = row(profile)
             bad[key] = value
             self.assertIn("useful work mismatch", control.row_failures(bad, profile))
