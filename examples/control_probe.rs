@@ -9,10 +9,15 @@
 //! The probe only talks to loopback or the 198.18.0.0/15 benchmarking range
 //! (RFC 2544). Sources outside loopback need those addresses to be local, for
 //! example `ip route add local 198.18.0.0/16 dev lo` on Linux.
+use mio::{Events, Interest, Poll, Token, net::UdpSocket as MioUdpSocket};
 use spry_turn::wire::*;
 use std::{
     env, io,
     net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, Instant},
 };
 
@@ -34,51 +39,75 @@ fn transaction(kind: u8, index: u64) -> [u8; 12] {
 
 const SPIN: Duration = Duration::from_micros(200);
 
-fn timed_out(error: &io::Error) -> bool {
-    matches!(
-        error.kind(),
-        io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
-    )
-}
-
-/// Every Binding answer, matched to its request by transaction ID.
-struct Answers {
-    sources: usize,
-    sent: Vec<Instant>,
-    answered: Vec<bool>,
-    outstanding: Vec<u32>,
-    count: u64,
-    late: u64,
-    unexpected: u64,
-    round_trips: Vec<u64>,
-}
-
-impl Answers {
-    /// Records one datagram from socket `index`; true when it answers `current`.
-    fn record(&mut self, index: usize, bytes: &[u8], current: usize) -> bool {
-        let received = Instant::now();
-        let request = Message::parse(bytes)
-            .filter(|m| m.class == 2 && m.method == BINDING && m.transaction[..4] == [2; 4])
-            .map(|m| u64::from_be_bytes(m.transaction[4..].try_into().expect("eight bytes")))
-            .and_then(|k| usize::try_from(k).ok())
-            .filter(|&k| k < self.sent.len() && k % self.sources == index && !self.answered[k]);
-        let Some(k) = request else {
-            self.unexpected += 1;
-            return false;
-        };
-        self.answered[k] = true;
-        self.outstanding[index] -= 1;
-        self.count += 1;
-        // A late answer's round trip would measure when its socket was next
-        // read, not the relay, so only answers read while waiting are timed.
-        if k == current {
-            self.round_trips
-                .push(received.duration_since(self.sent[k]).as_nanos() as u64);
-        } else {
-            self.late += 1;
-        }
-        k == current
+/// The request a datagram answers, from its transaction ID.
+fn answers(bytes: &[u8]) -> Option<usize> {
+    let m = Message::parse(bytes)?;
+    if m.class != 2 || m.method != BINDING || m.transaction[..4] != [2; 4] {
+        return None;
     }
+    let k = u64::from_be_bytes(m.transaction[4..].try_into().ok()?);
+    usize::try_from(k).ok()
+}
+
+/// Answer times in nanoseconds after `start`, zero while unanswered.
+struct Received {
+    at: Vec<u64>,
+    unexpected: u64,
+}
+
+/// Reads every socket as soon as it is readable, so the sender never waits
+/// for an answer and a slow answer cannot delay the next request.
+fn receive(
+    mut poll: Poll,
+    sockets: &[MioUdpSocket],
+    requests: usize,
+    start: Instant,
+    sent_all: &AtomicBool,
+) -> io::Result<Received> {
+    let mut events = Events::with_capacity(1024);
+    let mut buffer = vec![0; 2048];
+    let mut received = Received {
+        at: vec![0; requests],
+        unexpected: 0,
+    };
+    let mut count = 0;
+    let mut quiet = None;
+    while count < requests {
+        poll.poll(&mut events, Some(Duration::from_millis(10)))?;
+        let mut read = false;
+        for event in &events {
+            let index = event.token().0;
+            loop {
+                match sockets[index].recv(&mut buffer) {
+                    Ok(n) => {
+                        read = true;
+                        let at = (start.elapsed().as_nanos() as u64).max(1);
+                        match answers(&buffer[..n]).filter(|&k| {
+                            k < requests && k % sockets.len() == index && received.at[k] == 0
+                        }) {
+                            Some(k) => {
+                                received.at[k] = at;
+                                count += 1;
+                            }
+                            None => received.unexpected += 1,
+                        }
+                    }
+                    Err(error) if error.kind() == io::ErrorKind::WouldBlock => break,
+                    Err(error) => return Err(error),
+                }
+            }
+        }
+        // After the last request, stop once nothing has arrived for 200 ms.
+        if sent_all.load(Ordering::Acquire) {
+            if read {
+                quiet = None;
+            } else if quiet.get_or_insert_with(Instant::now).elapsed() >= Duration::from_millis(200)
+            {
+                break;
+            }
+        }
+    }
+    Ok(received)
 }
 
 fn challenge(socket: &UdpSocket, index: u64, buffer: &mut [u8]) -> io::Result<Vec<u8>> {
@@ -160,24 +189,31 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         sockets.push(socket);
     }
     let setup_ms = setup.elapsed().as_secs_f64() * 1000.0;
-    let mut answers = Answers {
-        sources,
-        sent: Vec::with_capacity(requests),
-        answered: vec![false; requests],
-        outstanding: vec![0; sources],
-        count: 0,
-        late: 0,
-        unexpected: 0,
-        round_trips: Vec::with_capacity(requests),
+    let poll = Poll::new()?;
+    let mut probe_sockets = Vec::with_capacity(sources);
+    for (i, socket) in sockets.into_iter().enumerate() {
+        socket.set_nonblocking(true)?;
+        let mut socket = MioUdpSocket::from_std(socket);
+        poll.registry()
+            .register(&mut socket, Token(i), Interest::READABLE)?;
+        probe_sockets.push(socket);
+    }
+    let sockets = Arc::new(probe_sockets);
+    let sent_all = Arc::new(AtomicBool::new(false));
+    let interval = Duration::from_secs_f64(1.0 / rate as f64);
+    // A short lead lets the receiver start polling before the first request.
+    let start = Instant::now() + Duration::from_millis(20);
+    let receiver = {
+        let sockets = Arc::clone(&sockets);
+        let sent_all = Arc::clone(&sent_all);
+        std::thread::spawn(move || receive(poll, &sockets, requests, start, &sent_all))
     };
+    let mut sent_at = Vec::with_capacity(requests);
     let mut missed_slots = 0_u64;
     let mut lateness = Vec::with_capacity(requests);
-    let interval = Duration::from_secs_f64(1.0 / rate as f64);
-    let start = Instant::now();
     for k in 0..requests {
         // Absolute schedule, never reset after a slow or missing response.
         let due = start + Duration::from_secs_f64(k as f64 / rate as f64);
-        let next = start + Duration::from_secs_f64((k + 1) as f64 / rate as f64);
         // Sleep until shortly before the slot, then spin, so a sleep that
         // overshoots by a timer tick does not miss it.
         if let Some(wait) = due
@@ -196,55 +232,34 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             missed_slots += 1;
         }
         let index = k % sources;
-        let socket = &sockets[index];
         let mut b = Builder::new(BINDING, 0, transaction(2, k as u64));
         if mode == Mode::Nonce {
             b.attr(NONCE, &nonces[index]);
         }
-        socket.send(&b.finish(None))?;
-        answers.sent.push(sent);
-        answers.outstanding[index] += 1;
-        // Read this socket's answers until the next request is due. An answer
-        // that arrives later still counts, as a late answer; a request the
-        // relay refuses is never answered.
-        // Stop waiting shortly before the next slot so a timer overshoot here
-        // cannot delay it either.
-        while let Some(left) = next
-            .checked_duration_since(Instant::now())
-            .and_then(|left| left.checked_sub(SPIN))
-            .filter(|left| !left.is_zero())
-        {
-            socket.set_read_timeout(Some(left))?;
-            match socket.recv(&mut buffer) {
-                Ok(n) => {
-                    if answers.record(index, &buffer[..n], k) {
-                        break;
-                    }
-                }
-                Err(error) if timed_out(&error) => break,
-                Err(error) => return Err(error.into()),
-            }
-        }
+        sockets[index].send(&b.finish(None))?;
+        sent_at.push(sent.duration_since(start).as_nanos() as u64);
     }
     let elapsed = start.elapsed().as_secs_f64();
-    // Collect answers still in flight when the schedule ended.
-    for (index, socket) in sockets.iter().enumerate() {
-        socket.set_read_timeout(Some(Duration::from_millis(200)))?;
-        while answers.outstanding[index] > 0 {
-            match socket.recv(&mut buffer) {
-                Ok(n) => {
-                    answers.record(index, &buffer[..n], requests);
-                }
-                Err(error) if timed_out(&error) => break,
-                Err(error) => return Err(error.into()),
-            }
+    sent_all.store(true, Ordering::Release);
+    let received = receiver
+        .join()
+        .map_err(|_| io::Error::other("probe receiver panicked"))??;
+    let mut answered = 0_u64;
+    let mut late_answers = 0_u64;
+    let mut round_trips = Vec::with_capacity(requests);
+    for (k, (&at, &sent)) in received.at.iter().zip(&sent_at).enumerate() {
+        if at == 0 {
+            continue;
+        }
+        answered += 1;
+        round_trips.push(at.saturating_sub(sent));
+        // Answered only after the next request was due.
+        if u128::from(at) * u128::from(rate) > (k as u128 + 1) * 1_000_000_000 {
+            late_answers += 1;
         }
     }
-    let answered = answers.count;
     let unanswered = requests as u64 - answered;
-    let late_answers = answers.late;
-    let unexpected = answers.unexpected;
-    let mut round_trips = answers.round_trips;
+    let unexpected = received.unexpected;
     round_trips.sort_unstable();
     lateness.sort_unstable();
     let percentile = |values: &[u64], percent: usize| {

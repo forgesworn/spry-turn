@@ -90,12 +90,12 @@ Each row starts a fresh relay listening on `198.18.0.1`. The probe
 addresses from `198.18.1.0`. Before timing, each source sends one Allocate
 without credentials and keeps the nonce from the challenge, in both modes.
 The probe then sends Binding requests on an absolute schedule, rotating
-across the sources, and reads answers until the next request is due. It
-sleeps until 200 microseconds before each send and then spins, so it keeps
-one core busy while it runs. An
-answer that arrives after that still counts and is recorded as late; after
-the last request, the probe waits up to 200 ms per source for answers still
-in flight.
+across the sources. It sleeps until 200 microseconds before each send and then
+spins, so it keeps one core busy while it runs. A second thread reads every
+socket as soon as it is readable, so the sender never waits for an answer.
+An answer that arrives after the next request was due still counts and is
+recorded as late. After the last request, the probe stops once no answer has
+arrived for 200 ms.
 
 | Profile | Requests | Rate | Per source | Nonce on each request |
 | --- | ---: | ---: | ---: | --- |
@@ -120,8 +120,8 @@ Binding guards, declared before timing:
   the probe phase's wall time, the same bound as the sparse TCP guard.
 
 CPU per request, late answers and the probe's round-trip p99 are recorded as
-diagnostics only. The round trip is timed only for answers read before the
-next request was due, and includes the probe's own scheduling.
+diagnostics only. The round trip runs from send to receipt in the probe, so it
+includes the probe's own scheduling.
 
 This protocol does not measure floods, refusal paths, IPv6 /64 grouping,
 TCP or TLS sources (verified without a nonce) or WAN conditions.
