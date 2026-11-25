@@ -113,7 +113,9 @@ open. IPv6 sources are grouped by /64 and IPv4-mapped addresses count as
 IPv4. A new connection from a source at its limit is refused in the same way
 as at the total limit, and counted in `refusedStreams`; connections already
 open are not closed. Several sources together can still reach the total
-limit, which also applies.
+limit, which also applies. Clients that reach the relay through one address,
+such as a TLS-terminating proxy on the same host or a shared NAT, count as
+one source.
 
 The allocation limit does not reserve memory or raise the process's file
 descriptor limit. Authentication and stream setup also consume resources.
