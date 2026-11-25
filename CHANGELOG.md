@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+Changes on `main` since 0.4.5. Not a release: the version is unchanged.
+
+- When asked for any free port, the relay now alternates which of UDP and
+  TCP takes the system's offer. Windows offers ports in sequence and
+  reserves them in blocks per protocol, so repeating the same order could
+  be refused on every attempt. A configured port is still tried once.
+
 ## 0.4.5 (24 November 2026)
 
 Public MIT prerelease through the existing native executable, Android

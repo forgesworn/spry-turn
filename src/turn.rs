@@ -601,17 +601,28 @@ impl Server {
 
     /// Binds the UDP listener and a TCP listener on the same port.
     ///
-    /// With port 0 the system offers a UDP port and the same TCP number can
-    /// be held by an unrelated socket, or excluded by Windows, which reports
-    /// that as a permission error. A few fresh offers settle it. A configured
-    /// port is tried once: a clash there is the operator's to resolve.
+    /// With port 0 the system offers a port for one protocol and the same
+    /// number can be held by an unrelated socket for the other, or reserved,
+    /// which Windows reports as a permission error. Windows also offers ports
+    /// in sequence and reserves them in blocks, so asking the same protocol
+    /// again can be refused many times running. Attempts therefore alternate
+    /// which protocol takes the offer. A configured port is tried once: a
+    /// clash there is the operator's to resolve.
     fn bind_listeners(address: SocketAddr) -> io::Result<(UdpSocket, TcpListener)> {
         let attempts = if address.port() == 0 { 8 } else { 1 };
         let mut attempt = 1;
         loop {
-            let listener = Self::bind_listener(address)?;
-            match TcpListener::bind(listener.local_addr()?) {
-                Ok(tcp) => return Ok((listener, tcp)),
+            let bound = if attempt % 2 == 1 {
+                Self::bind_listener(address).and_then(|listener| {
+                    let tcp = TcpListener::bind(listener.local_addr()?)?;
+                    Ok((listener, tcp))
+                })
+            } else {
+                TcpListener::bind(address)
+                    .and_then(|tcp| Ok((Self::bind_listener(tcp.local_addr()?)?, tcp)))
+            };
+            match bound {
+                Ok(pair) => return Ok(pair),
                 Err(error)
                     if attempt < attempts
                         && matches!(

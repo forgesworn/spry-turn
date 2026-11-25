@@ -745,12 +745,22 @@ fn what_the_router_grants_becomes_the_urls_the_map_and_the_caps() {
 fn a_restarted_relay_binds_the_same_ports_again_and_keeps_its_counts() {
     // A loopback port free for both UDP and TCP.
     let mut refused = None;
-    let port = (0..64).find_map(|_| {
-        let found = std::net::TcpListener::bind("127.0.0.1:0").and_then(|tcp| {
-            let port = tcp.local_addr()?.port();
-            std::net::UdpSocket::bind(("127.0.0.1", port))?;
-            Ok(port)
-        });
+    let port = (0..64).find_map(|attempt| {
+        // Windows offers ports in sequence and reserves blocks of them per
+        // protocol, so take the offer from each protocol in turn.
+        let found = if attempt % 2 == 0 {
+            std::net::TcpListener::bind("127.0.0.1:0").and_then(|tcp| {
+                let port = tcp.local_addr()?.port();
+                std::net::UdpSocket::bind(("127.0.0.1", port))?;
+                Ok(port)
+            })
+        } else {
+            std::net::UdpSocket::bind("127.0.0.1:0").and_then(|udp| {
+                let port = udp.local_addr()?.port();
+                std::net::TcpListener::bind(("127.0.0.1", port))?;
+                Ok(port)
+            })
+        };
         match found {
             Ok(port) => (port >= 1024).then_some(port),
             Err(error) => {
