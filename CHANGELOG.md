@@ -1,8 +1,19 @@
 # Changelog
 
-## Unreleased
+## 0.5.0 (25 November 2026)
 
-Changes on `main` since 0.4.5. Not a release: the version is unchanged.
+Public MIT prerelease through the existing native executable, Android
+library and container image channels. It tightens the relay's limits on
+clients that have not yet authenticated: control requests are budgeted by
+source, and one source can hold only half of the TCP and TLS connection
+slots without an allocation. The standalone HTTP API can now sit behind a
+reverse proxy on another container or host. Operators should update, and
+should read the notes on shared addresses below if UDP reaches the relay
+through a forwarder. The library's relay metrics gain two fields. Both
+hosted qualification runs of the request-budget change
+[failed the sparse CPU guard](docs/tcp-pr75-results-2026-11-25.md) and the
+owner accepted it with that disclosed. This release does not deploy a
+hosted relay.
 
 - Control requests now draw on separate budgets by source. TCP and TLS
   connections, loopback, and UDP requests carrying a nonce the relay issued
