@@ -32,6 +32,8 @@ fn transaction(kind: u8, index: u64) -> [u8; 12] {
     transaction
 }
 
+const SPIN: Duration = Duration::from_micros(200);
+
 fn timed_out(error: &io::Error) -> bool {
     matches!(
         error.kind(),
@@ -67,9 +69,12 @@ impl Answers {
         self.answered[k] = true;
         self.outstanding[index] -= 1;
         self.count += 1;
-        self.round_trips
-            .push(received.duration_since(self.sent[k]).as_nanos() as u64);
-        if k != current {
+        // A late answer's round trip would measure when its socket was next
+        // read, not the relay, so only answers read while waiting are timed.
+        if k == current {
+            self.round_trips
+                .push(received.duration_since(self.sent[k]).as_nanos() as u64);
+        } else {
             self.late += 1;
         }
         k == current
@@ -173,9 +178,16 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         // Absolute schedule, never reset after a slow or missing response.
         let due = start + Duration::from_secs_f64(k as f64 / rate as f64);
         let next = start + Duration::from_secs_f64((k + 1) as f64 / rate as f64);
-        let now = Instant::now();
-        if due > now {
-            std::thread::sleep(due - now);
+        // Sleep until shortly before the slot, then spin, so a sleep that
+        // overshoots by a timer tick does not miss it.
+        if let Some(wait) = due
+            .checked_duration_since(Instant::now())
+            .and_then(|wait| wait.checked_sub(SPIN))
+        {
+            std::thread::sleep(wait);
+        }
+        while Instant::now() < due {
+            std::hint::spin_loop();
         }
         let sent = Instant::now();
         let late = sent.saturating_duration_since(due);

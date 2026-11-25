@@ -78,9 +78,9 @@ their own.
 
 ## Control-request protocol
 
-This protocol was declared before any bare-metal measurement. It measures what
+This protocol was declared before any bare-metal measurement. It bounds what
 per-source request budgets and the nonce check add to ordinary control
-traffic. It is not a flood: every rate is inside every budget of both arms, so
+traffic: a pass shows the added cost is below the guard, not its exact size. It is not a flood: every rate is inside every budget of both arms, so
 both answer every request and do the same useful work. Refusals under
 overload are covered by unit tests, not here.
 
@@ -89,7 +89,9 @@ Each row starts a fresh relay listening on `198.18.0.1`. The probe
 addresses from `198.18.1.0`. Before timing, each source sends one Allocate
 without credentials and keeps the nonce from the challenge, in both modes.
 The probe then sends Binding requests on an absolute schedule, rotating
-across the sources, and reads answers until the next request is due. An
+across the sources, and reads answers until the next request is due. It
+sleeps until 200 microseconds before each send and then spins, so it keeps
+one core busy while it runs. An
 answer that arrives after that still counts and is recorded as late; after
 the last request, the probe waits up to 200 ms per source for answers still
 in flight.
@@ -117,7 +119,8 @@ Binding guards, declared before timing:
   the probe phase's wall time, the same bound as the sparse TCP guard.
 
 CPU per request, late answers and the probe's round-trip p99 are recorded as
-diagnostics only. The round trip includes the probe's own scheduling.
+diagnostics only. The round trip is timed only for answers read before the
+next request was due, and includes the probe's own scheduling.
 
 This protocol does not measure floods, refusal paths, IPv6 /64 grouping,
 TCP or TLS sources (verified without a nonce) or WAN conditions.
