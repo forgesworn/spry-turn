@@ -73,6 +73,8 @@ def main():
     spec.loader.exec_module(control)
     if not control.sources_are_local():
         parser.error("198.18.0.0/16 is not local; run `sudo ip route add local 198.18.0.0/16 dev lo` first")
+    if len(os.sched_getaffinity(0)) < 4:
+        parser.error("needs at least four usable cores: the control-request probe keeps one busy")
 
     stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     out = (args.output_dir or repo / ".local/bare-metal" / stamp).resolve()

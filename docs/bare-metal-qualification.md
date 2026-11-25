@@ -54,7 +54,8 @@ python3 scripts/bare-metal.py
 ```
 
 The script refuses to start unless the checkout is clean, the toolchain is
-installed and the benchmarking range is local. Then it:
+installed, the benchmarking range is local and at least four cores are
+usable. Then it:
 
 1. builds each baseline in a temporary worktree and the candidate in the
    checkout, all with `--locked --release --features tls`;
