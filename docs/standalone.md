@@ -105,12 +105,43 @@ operator certificates explicitly. The service still requires its HTTPS reverse
 proxy, reachable relay address and owner configuration described below. Building
 an image does not expose or deploy it.
 
-`spry-node` accepts HTTP only on loopback, inside the container as anywhere
-else. A published port (`-p 3744:3744`) therefore does not reach it: the
-connection is reset. Run the container with host networking, or run the HTTPS
-reverse proxy in the container's own network namespace, so that the proxy
-reaches `127.0.0.1:3744`. Setting `SPRY_HTTP_BIND` to another address refuses
-startup.
+By default `spry-node` accepts HTTP only on loopback, inside the container as
+anywhere else. A published port (`-p 3744:3744`) therefore does not reach it:
+the connection is reset. Run the container with host networking, or run the
+HTTPS reverse proxy in the container's own network namespace, so that the proxy
+reaches `127.0.0.1:3744`. Nothing changes unless you set the two variables
+below.
+
+To reach the HTTP service from a reverse proxy on another container or host,
+bind it to a non-loopback address and name the proxies that may connect:
+
+| Variable | Meaning |
+|---|---|
+| `SPRY_HTTP_BIND` | Address to listen on. Defaults to `127.0.0.1`. Use `0.0.0.0` (or `::`) inside a container whose address is not known in advance. |
+| `SPRY_HTTP_TRUSTED_PROXIES` | Comma-separated IP addresses and CIDR ranges of the reverse proxies. Required when `SPRY_HTTP_BIND` is not loopback, and refused when it is. |
+
+Startup is refused if a non-loopback bind has no list. The list must name
+proxies, not networks: `0.0.0.0/0`, `::/0`, unspecified addresses and ranges
+wider than `/8` (IPv4) or `/32` (IPv6) are refused. A connection from any
+address outside the list is closed before a request is read. Only a listed
+proxy is believed about the caller: the rate limiter then keys on the
+right-most `X-Forwarded-For` entry, the one that proxy appended, and falls
+back to the proxy's own address if the header is missing or unreadable.
+Earlier entries are ignored.
+
+```sh
+docker run --rm --network app-net \
+  -e SPRY_HTTP_BIND=0.0.0.0 \
+  -e SPRY_HTTP_TRUSTED_PROXIES=192.0.2.0/24 \
+  localhost/spry-standalone:dev
+```
+
+The image still does not `EXPOSE` port 3744, and publishing it is your
+decision. You remain responsible for terminating TLS at the proxy and for
+controlling who can reach the proxy, and the proxy must append the client's
+address to `X-Forwarded-For`. Keep the container's network private to the
+proxy; the trusted list stops other peers from being served, but it does not
+replace network-level access control.
 
 The container workflow also publishes `ghcr.io/forgesworn/spry-standalone` for
 amd64 and arm64. A `v*` release tag publishes that version and `latest`; each
@@ -172,7 +203,8 @@ instead: no HTTP listener, room grants over `spry:` control only, sealed,
 with every address and port supplied by the supervisor.
 
 `spry-node` listens on loopback HTTP port 3744 behind the operator's HTTPS
-reverse proxy. That proxy must append or set `X-Forwarded-For`: requests
+reverse proxy (or, with `SPRY_HTTP_TRUSTED_PROXIES`, on another address; see
+[Container image](#container-image)). That proxy must append or set `X-Forwarded-For`: requests
 are rate-limited per caller before authentication, keyed on the right-most
 entry (IPv6 grouped by /64), and without the header every caller shares the
 proxy's one allowance. That table tracks 256 callers a minute; when it is

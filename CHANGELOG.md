@@ -8,6 +8,14 @@ Changes on `main` since 0.4.5. Not a release: the version is unchanged.
   TCP takes the system's offer. Windows offers ports in sequence and
   reserves them in blocks per protocol, so repeating the same order could
   be refused on every attempt. A configured port is still tried once.
+- Let the standalone HTTP API be reached from a reverse proxy on another
+  container or host. Setting `SPRY_HTTP_BIND` beyond loopback now needs
+  `SPRY_HTTP_TRUSTED_PROXIES`, a list of proxy addresses and CIDR ranges;
+  startup is refused without it, and for `0.0.0.0/0`, `::/0` and other
+  very wide ranges. Connections from other addresses are closed, and only a
+  listed proxy's right-most `X-Forwarded-For` entry keys the rate limiter.
+  With neither variable set, the service stays on loopback as before. The
+  image still does not expose port 3744.
 
 ## 0.4.5 (24 November 2026)
 
