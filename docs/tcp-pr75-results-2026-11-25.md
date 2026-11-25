@@ -1,8 +1,8 @@
 # Qualification of the request-budget change, 25 November 2026
 
-**Both hosted runs failed the sparse CPU guard. The change has not been
-accepted: that decision is the owner's, and neither result was relabelled or
-rerun to pass.** The change gives address-verified sources and other UDP
+**Both hosted runs failed the sparse CPU guard. The owner accepted the change
+on 25 November 2026 with these results disclosed; neither result was
+relabelled or rerun to pass.** The change gives address-verified sources and other UDP
 sources separate control-request budgets with per-address allowances, and
 shortens the relay nonce. It does not touch the payload path (ChannelData,
 Send and Data indications).

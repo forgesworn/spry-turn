@@ -450,8 +450,8 @@ Open product decisions:
   [failed guards and were accepted by the owner](docs/tcp-pr63-results-2026-11-24.md);
   include that change in the bare-metal run. Two runs of the request-budget
   change on 25 November 2026
-  [failed the sparse CPU guard](docs/tcp-pr75-results-2026-11-25.md); the
-  hosted loader does not exercise its UDP nonce check, so measure that there
+  [failed the sparse CPU guard and were accepted by the owner](docs/tcp-pr75-results-2026-11-25.md);
+  the hosted loader does not exercise its UDP nonce check, so measure that there
   too.
 
 TCP relay allocations (RFC 6062), DTLS client transport, database integrations,
