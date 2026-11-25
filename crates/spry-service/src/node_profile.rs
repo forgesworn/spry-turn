@@ -414,10 +414,18 @@ mod tests {
         let mut config =
             spry_turn::turn::Config::local(b"synthetic-test-secret-not-for-deployment".to_vec());
         let mut bound = None;
-        for _ in 0..8 {
-            let reservation = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
-            config.listen = reservation.local_addr().unwrap();
-            drop(reservation);
+        for attempt in 0..8 {
+            // Windows offers ports in sequence and reserves blocks of them per
+            // protocol, so take the offer from each protocol in turn.
+            config.listen = if attempt % 2 == 0 {
+                std::net::UdpSocket::bind("127.0.0.1:0")
+                    .and_then(|socket| socket.local_addr())
+                    .unwrap()
+            } else {
+                std::net::TcpListener::bind("127.0.0.1:0")
+                    .and_then(|socket| socket.local_addr())
+                    .unwrap()
+            };
             match Relay::start(
                 config.clone(),
                 state.clone(),
