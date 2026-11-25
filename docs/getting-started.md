@@ -14,7 +14,7 @@ cd spry-turn
 ```
 
 Source is the portable installation path. Cargo and npm publication are
-disabled. The public v0.4.5 GitHub prerelease carries both executables
+disabled. The public v0.5.0 GitHub prerelease carries both executables
 (`spry-turn` and `spry-node`) for macOS arm64, Windows x64 (unsigned) and
 Linux x64 and arm64, the Android library, the exact source,
 `release-manifest.json` and `SHA256SUMS`; see
@@ -22,7 +22,7 @@ Linux x64 and arm64, the Android library, the exact source,
 it in an empty directory:
 
 ```sh
-gh release download v0.4.5 --repo forgesworn/spry-turn
+gh release download v0.5.0 --repo forgesworn/spry-turn
 shasum -a 256 -c SHA256SUMS
 ```
 
@@ -31,7 +31,7 @@ attestation; check one with
 `gh attestation verify <file> --repo forgesworn/spry-turn`. Releases up to
 v0.4.2 have checksums only.
 
-[Download v0.4.5](https://github.com/forgesworn/spry-turn/releases/tag/v0.4.5).
+[Download v0.5.0](https://github.com/forgesworn/spry-turn/releases/tag/v0.5.0).
 WASM is a source build.
 The older [v0.4.3](https://github.com/forgesworn/spry-turn/releases/tag/v0.4.3),
 [v0.4.2](https://github.com/forgesworn/spry-turn/releases/tag/v0.4.2),
