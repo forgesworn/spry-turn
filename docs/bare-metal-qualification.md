@@ -105,6 +105,9 @@ arrived for 200 ms.
 
 The smallest shared budget in either arm is 2,000 a second. The smallest
 per-source allowance is 5 a second, for unverified sources in the candidate.
+Those allowances live in 4,096 hashed slots, so sources can share one; at
+1 a second each, six sources would have to share a slot before any request
+was refused.
 
 Each profile runs four pairs in the order AB, BA, AB, BA, where A is the
 baseline and B the candidate. There are no row replacements, outlier
