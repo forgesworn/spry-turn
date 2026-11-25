@@ -207,8 +207,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         // Read this socket's answers until the next request is due. An answer
         // that arrives later still counts, as a late answer; a request the
         // relay refuses is never answered.
+        // Stop waiting shortly before the next slot so a timer overshoot here
+        // cannot delay it either.
         while let Some(left) = next
             .checked_duration_since(Instant::now())
+            .and_then(|left| left.checked_sub(SPIN))
             .filter(|left| !left.is_zero())
         {
             socket.set_read_timeout(Some(left))?;

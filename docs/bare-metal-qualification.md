@@ -38,7 +38,8 @@ sudo ip route add local 198.18.0.0/16 dev lo
 
 The toolchain is the one the hosted campaigns pinned. Python 3, a C linker,
 `openssl` (for the TLS profile's test certificate) and `file` must be
-installed.
+installed, along with `ps` (procps), which the TCP harness uses to sample
+memory.
 
 The route makes every address in `198.18.0.0/16`, the benchmarking range of
 RFC 2544, local to the machine. The control-request probe needs this because
