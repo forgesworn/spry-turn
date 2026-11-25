@@ -29,6 +29,7 @@ fuzz_target!(|data: &[u8]| {
     let _ = wire::decode_address(data, &transaction);
     let nonces = auth::Nonces::from_key([0x23; 32]);
     let ip = IpAddr::V4(Ipv4Addr::LOCALHOST);
+    let _ = nonces.check(data, 1_000, ip, "generated fuzz realm");
     let _ = nonces.valid(data, 1_000, ip, "generated fuzz realm");
     if let Ok(username) = std::str::from_utf8(data) {
         let _ = auth::expires(username);
