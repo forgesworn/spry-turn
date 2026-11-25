@@ -1699,7 +1699,8 @@ impl Server {
                 None => self.requests.take_above(1, VERIFIED_RESERVE, now),
             };
             if !admitted {
-                self.transport.verified_request_refusals += 1;
+                self.transport.verified_request_refusals =
+                    self.transport.verified_request_refusals.saturating_add(1);
             }
             admitted
         } else {
@@ -1714,7 +1715,8 @@ impl Server {
                 None => false,
             };
             if !admitted {
-                self.transport.unverified_request_refusals += 1;
+                self.transport.unverified_request_refusals =
+                    self.transport.unverified_request_refusals.saturating_add(1);
             }
             admitted
         }
