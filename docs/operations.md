@@ -97,12 +97,51 @@ profile does not read these settings. See
 The server additionally bounds peer entries, stream queues and control
 request rate in code. It has no per-room or application membership policy.
 
-Control requests from every source share one budget of 2,000 a second (burst
-4,000), which bounds the integrity checks a flood can cause. A client that
-already holds an allocation first draws on its own budget of 10 a second
-(burst 30), so its refreshes and permissions do not depend on what other
-sources send. New clients share the common budget. Relayed payload does not
-use either budget.
+Control requests draw on three budgets, which bound the integrity checks
+they can cause:
+
+- A client that already holds an allocation first draws on its own budget of
+  10 a second (burst 30), so its refreshes and permissions do not depend on
+  what other sources send.
+- TCP and TLS connections, loopback, and UDP requests that carry a nonce this
+  relay issued to that address within the last 10 minutes share one budget of
+  2,000 a second (burst 6,000). Each address has an allowance of 20 a
+  second (burst 40) within it. The allowance is soft: an address over it may
+  still use whatever the budget holds above 2,000 requests, so one address
+  on its own can use the whole refill. When the budget runs low, addresses
+  within their allowance keep priority: refill restores the 2,000 reserve
+  before an address over its allowance can draw again.
+- Every other UDP request, which includes a client's first request to a
+  relay, shares a separate budget of 2,000 a second (burst 2,000). Each
+  address, or IPv6 /64, may use at most 5 a second (burst 20) of it. A client
+  needs one such request when it first contacts the relay and then holds a
+  nonce for 10 minutes. Clients that offer TCP or TLS as well as UDP are not
+  affected by the UDP budget when they use those transports.
+
+IPv4-mapped IPv6 addresses count as IPv4, and other IPv6 addresses are
+grouped by /64. Per-address allowances live in two fixed tables of 4,096
+slots each, allocated at startup: addresses that hash to the same slot share
+an allowance, and memory does not grow with the number of addresses seen.
+Requests refused by these budgets are dropped without a reply and counted by
+the library's `relay_metrics()` as `unverified_request_refusals` and
+`verified_request_refusals`; the HTTP status does not report them.
+Relayed payload, ChannelData and Send indications use none of these
+budgets. The challenge a relay sends in reply
+to a request without credentials is 88 bytes plus the realm, rounded up to a
+multiple of four, so a short realm keeps it small.
+
+UDP must reach the relay with client source addresses preserved, for
+example by using host networking. Behind a forwarder that rewrites every
+source to one address, all new UDP clients share one address's allowance for
+unconfirmed sources, and clients are also told the wrong reflexive address.
+
+Where the relay does not see real client addresses, clients share an
+address and so share its allowances. This applies to a UDP proxy, to some
+container runtimes' published ports, to a large shared NAT, and to clients
+behind a TCP or SNI proxy, which all appear as the proxy's address. In
+particular, all new UDP clients behind one such address share the
+per-address allowance for requests without a nonce: 5 a second, burst 20.
+Clients that already hold a nonce are not held to it.
 
 A TCP/TLS connection without an allocation is closed after 15 seconds, and
 `--max-connections` is shared by every source. One source may also hold at

@@ -4,6 +4,24 @@
 
 Changes on `main` since 0.4.5. Not a release: the version is unchanged.
 
+- Control requests now draw on separate budgets by source. TCP and TLS
+  connections, loopback, and UDP requests carrying a nonce the relay issued
+  to that address share 2,000 a second (burst 6,000). Each address has a
+  soft allowance of 20 a second (burst 40) within it: addresses within it
+  keep priority when the budget runs low, and an address over it may still
+  use what the budget holds above a 2,000 reserve. Other UDP
+  requests, including a client's first, share 2,000 a second (burst 2,000),
+  with each address or IPv6 /64 held to 5 a second (burst 20). Clients with
+  an allocation keep their own budget of 10 a second. Per-address state is
+  two fixed tables allocated at startup. All new UDP clients behind one
+  address, such as a UDP proxy or a large shared NAT, share that address's
+  allowance for requests without a nonce. Refusals are counted as
+  `unverified_request_refusals` and `verified_request_refusals` in the
+  library's relay metrics; they are not added to the HTTP status.
+- Relay nonces are now 32 characters rather than 38, so the challenge to a
+  request without credentials is 100 bytes rather than 108. Clients treat
+  nonces as opaque. Nonces issued before an upgrade are no longer accepted,
+  as after any restart.
 - When asked for any free port, the relay now alternates which of UDP and
   TCP takes the system's offer. Windows offers ports in sequence and
   reserves them in blocks per protocol, so repeating the same order could

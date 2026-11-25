@@ -58,7 +58,7 @@ loopback-only listener; embedding hosts must enforce the same policy.
 | `server.local_addr()` | `io::Result<SocketAddr>` |
 | `server.poll_once(timeout: Duration)` | `io::Result<()>`; processes readiness and expiry work |
 | `server.stats()` | Copy of `limits::Stats` aggregate counters |
-| `server.relay_metrics()` | Copy of `turn::RelayMetrics`: UDP/stream allocation gauges, open streams, per-transport forwarded payload bytes, forwarded/dropped packets, stream errors and separate connection/allocation capacity refusals |
+| `server.relay_metrics()` | Copy of `turn::RelayMetrics`: UDP/stream allocation gauges, open streams, per-transport forwarded payload bytes, forwarded/dropped packets, stream errors, separate connection/allocation capacity refusals and request refusals by budget |
 | `server.allocation_count()` | Current number of allocations |
 | `server.last_remote_allocation()` | Unix seconds of the newest allocation from a non-local client address (`turn::remote_client`), or `None`; the time only, never the address |
 | `turn::unix_time()` | Current epoch seconds |
@@ -136,7 +136,9 @@ Sources: [src/wire.rs](../src/wire.rs), [src/auth.rs](../src/auth.rs).
 - `auth::key(username, realm, password) -> [u8; 16]`: long-term integrity key.
 - `auth::expires(username) -> Option<u64>`: parse the expiry prefix.
 - `auth::Nonces`: issue and validate time-, IP- and realm-bound nonces;
-  `new()` uses OS randomness when `runtime` is enabled.
+  `check()` is a cheaper keyed test that a nonce was issued for an address
+  and has not expired, used to classify requests, and `valid()` is the
+  authoritative one. `new()` uses OS randomness when `runtime` is enabled.
 
 Parsing and integrity verification do not themselves grant a peer
 permission, allocate a relay or enforce the application's membership.
