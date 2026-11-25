@@ -304,7 +304,7 @@ performance and explicit compatibility gaps. The source and GitHub prereleases a
 | Reproduce optional performance experiments | [Batching, process scaling and PGO](https://github.com/forgesworn/spry-turn/blob/main/docs/performance-experiments.md) |
 | Test the actual KithMoot web client with an owner-selected relay | [KithMoot acceptance](https://github.com/forgesworn/spry-turn/blob/main/docs/kithmoot-acceptance.md) |
 | Review self-hosting goals, publisher boundaries and acceptance gates | [Goals and acceptance](https://github.com/forgesworn/spry-turn/blob/main/GOALS.md) |
-| Check recorded transport qualification | [Verification](https://github.com/forgesworn/spry-turn/blob/main/docs/verification.md), [transport acceptance checklist](https://github.com/forgesworn/spry-turn/blob/main/GOALS.md#existing-transport-compatibility-and-acceptance) |
+| Check recorded transport qualification | [Verification](https://github.com/forgesworn/spry-turn/blob/main/docs/verification.md), [transport acceptance checklist](https://github.com/forgesworn/spry-turn/blob/main/GOALS.md#existing-transport-compatibility-and-acceptance), [bare-metal runbook](https://github.com/forgesworn/spry-turn/blob/main/docs/bare-metal-qualification.md) |
 | Report bugs or support development | [Support and donations](https://github.com/forgesworn/spry-turn/blob/main/SUPPORT.md) |
 
 ## Project references
@@ -4287,7 +4287,9 @@ Open product decisions:
   change on 25 November 2026
   [failed the sparse CPU guard and were accepted by the owner](https://github.com/forgesworn/spry-turn/blob/main/docs/tcp-pr75-results-2026-11-25.md);
   the hosted loader does not exercise its UDP nonce check, so measure that there
-  too.
+  too. The [bare-metal runbook](https://github.com/forgesworn/spry-turn/blob/main/docs/bare-metal-qualification.md) runs every
+  campaign with one command and adds a control-request protocol for the nonce
+  check.
 
 TCP relay allocations (RFC 6062), DTLS client transport, database integrations,
 OAuth, telnet/HTTP administration and clustering are outside the first release.
@@ -4311,6 +4313,17 @@ Do not silently remove transport support required by existing clients.
 Canonical source: [CHANGELOG.md](https://github.com/forgesworn/spry-turn/blob/main/CHANGELOG.md)
 
 # Changelog
+
+## Unreleased
+
+Changes on `main` since 0.5.0. Not a release: the version is unchanged.
+
+- Add a [bare-metal qualification runbook](https://github.com/forgesworn/spry-turn/blob/main/docs/bare-metal-qualification.md)
+  and `scripts/bare-metal.py`, which builds the baselines and runs every
+  campaign once on a dedicated Linux machine. A new control-request protocol
+  and probe (`examples/control_probe.rs`) measure what per-source request
+  budgets and the nonce check cost on UDP sources, which the hosted loader
+  does not exercise. The relay and the hosted protocol are unchanged.
 
 ## 0.5.0 (25 November 2026)
 
