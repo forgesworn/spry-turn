@@ -22,6 +22,7 @@ receipt, do not rerun it to obtain a pass, and leave acceptance to the owner.
   host. Stop other workloads first: every row starts with an idle probe, and
   the host guards are the same as in the
   [hosted protocol](tcp-hosted-qualification-2026-11-11.md).
+- At least four cores. The control-request probe keeps one busy.
 - Root access once, to make the benchmarking range local (see below).
 - Nothing is exposed to a network. The relays listen only on `127.0.0.1` and
   `198.18.0.1`, and all traffic stays on the machine.
@@ -90,8 +91,8 @@ Each row starts a fresh relay listening on `198.18.0.1`. The probe
 addresses from `198.18.1.0`. Before timing, each source sends one Allocate
 without credentials and keeps the nonce from the challenge, in both modes.
 The probe then sends Binding requests on an absolute schedule, rotating
-across the sources. It sleeps until 200 microseconds before each send and then
-spins, so it keeps one core busy while it runs. A second thread reads every
+across the sources. It spins between sends rather than sleeping, because a
+sleep can overshoot by a whole slot, so it keeps one core busy while it runs. A second thread reads every
 socket as soon as it is readable, so the sender never waits for an answer.
 An answer that arrives after the next request was due still counts and is
 recorded as late. After the last request, the probe stops once no answer has

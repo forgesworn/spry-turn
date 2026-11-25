@@ -194,6 +194,8 @@ def main():
         parser.error("requires Linux and a fresh output path; failed receipts must be preserved")
     if not re.fullmatch(r"[0-9a-f]{40}", args.parent_source):
         parser.error("parent source must be a full commit SHA")
+    if len(os.sched_getaffinity(0)) < 4:
+        parser.error("needs at least four usable cores: the probe keeps one busy")
     if not sources_are_local():
         parser.error("198.18.0.0/16 is not local; run `sudo ip route add local 198.18.0.0/16 dev lo` first")
     head = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()

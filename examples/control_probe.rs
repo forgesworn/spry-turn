@@ -37,8 +37,6 @@ fn transaction(kind: u8, index: u64) -> [u8; 12] {
     transaction
 }
 
-const SPIN: Duration = Duration::from_micros(200);
-
 /// The request a datagram answers, from its transaction ID.
 fn answers(bytes: &[u8]) -> Option<usize> {
     let m = Message::parse(bytes)?;
@@ -214,14 +212,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     for k in 0..requests {
         // Absolute schedule, never reset after a slow or missing response.
         let due = start + Duration::from_secs_f64(k as f64 / rate as f64);
-        // Sleep until shortly before the slot, then spin, so a sleep that
-        // overshoots by a timer tick does not miss it.
-        if let Some(wait) = due
-            .checked_duration_since(Instant::now())
-            .and_then(|wait| wait.checked_sub(SPIN))
-        {
-            std::thread::sleep(wait);
-        }
+        // Spin rather than sleep: a sleep can overshoot by a timer tick, which
+        // at 1,000 a second is a whole slot.
         while Instant::now() < due {
             std::hint::spin_loop();
         }
