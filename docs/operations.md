@@ -105,7 +105,17 @@ sources send. New clients share the common budget. Relayed payload does not
 use either budget.
 
 A TCP/TLS connection without an allocation is closed after 15 seconds, and
-`--max-connections` is shared by every source.
+`--max-connections` is shared by every source. One source may also hold at
+most half of `--max-connections` (rounded down, at least one) connections
+that have no allocation. A connection stops counting once it holds an
+allocation, and counts again if that allocation ends while the stream stays
+open. IPv6 sources are grouped by /64 and IPv4-mapped addresses count as
+IPv4. A new connection from a source at its limit is refused in the same way
+as at the total limit, and counted in `refusedStreams`; connections already
+open are not closed. Several sources together can still reach the total
+limit, which also applies. Clients that reach the relay through one address,
+such as a TLS-terminating proxy on the same host or a shared NAT, count as
+one source.
 
 The allocation limit does not reserve memory or raise the process's file
 descriptor limit. Authentication and stream setup also consume resources.

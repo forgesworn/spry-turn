@@ -532,6 +532,25 @@ pub struct Server {
     last_remote_allocation: Option<u64>,
 }
 
+/// Most connections without an allocation that one source may hold: half of
+/// `max_connections`, rounded down, and at least one.
+fn unauthenticated_cap(max_connections: usize) -> usize {
+    (max_connections / 2).max(1)
+}
+
+/// The key under which connections from one source share a cap. IPv4-mapped
+/// IPv6 addresses count as IPv4, and other IPv6 addresses are grouped by /64,
+/// matching how the service groups callers for its own rate limits.
+fn connection_source(ip: IpAddr) -> IpAddr {
+    match ip.to_canonical() {
+        IpAddr::V6(ip) => {
+            let [a, b, c, d, ..] = ip.segments();
+            IpAddr::V6(std::net::Ipv6Addr::new(a, b, c, d, 0, 0, 0, 0))
+        }
+        ip => ip,
+    }
+}
+
 /// Whether an allocation's client address counts as someone else's device:
 /// not loopback, unspecified, private, link-local or unique-local, and not
 /// this relay's own bind or advertised address (a host reaching its own relay
@@ -1191,6 +1210,29 @@ impl Server {
         }
     }
 
+    /// Whether `ip`'s source already holds its share of connections that have
+    /// no allocation. The share is half of `max_connections` (at least one),
+    /// so one source cannot hold more than half the table unauthenticated.
+    /// A connection stops counting when it gains an allocation and counts
+    /// again if that allocation ends while the stream stays open. The count
+    /// is derived from the live connection table, so there is no separate
+    /// counter to leak. Runs on accept only, never per packet.
+    fn source_at_unauthenticated_cap(&self, ip: IpAddr) -> bool {
+        let cap = unauthenticated_cap(self.config.max_connections);
+        if self.connections.len() < cap {
+            return false;
+        }
+        let source = connection_source(ip);
+        self.connections
+            .iter()
+            .filter(|(token, conn)| {
+                connection_source(conn.peer.ip()) == source
+                    && !self.allocations.contains_key(&Client::Stream(**token))
+            })
+            .count()
+            >= cap
+    }
+
     fn accept(&mut self, listener: Token) {
         loop {
             let accepted = if listener == TCP {
@@ -1214,6 +1256,10 @@ impl Server {
                 Err(_) => break,
             };
             if self.connections.len() >= self.config.max_connections {
+                self.transport.refused_streams = self.transport.refused_streams.saturating_add(1);
+                continue;
+            }
+            if self.source_at_unauthenticated_cap(peer.ip()) {
                 self.transport.refused_streams = self.transport.refused_streams.saturating_add(1);
                 continue;
             }
