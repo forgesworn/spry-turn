@@ -51,6 +51,11 @@ required-features = ["runtime"]
 name = "load"
 required-features = ["runtime", "turn"]
 
+[[example]]
+name = "control-probe"
+path = "examples/control_probe.rs"
+required-features = ["runtime", "turn"]
+
 [profile.release]
 lto = true
 codegen-units = 1
