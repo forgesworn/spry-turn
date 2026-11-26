@@ -10,6 +10,11 @@ Changes on `main` since 0.5.0. Not a release: the version is unchanged.
   and probe (`examples/control_probe.rs`) bound what per-source request
   budgets and the nonce check cost on UDP sources, which the hosted loader
   does not exercise. The relay and the hosted protocol are unchanged.
+- Fix a race in the
+  `batch_output_first_large_pending_write_keeps_loan_when_next_batch_fails`
+  unit test. On a loaded macOS machine the kernel could free send room after
+  the test's socket first blocked, so the large frame it expects to stay
+  pending was written whole. The relay is unchanged.
 
 ## 0.5.0 (25 November 2026)
 

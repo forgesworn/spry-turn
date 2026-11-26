@@ -268,8 +268,12 @@ fn batch_output_first_large_pending_write_keeps_loan_when_next_batch_fails() {
     socket2::SockRef::from(&clients[0])
         .set_recv_buffer_size(4096)
         .unwrap();
+    // The first WouldBlock is not a stable full state everywhere: macOS goes
+    // on moving loopback bytes into the receiver after it, freeing tens of
+    // KiB, and a delayed test thread could then write the large frame below
+    // whole. Fill until the socket stays blocked across short pauses.
     let block = [0x5a; 4096];
-    let mut blocked = false;
+    let mut blocked = 0;
     for _ in 0..8192 {
         match server
             .connections
@@ -278,23 +282,34 @@ fn batch_output_first_large_pending_write_keeps_loan_when_next_batch_fails() {
             .socket
             .write(&block)
         {
-            Ok(_) => (),
+            Ok(_) => blocked = 0,
             Err(error) if error.kind() == io::ErrorKind::Interrupted => (),
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                blocked = true;
-                break;
+                blocked += 1;
+                if blocked == 3 {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(10));
             }
             Err(error) => panic!("socket fill failed: {error}"),
         }
     }
-    assert!(blocked, "bounded socket fill must reach backpressure");
+    assert_eq!(
+        blocked, 3,
+        "bounded socket fill must reach stable backpressure"
+    );
     server.tcp_return_output = Vec::with_capacity(TCP_RETURN_BATCH_BYTES);
     let shared_pointer = server.tcp_return_output.as_ptr();
     let own_pointer = server.connections[&token].output.as_ptr();
     let mut dispatch = PeerReturnDispatch::new();
     assert!(server.send_peer_return(key, &vec![0x42; 9004], 9000, &mut dispatch));
     let conn = &server.connections[&token];
-    assert!(conn.output.len() > conn.written);
+    assert!(
+        conn.output.len() > conn.written,
+        "the large frame must stay partly pending: output {}, written {}",
+        conn.output.len(),
+        conn.written
+    );
     assert_eq!(conn.output.as_ptr(), shared_pointer);
     assert_eq!(server.tcp_return_output.as_ptr(), own_pointer);
     assert_eq!(server.stats.forwarded_packets, 1);
