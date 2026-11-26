@@ -454,7 +454,8 @@ Open product decisions:
   the hosted loader does not exercise its UDP nonce check, so measure that there
   too. The [bare-metal runbook](docs/bare-metal-qualification.md) runs every
   campaign with one command and adds a control-request protocol for the nonce
-  check.
+  check. The owner confirmed that protocol on 26 November 2026, before any
+  bare-metal run.
 
 TCP relay allocations (RFC 6062), DTLS client transport, database integrations,
 OAuth, telnet/HTTP administration and clustering are outside the first release.
