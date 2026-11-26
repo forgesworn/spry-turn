@@ -47,11 +47,37 @@ RFC 2544, local to the machine. The control-request probe needs this because
 the relay treats loopback sources as already verified. The route lasts until
 reboot; remove it sooner with `sudo ip route del local 198.18.0.0/16 dev lo`.
 
+These scripts arrived after 0.5.0, so qualify that release from a later
+commit with the same relay. `git diff --stat v0.5.0 <commit> -- src crates
+Cargo.lock Cargo.toml` should list nothing beyond the `control-probe` example
+entry in `Cargo.toml`.
+
+## Quiet the machine
+
+Every campaign runs once, and a row disturbed partway through stands as a
+result. The idle probe at the start of each row catches load that is already
+running, not a job that starts later, so clear the next three hours first:
+
+1. List scheduled work: `systemctl list-timers --all` on systemd machines,
+   then `crontab -l`, `sudo crontab -l`, `/etc/crontab` and `/etc/cron.*`.
+2. Stop anything due in that window, including automatic package updates.
+   `sudo systemctl stop <name>.timer` holds a timer until you start it again
+   or reboot. Stop the cron service for the run; it is `cron` or `crond`,
+   depending on the distribution.
+3. Stop other services that do periodic work, such as backups, monitoring
+   agents and containers.
+
+Afterwards, start again what you stopped, or reboot, which also removes the
+route.
+
 ## Run
 
 ```sh
 python3 scripts/bare-metal.py
 ```
+
+Start it inside `tmux` or `screen`, so a dropped connection does not stop it,
+and leave the machine alone until it finishes.
 
 The script refuses to start unless the checkout is clean, the toolchain is
 installed, the benchmarking range is local and at least four cores are
@@ -81,9 +107,14 @@ their own.
 
 ## Control-request protocol
 
-This protocol was declared before any bare-metal measurement. It bounds what
-per-source request budgets and the nonce check add to ordinary control
-traffic: a pass shows the added cost is below the guard, not its exact size. It is not a flood: every rate is inside every budget of both arms, so
+This protocol was declared before any bare-metal measurement. The owner
+confirmed it on 26 November 2026, together with the baselines above and the
+four-core minimum. Its late-answer guard was added after a disturbed row in a
+container test of the probe, before any bare-metal data.
+
+It bounds what per-source request budgets and the nonce check add to ordinary
+control traffic: a pass shows the added cost is below the guard, not its exact
+size. It is not a flood: every rate is inside every budget of both arms, so
 both answer every request and do the same useful work. Refusals under
 overload are covered by unit tests, not here.
 
