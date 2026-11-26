@@ -4330,6 +4330,11 @@ Changes on `main` since 0.5.0. Not a release: the version is unchanged.
   unit test. On a loaded macOS machine the kernel could free send room after
   the test's socket first blocked, so the large frame it expects to stay
   pending was written whole. The relay is unchanged.
+- Fix the `parent_lifetime` test fixture on Windows. It took a free port
+  for TCP and then bound UDP to it, and stopped if Windows refused that
+  port as reserved. It now retries that refusal and alternates which
+  protocol takes the offer, as the relay itself does. The relay is
+  unchanged.
 
 ## 0.5.0 (25 November 2026)
 

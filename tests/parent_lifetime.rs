@@ -55,19 +55,39 @@ fn command() -> Command {
 }
 
 fn listener_address() -> std::net::SocketAddr {
-    for _ in 0..16 {
-        // UDP :0 may select a port already occupied in the independent TCP
-        // namespace, including TIME_WAIT. Preflight both while holding guards;
+    let mut refused = None;
+    for attempt in 0..16 {
+        // A port offered for one protocol may already be held in the other's
+        // independent namespace, including TIME_WAIT, or reserved, which
+        // Windows reports as a permission error. Windows also offers ports in
+        // sequence and reserves them in blocks per protocol, so take the offer
+        // from each protocol in turn. Preflight both while holding guards;
         // release them only when returning the address for the child to bind.
-        let tcp = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = tcp.local_addr().unwrap();
-        match std::net::UdpSocket::bind(address) {
-            Ok(_udp) => return address,
-            Err(error) if error.kind() == std::io::ErrorKind::AddrInUse => continue,
-            Err(error) => panic!("fixture UDP bind failed: {error}"),
+        let joint = if attempt % 2 == 0 {
+            std::net::TcpListener::bind("127.0.0.1:0").and_then(|tcp| {
+                let address = tcp.local_addr()?;
+                std::net::UdpSocket::bind(address).map(|_udp| address)
+            })
+        } else {
+            std::net::UdpSocket::bind("127.0.0.1:0").and_then(|udp| {
+                let address = udp.local_addr()?;
+                std::net::TcpListener::bind(address).map(|_tcp| address)
+            })
+        };
+        match joint {
+            Ok(address) => return address,
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::AddrInUse | std::io::ErrorKind::PermissionDenied
+                ) =>
+            {
+                refused = Some(error);
+            }
+            Err(error) => panic!("fixture bind failed: {error}"),
         }
     }
-    panic!("could not find a joint UDP/TCP fixture address within 16 attempts");
+    panic!("could not find a joint UDP/TCP fixture address within 16 attempts: {refused:?}");
 }
 
 fn start(watch: bool, piped: bool) -> Relay {
